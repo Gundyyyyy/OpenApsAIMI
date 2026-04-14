@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -71,7 +72,7 @@ fun GlucoseHeroRing(
         val ringRadius: Float = (minSidePx / 2f) - (strokePx / 2f) - noseExtra
         // BG + delta: scale with ring; time-under-BG stays slightly smaller so the hero stays readable.
         val mainSp = with(density) { (ringRadius * 1.02f / fontScale).coerceIn(24f, 78f).toSp() }
-        val deltaSp = with(density) { (ringRadius * 0.42f / fontScale).coerceIn(15f, 30f).toSp() }
+        val deltaSp = with(density) { (ringRadius * 0.50f / fontScale).coerceIn(17f, 34f).toSp() }
         val subSp = with(density) { (ringRadius * 0.24f / fontScale).coerceIn(11f, 19f).toSp() }
 
         Box(Modifier.fillMaxSize()) {
@@ -111,14 +112,16 @@ fun GlucoseHeroRing(
             // Same vertical order as [app.aaps.ui.compose.overview.BgInfoSection]: delta on top, BG, time below.
             // Hybrid dashboard places metrics below the mode toggle with normal spacing; putting delta under the
             // big number left it in the obscured band — moving it above matches Overview and keeps it visible.
-            val liftTime = with(density) { (ringRadius * 0.07f).toDp().coerceAtLeast(10.dp) }
+            val liftTime = with(density) { (ringRadius * 0.032f).toDp().coerceIn(4.dp, 9.dp) }
+            val deltaTopInset = with(density) { (ringRadius * 0.085f).toDp().coerceIn(8.dp, 16.dp) }
             val deltaStyle = AapsTheme.typography.bgSecondary.copy(color = centerText)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy((-2).dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .offset(y = -liftTime),
+                    .offset(y = -liftTime)
+                    .padding(top = deltaTopInset),
             ) {
                 if (state.subLeftText.isNotBlank()) {
                     Text(

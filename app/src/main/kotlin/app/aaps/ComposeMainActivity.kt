@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -83,6 +84,8 @@ import app.aaps.core.interfaces.pump.BolusProgressData
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventRefreshOverview
+import app.aaps.core.interfaces.rx.events.EventUpdateOverviewIobCob
 import app.aaps.core.interfaces.source.DexcomBoyda
 import app.aaps.core.interfaces.source.XDripSource
 import app.aaps.core.interfaces.ui.UiInteraction
@@ -122,6 +125,7 @@ import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.plugins.configuration.setupwizard.SetupWizardActivity
 import app.aaps.plugins.main.general.manual.UserManualActivity
 import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
+import app.aaps.plugins.main.skins.SkinProvider
 import app.aaps.plugins.source.DexcomPlugin
 import app.aaps.plugins.source.activities.RequestDexcomPermissionActivity
 import app.aaps.ui.compose.automationSheet.AutomationViewModel
@@ -193,6 +197,7 @@ class ComposeMainActivity : AppCompatActivity() {
     @Inject lateinit var bolusProgressData: BolusProgressData
     @Inject lateinit var commandQueue: CommandQueue
     @Inject lateinit var skinDashboardPreferenceSync: SkinDashboardPreferenceSync
+    @Inject lateinit var skinProvider: SkinProvider
 
     private var accessTree: ActivityResultLauncher<Uri?>? = null
     private var callForBatteryOptimization: ActivityResultLauncher<Void?>? = null
@@ -523,6 +528,11 @@ class ComposeMainActivity : AppCompatActivity() {
         val state by mainViewModel.uiState.collectAsStateWithLifecycle()
         val bolusState by bolusProgressData.state.collectAsStateWithLifecycle()
 
+        // Keep skin collector alive for the whole shell (not only when Main is composed),
+        // so changes made from Preferences still update flows before returning home.
+        val generalSkin by preferences.observe(StringKey.GeneralSkin).collectAsStateWithLifecycle()
+        val showHybridDashboard = storedSkinPrefersDashboardHome(generalSkin)
+
         NavHost(
             navController = navController,
             startDestination = AppRoute.Main.route
@@ -532,9 +542,6 @@ class ComposeMainActivity : AppCompatActivity() {
                 val calcProgress by mainViewModel.calcProgressFlow.collectAsStateWithLifecycle()
                 val notifications by notificationManager.notifications.collectAsStateWithLifecycle()
                 val quickLaunchItems by mainViewModel.quickLaunchItems.collectAsStateWithLifecycle()
-
-                val useDashboardLayout by preferences.observe(BooleanKey.OverviewUseDashboardLayout)
-                    .collectAsStateWithLifecycle()
 
                 // Pump setup button in bottom bar
                 val pumpPlugin = activePlugin.activePumpInternal as PluginBase
@@ -565,7 +572,8 @@ class ComposeMainActivity : AppCompatActivity() {
                 }
 
 
-                MainScreen(
+                key(showHybridDashboard, generalSkin) {
+                    MainScreen(
                     mainViewModel = mainViewModel,
                     uiState = state,
                     aboutDialogData = if (state.showAboutDialog) {
@@ -660,7 +668,8 @@ class ComposeMainActivity : AppCompatActivity() {
                     onStopBolus = {
                         commandQueue.cancelAllBoluses(null)
                     },
-                    dashboardOverview = if (useDashboardLayout) {
+                    useRingHeroHome = false,
+                    dashboardOverview = if (showHybridDashboard) {
                         { pad, fab ->
                             DashboardOverviewHost(
                                 paddingValues = pad,
@@ -669,8 +678,9 @@ class ComposeMainActivity : AppCompatActivity() {
                         }
                     } else {
                         null
-                    }
+                    },
                 )
+                }
             }
 
             appNavGraph(
@@ -795,7 +805,36 @@ class ComposeMainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (!config.appInitialized) return
+        enforceDashboardToggleDisabledForCompose()
         refreshOnResume()
+        // After the activity resumes: hybrid dashboard [OverviewViewModel] may have been stopped in
+        // [onStop]; an Rx event fired only here would be dropped if sent synchronously in [onResume].
+        window.decorView.post {
+            if (isDestroyed) return@post
+            // Compose home routing is skin-driven (SkinInterface.prefersDashboardHome).
+            if (storedSkinPrefersDashboardHome(preferences.get(StringKey.GeneralSkin))) {
+                // [now = true]: same path as overview menu refresh — full refreshAll on any resumed OverviewFragment.
+                // overviewBus IOB event: keeps [iobCobCalculator] / Compose caches aligned after background (hybrid VM alone was not enough).
+                rxBus.send(EventRefreshOverview("ComposeMainActivity.afterChildFragmentsResume", now = true))
+                activePlugin.activeOverview.overviewBus.send(EventUpdateOverviewIobCob("ComposeMainActivity.afterChildFragmentsResume"))
+            }
+        }
+    }
+
+    private fun storedSkinPrefersDashboardHome(storedGeneralSkin: String): Boolean {
+        val skins = skinProvider.list
+        val skin = skins.firstOrNull { it.javaClass.name == storedGeneralSkin }
+            ?: skins.firstOrNull { it.javaClass.simpleName == storedGeneralSkin }
+            ?: skinProvider.activeSkin()
+        return skin.prefersDashboardHome
+    }
+
+    override fun onStart() {
+        super.onStart()
+    }
+
+    override fun onStop() {
+        super.onStop()
     }
 
     private fun updateButtons() {
@@ -818,19 +857,26 @@ class ComposeMainActivity : AppCompatActivity() {
 
     private fun observePreferences() {
         skinDashboardPreferenceSync.onStartup()
+        enforceDashboardToggleDisabledForCompose()
         // Wake lock: initial value applies on startup, subsequent changes update the flag
         lifecycleScope.launch {
             preferences.observe(BooleanKey.OverviewKeepScreenOn).collect { setupWakeLock() }
         }
-        // Align hybrid overview with skin (e.g. "New skin dashboard" enables dashboard layout)
-        lifecycleScope.launch {
-            preferences.observe(StringKey.GeneralSkin).drop(1).collect {
-                skinDashboardPreferenceSync.onSkinSelectionChanged()
-            }
-        }
         // Language change requires full restart to reload resources
         lifecycleScope.launch {
             preferences.observe(StringKey.GeneralLanguage).drop(1).collect { recreate() }
+        }
+    }
+
+    private fun enforceDashboardToggleDisabledForCompose() {
+        if (preferences.get(BooleanKey.OverviewUseDashboardLayout)) {
+            preferences.put(BooleanKey.OverviewUseDashboardLayout, false)
+        }
+        if (preferences.get(BooleanKey.OverviewShowHybridDashboardAimiPulse)) {
+            preferences.put(BooleanKey.OverviewShowHybridDashboardAimiPulse, false)
+        }
+        if (preferences.get(BooleanKey.OverviewDashboardExtendedMetrics)) {
+            preferences.put(BooleanKey.OverviewDashboardExtendedMetrics, false)
         }
     }
 

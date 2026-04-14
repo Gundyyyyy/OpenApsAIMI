@@ -45,6 +45,12 @@ class NotificationStore @Inject constructor(
 ) {
 
     private var store: MutableList<Notification> = ArrayList()
+    data class NotificationComposeItem(
+        val id: Int,
+        val text: String,
+        val dismissText: String,
+        val level: Int,
+    )
 
     companion object {
 
@@ -158,6 +164,31 @@ class NotificationStore @Inject constructor(
         }
     }
 
+    @Synchronized
+    fun snapshotForCompose(): List<NotificationComposeItem> {
+        removeExpired()
+        return store.map { n ->
+            NotificationComposeItem(
+                id = n.id,
+                text = dateUtil.timeString(n.date) + " " + n.text.orEmpty(),
+                dismissText = if (n.buttonText != 0) rh.gs(n.buttonText) else rh.gs(app.aaps.core.ui.R.string.snooze),
+                level = n.level,
+            )
+        }
+    }
+
+    @Synchronized
+    fun dismissFromCompose(id: Int): Boolean {
+        val n = store.firstOrNull { it.id == id } ?: return false
+        n.contextForAction = context
+        n.action?.run()
+        val removed = remove(id)
+        if (removed) {
+            activePlugin.activeOverview.overviewBus.send(EventUpdateOverviewNotification("NotificationCleared"))
+        }
+        return removed
+    }
+
     inner class NotificationRecyclerViewAdapter internal constructor(private val notificationsList: List<Notification>) :
         RecyclerView.Adapter<NotificationRecyclerViewAdapter.NotificationsViewHolder>() {
 
@@ -192,8 +223,7 @@ class NotificationStore @Inject constructor(
                 binding.dismiss.setOnClickListener {
                     val notification = it.tag as Notification
                     notification.contextForAction = itemView.context
-                    notification.action?.run()
-                    if (remove(notification.id)) activePlugin.activeOverview.overviewBus.send(EventUpdateOverviewNotification("NotificationCleared"))
+                    dismissFromCompose(notification.id)
                 }
             }
         }

@@ -11,6 +11,10 @@ android {
     namespace = "app.aaps.plugins.main"
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+    defaultConfig {
+        buildConfigField("boolean", "AIMI_DASHBOARD_LEGACY_GRAPH_FALLBACK", "false")
     }
 }
 
@@ -41,6 +45,7 @@ dependencies {
     api(libs.androidx.compose.material.icons.extended)
     api(libs.androidx.compose.foundation)
     api(libs.androidx.lifecycle.runtime.compose)
+    api(libs.androidx.compose.runtime.livedata)
     api(libs.androidx.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
 

@@ -7,8 +7,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import app.aaps.core.data.iob.InMemoryGlucoseValue
 import app.aaps.core.data.model.EB
+import app.aaps.core.data.model.EPS
 import app.aaps.core.data.model.GlucoseUnit
+import app.aaps.core.data.model.HR
 import app.aaps.core.data.model.RM
+import app.aaps.core.data.model.SC
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.TT
@@ -34,9 +37,13 @@ import app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryType
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventAcceptOpenLoopChange
 import app.aaps.core.interfaces.rx.events.EventBucketedDataCreated
+import app.aaps.core.interfaces.rx.events.EventInitializationChanged
+import app.aaps.core.interfaces.rx.events.EventLoopUpdateGui
 import app.aaps.core.interfaces.rx.events.EventNewOpenLoopNotification
 import app.aaps.core.interfaces.rx.events.EventPumpStatusChanged
+import app.aaps.core.interfaces.rx.events.EventPreferenceChange
 import app.aaps.core.interfaces.rx.events.EventRefreshOverview
+import app.aaps.core.interfaces.rx.events.EventScale
 import app.aaps.core.interfaces.rx.events.EventUpdateOverviewGraph
 import app.aaps.core.interfaces.rx.events.EventUpdateOverviewIobCob
 import app.aaps.core.interfaces.rx.events.EventUpdateOverviewSensitivity
@@ -46,7 +53,12 @@ import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.BooleanNonKey
+import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.data.time.T
 import app.aaps.core.objects.extensions.directionToIcon
@@ -66,7 +78,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
@@ -101,8 +119,19 @@ class OverviewViewModel(
     /** Cancelled in [stop]; Rx + DB observation for dashboard updates run here (same pattern as OverviewFragment flows). */
     private var updateScope: CoroutineScope? = null
 
+    /**
+     * [updateStatus] runs suspend DB reads on [Dispatchers.IO]. Without serialization, overlapping runs can
+     * finish out of order and the last [MutableLiveData.postValue] may apply an older snapshot (stale reservoir,
+     * activity %, TBR, steps, HR, etc.).
+     */
+    private val updateMutex = Mutex()
+
     private fun launchUpdate(block: suspend () -> Unit) {
-        updateScope?.launch { block() }
+        updateScope?.launch {
+            updateMutex.withLock {
+                block()
+            }
+        }
     }
 
     private val _statusCardState = MutableLiveData<StatusCardState>()
@@ -166,10 +195,13 @@ class OverviewViewModel(
     }
 
     fun start() {
-        if (started) return
-        updateScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        started = true
-        subscribeToUpdates()
+        if (!started) {
+            updateScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            started = true
+            subscribeToUpdates()
+        }
+        // Always pull latest pump/IOB/loop state on resume — [started] can already be true after a shallow
+        // pause, and loop completion often emits [EventLoopUpdateGui] without [EventRefreshOverview].
         refreshAll()
     }
 
@@ -195,13 +227,21 @@ class OverviewViewModel(
             .observeOn(aapsSchedulers.io)
             .subscribe({ refreshAll() }, fabricPrivacy::logException)
 
+        // Match [OverviewFragment.onResume]: debounce BG bucket storms before refresh.
         disposables += rxBus
             .toObservable(EventBucketedDataCreated::class.java)
+            .debounce(1L, TimeUnit.SECONDS)
             .observeOn(aapsSchedulers.io)
             .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
         disposables += rxBus
             .toObservable(EventPumpStatusChanged::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+
+        // End of loop.invoke() — keeps hybrid dashboard in sync with classic overview when APS enacts changes.
+        disposables += rxBus
+            .toObservable(EventLoopUpdateGui::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
@@ -217,11 +257,13 @@ class OverviewViewModel(
 
         disposables += activePlugin.activeOverview.overviewBus
             .toObservable(EventUpdateOverviewGraph::class.java)
+            .debounce(1L, TimeUnit.SECONDS)
             .observeOn(aapsSchedulers.io)
             .subscribe({ updateGraphMessage() }, fabricPrivacy::logException)
 
         disposables += activePlugin.activeOverview.overviewBus
             .toObservable(EventUpdateOverviewIobCob::class.java)
+            .debounce(1L, TimeUnit.SECONDS)
             .observeOn(aapsSchedulers.io)
             .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
@@ -233,20 +275,37 @@ class OverviewViewModel(
             .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
 
         disposables += rxBus
-            .toObservable(app.aaps.core.interfaces.rx.events.EventPreferenceChange::class.java)
+            .toObservable(EventPreferenceChange::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({
-                if (it.isChanged(app.aaps.core.keys.StringKey.OApsAIMIContextStorage.key)) {
-                    launchUpdate { updateStatus() }
+                if (it.isChanged(StringKey.OApsAIMIContextStorage.key) ||
+                    it.isChanged(BooleanKey.OverviewShowWizardButton.key) ||
+                    it.isChanged(UnitDoubleKey.OverviewLowMark.key) ||
+                    it.isChanged(UnitDoubleKey.OverviewHighMark.key) ||
+                    it.isChanged(BooleanNonKey.AutosensUsedOnMainPhone.key) ||
+                    it.isChanged(DoubleKey.AutosensMax.key) ||
+                    it.isChanged(DoubleKey.AutosensMin.key)
+                ) {
+                    refreshAll()
                 }
             }, fabricPrivacy::logException)
 
-        fun <T : Any> observePersistenceChanges(clazz: Class<T>) {
+        disposables += rxBus
+            .toObservable(EventScale::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ refreshAll() }, fabricPrivacy::logException)
+
+        disposables += rxBus
+            .toObservable(EventInitializationChanged::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+
+        fun <T : Any> observePersistenceChanges(clazz: Class<T>, onEmit: suspend () -> Unit) {
             scope.launch {
                 try {
                     persistenceLayer.observeChanges(clazz).collect {
                         try {
-                            updateAdjustments()
+                            onEmit()
                         } catch (e: Exception) {
                             fabricPrivacy.logException(e)
                         }
@@ -258,9 +317,69 @@ class OverviewViewModel(
                 }
             }
         }
-        observePersistenceChanges(TB::class.java)
-        observePersistenceChanges(TT::class.java)
-        observePersistenceChanges(EB::class.java)
+        observePersistenceChanges(TB::class.java) { updateAdjustments() }
+        observePersistenceChanges(TT::class.java) { updateAdjustments() }
+        observePersistenceChanges(EB::class.java) { updateAdjustments() }
+        // Same persistence streams as [OverviewFragment.onResume] (EPS / RM → scheduleUpdateGUI / processAps).
+        observePersistenceChanges(EPS::class.java) { launchUpdate { updateStatus() } }
+        observePersistenceChanges(RM::class.java) { launchUpdate { updateStatus() } }
+        // Cannula / sensor ages on the hybrid card
+        observePersistenceChanges(TE::class.java) { launchUpdate { updateStatus() } }
+
+        // Same preference-driven refresh as overview [merge(...).onEach { scheduleUpdateGUI() }].
+        scope.launch {
+            try {
+                merge(
+                    preferences.observe(BooleanKey.OverviewShowWizardButton).drop(1).map { },
+                    preferences.observe(UnitDoubleKey.OverviewLowMark).drop(1).map { },
+                    preferences.observe(UnitDoubleKey.OverviewHighMark).drop(1).map { },
+                    preferences.observe(BooleanNonKey.AutosensUsedOnMainPhone).drop(1).map { },
+                    preferences.observe(DoubleKey.AutosensMax).drop(1).map { },
+                    preferences.observe(DoubleKey.AutosensMin).drop(1).map { },
+                ).collect {
+                    refreshAll()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fabricPrivacy.logException(e)
+            }
+        }
+        // Steps / HR: coalesce bursts from sync (Health Connect, watch) then refresh hybrid metrics.
+        scope.launch {
+            try {
+                persistenceLayer.observeChanges(HR::class.java)
+                    .debounce(400L)
+                    .collect {
+                        try {
+                            launchUpdate { updateStatus() }
+                        } catch (e: Exception) {
+                            fabricPrivacy.logException(e)
+                        }
+                    }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fabricPrivacy.logException(e)
+            }
+        }
+        scope.launch {
+            try {
+                persistenceLayer.observeChanges(SC::class.java)
+                    .debounce(400L)
+                    .collect {
+                        try {
+                            launchUpdate { updateStatus() }
+                        } catch (e: Exception) {
+                            fabricPrivacy.logException(e)
+                        }
+                    }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fabricPrivacy.logException(e)
+            }
+        }
     }
 
     private fun refreshAll() {
@@ -365,13 +484,22 @@ class OverviewViewModel(
         // 7. Pump Battery
         val pumpBatteryText = activePlugin.activePump.batteryLevel.value?.let { "$it%" }
 
-        // 8. IOB (replacing Last Sensor Value as per user request)
+        // 8. IOB (same formatting as the rest of AAPS — avoids mixing "IE" + locale-decimal vs treatment screens)
         val bolusForSensorLine = bolusIob()
         val basalForSensorLine = basalIob()
+        val totalIobForSensorLine = bolusForSensorLine.iob + basalForSensorLine.basaliob
         val lastSensorValueText =
-            decimalFormatter.to2Decimal(bolusForSensorLine.iob + basalForSensorLine.basaliob) + " IE"
-        
-        // 9. TBR Rate (Combined U/h and %)
+            if (totalIobForSensorLine >= 0) {
+                resourceHelper.gs(app.aaps.core.ui.R.string.format_insulin_units, totalIobForSensorLine)
+            } else {
+                resourceHelper.gs(app.aaps.core.ui.R.string.format_insulin_units_signed, totalIobForSensorLine)
+            }
+
+        // 9. TBR: compact strip shows rate only (full line in étendu keeps % vs profil — long string was easy to clip in the horizontal chips row)
+        val tbrRateCompactText = activeTempBasal?.let { tbr ->
+            decimalFormatter.to2Decimal(tbr.rate) + " U/h"
+        } ?: (decimalFormatter.to2Decimal(0.0) + " U/h")
+
         val tbrRateText = activeTempBasal?.let { tbr ->
             val rateUh = decimalFormatter.to2Decimal(tbr.rate) + " U/h"
             val pctStr = profileFunction.getProfile()?.let { profile ->
@@ -382,7 +510,7 @@ class OverviewViewModel(
                 } else ""
             } ?: ""
             rateUh + pctStr
-        } ?: "0.00 U/h"
+        } ?: (decimalFormatter.to2Decimal(0.0) + " U/h")
 
         // 10. Steps & HR
         var stepsText: String = "--"
@@ -454,10 +582,10 @@ class OverviewViewModel(
                 lastTimestamp = java.lang.Math.max(lastTimestamp, sc.timestamp)
             }
 
-            if (totalSteps > 1) {
-                stepsText = "%.0f".format(totalSteps)
-            } else {
-                 if (stepsList.isNotEmpty()) stepsText = "0"
+            stepsText = when {
+                stepsList.isEmpty() -> "--"
+                totalSteps > 1.0 -> decimalFormatter.to0Decimal(totalSteps)
+                else -> decimalFormatter.to0Decimal(0.0)
             }
 
             // Heart Rate (Average or Last)
@@ -469,7 +597,7 @@ class OverviewViewModel(
             if (hrList.isNotEmpty()) {
                 val lastHr = hrList.lastOrNull()?.beatsPerMinute
                 if (lastHr != null && lastHr > 0) {
-                    hrText = "%.0f".format(lastHr)
+                    hrText = decimalFormatter.to0Decimal(lastHr)
                 }
             }
         
@@ -535,6 +663,7 @@ class OverviewViewModel(
             lastSensorValueText = lastSensorValueText,
             activityPctText = activityPctText,
             tbrRateText = tbrRateText,
+            tbrRateCompactText = tbrRateCompactText,
             basalText = basalText,
             stepsText = stepsText,
             hrText = hrText,
@@ -1062,6 +1191,8 @@ data class StatusCardState(
     val lastSensorValueText: String? = null,
     val activityPctText: String? = null,
     val tbrRateText: String? = null,
+    /** TBR rate only (no % of profile) for the horizontal compact chip row. */
+    val tbrRateCompactText: String? = null,
     val basalText: String? = null,
     val stepsText: String? = null,
     val hrText: String? = null,

@@ -90,7 +90,9 @@ class CircleTopDashboardView @JvmOverloads constructor(
         if (composeHeroAttached) return
         composeHeroAttached = true
         val heroCompose: ComposeView = binding.glucoseHeroCompose
-        heroCompose.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        // Detach-driven disposal: correct when this view is inside Compose AndroidView (activity
+        // lifecycle stays alive while the view tree is torn down and rebuilt).
+        heroCompose.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         heroCompose.setContent {
             CompositionLocalProvider(LocalPreferences provides preferences) {
                 AapsTheme {
@@ -101,7 +103,7 @@ class CircleTopDashboardView @JvmOverloads constructor(
         }
 
         val quickActionsCompose: ComposeView = binding.dashboardQuickActionsCompose
-        quickActionsCompose.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        quickActionsCompose.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         quickActionsCompose.setContent {
             CompositionLocalProvider(LocalPreferences provides preferences) {
                 AapsTheme {
@@ -242,9 +244,10 @@ class CircleTopDashboardView @JvmOverloads constructor(
 
     private fun updateCompactMetricChips(state: StatusCardState) {
         binding.dashboardCompactSteps.text = state.stepsText ?: "--"
-        binding.dashboardCompactIob.text = state.lastSensorValueText ?: "--"
+        binding.dashboardCompactIob.text =
+            state.iobText.trim().takeUnless { it.isEmpty() } ?: "--"
         binding.dashboardCompactHr.text = state.hrText ?: "--"
-        binding.dashboardCompactBasal.text = state.tbrRateText ?: "--"
+        binding.dashboardCompactBasal.text = state.tbrRateCompactText ?: state.tbrRateText ?: "--"
     }
 
     /**

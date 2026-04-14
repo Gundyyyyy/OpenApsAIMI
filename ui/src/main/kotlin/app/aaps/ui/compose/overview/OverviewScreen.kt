@@ -63,6 +63,8 @@ fun OverviewScreen(
     queueStatusText: String? = null,
     isPumpCommunicating: Boolean = false,
     onStopBolus: () -> Unit = {},
+    /** When true (e.g. SkinMinimal dashboard layout), show [RingHeroHomeSection] instead of [BgInfoSection]. */
+    useRingHeroHome: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var showNotificationSheet by remember { mutableStateOf(false) }
@@ -101,7 +103,8 @@ fun OverviewScreen(
                     statusViewModel = statusViewModel,
                     statusLightsDef = statusLightsDef,
                     onNavigate = onNavigate,
-                    paddingValues = paddingValues
+                    paddingValues = paddingValues,
+                    useRingHeroHome = useRingHeroHome,
                 )
             } else {
                 OverviewScreenStacked(
@@ -122,7 +125,8 @@ fun OverviewScreen(
                     statusViewModel = statusViewModel,
                     statusLightsDef = statusLightsDef,
                     onNavigate = onNavigate,
-                    paddingValues = paddingValues
+                    paddingValues = paddingValues,
+                    useRingHeroHome = useRingHeroHome,
                 )
             }
         }

@@ -181,9 +181,6 @@ class OverviewPlugin @Inject constructor(
         key = "overview_settings",
         titleResId = app.aaps.core.ui.R.string.overview,
         items = listOf(
-            BooleanKey.OverviewUseDashboardLayout,
-            BooleanKey.OverviewShowHybridDashboardAimiPulse,
-            BooleanKey.OverviewDashboardExtendedMetrics,
             BooleanKey.OverviewKeepScreenOn,
             PreferenceSubScreenDef(
                 key = "overview_buttons_settings",

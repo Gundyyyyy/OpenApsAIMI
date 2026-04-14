@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fastfood
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.ManageAccounts
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -16,11 +17,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.icons.IcAutomation
+import app.aaps.core.ui.compose.icons.Pump
 import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.ui.R
 import app.aaps.core.ui.R as CoreUiR
@@ -33,12 +36,15 @@ fun MainNavigationBar(
     quickWizardCount: Int = 0,
     onAutomationClick: () -> Unit = {},
     automationCount: Int = 0,
-    pumpSetupClassName: String? = null,
-    pumpSetupIcon: ImageVector? = null,
-    pumpSetupLabel: String? = null,
+    pumpSetupPlugin: PluginBase? = null,
+    bgSetupPlugin: PluginBase? = null,
+    bgQualityBadgeIconRes: Int = 0,
+    bgQualityBadgeDescription: String? = null,
     onNavigate: (NavigationRequest) -> Unit = {},
     permissionsMissing: Boolean = false,
-    onPermissionsClick: () -> Unit = {}
+    onPermissionsClick: () -> Unit = {},
+    loopActionAvailable: Boolean = false,
+    onLoopActionClick: () -> Unit = {}
 ) {
     val navColors = NavigationBarItemDefaults.colors(
         selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -118,22 +124,84 @@ fun MainNavigationBar(
         )
 
         // Pump setup (visible only when pump not initialized and has compose content)
-        if (pumpSetupClassName != null && pumpSetupIcon != null && pumpSetupLabel != null) {
+        if (pumpSetupPlugin != null) {
+            val label = stringResource(pumpSetupPlugin.pluginDescription.pluginName)
             NavigationBarItem(
                 selected = false,
-                onClick = { onNavigate(NavigationRequest.Plugin(pumpSetupClassName)) },
+                onClick = { onNavigate(NavigationRequest.Plugin(pumpSetupPlugin.javaClass.simpleName)) },
                 icon = {
                     BadgedBox(
                         badge = { Badge { Text("!") } }
                     ) {
                         Icon(
-                            imageVector = pumpSetupIcon,
-                            contentDescription = pumpSetupLabel,
+                            imageVector = pumpSetupPlugin.pluginDescription.icon ?: Pump,
+                            contentDescription = label,
                             modifier = Modifier.size(24.dp)
                         )
                     }
                 },
-                label = { Text(text = pumpSetupLabel) },
+                label = { Text(text = label) },
+                colors = navColors
+            )
+        }
+
+        // BG source shortcut (visible when BG quality check reports FLAT or DOUBLED)
+        val bgIcon = bgSetupPlugin?.pluginDescription?.icon
+        if (bgSetupPlugin != null && bgIcon != null) {
+            val label = stringResource(bgSetupPlugin.pluginDescription.pluginName)
+            NavigationBarItem(
+                selected = false,
+                onClick = { onNavigate(NavigationRequest.Plugin(bgSetupPlugin.javaClass.simpleName)) },
+                icon = {
+                    BadgedBox(
+                        badge = {
+                            if (bgQualityBadgeIconRes != 0) {
+                                Badge(containerColor = Color.Transparent) {
+                                    Icon(
+                                        painter = painterResource(id = bgQualityBadgeIconRes),
+                                        contentDescription = bgQualityBadgeDescription,
+                                        tint = Color.Unspecified,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            } else {
+                                Badge { Text("!") }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = bgIcon,
+                            contentDescription = label,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                },
+                label = { Text(text = label) },
+                colors = navColors
+            )
+        }
+
+        // Loop accept action (visible only when AAPS has a pending suggestion in open loop)
+        if (loopActionAvailable) {
+            NavigationBarItem(
+                selected = false,
+                onClick = onLoopActionClick,
+                icon = {
+                    BadgedBox(
+                        badge = {
+                            Badge(containerColor = AapsTheme.generalColors.statusNormal, contentColor = Color.Black) {
+                                Text(text = "1")
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayCircle,
+                            contentDescription = stringResource(R.string.loop_accept_nav_label),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                },
+                label = { Text(text = stringResource(R.string.loop_accept_nav_label)) },
                 colors = navColors
             )
         }

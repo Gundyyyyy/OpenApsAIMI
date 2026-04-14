@@ -73,6 +73,7 @@ import app.aaps.core.interfaces.maintenance.ImportExportPrefs
 import app.aaps.core.interfaces.notifications.NotificationId
 import app.aaps.core.interfaces.notifications.NotificationLevel
 import app.aaps.core.interfaces.notifications.NotificationManager
+import app.aaps.core.interfaces.bgQualityCheck.BgQualityCheck
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.profile.LocalProfileManager
@@ -105,7 +106,6 @@ import app.aaps.core.ui.compose.LocalProfileUtil
 import app.aaps.core.ui.compose.ProtectionHost
 import app.aaps.core.ui.compose.ScreenMode
 import app.aaps.core.ui.compose.dialogs.OkDialog
-import app.aaps.core.ui.compose.icons.Pump
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.core.ui.compose.preference.LocalCheckPassword
@@ -122,7 +122,7 @@ import app.aaps.implementation.plugin.PluginStore
 import app.aaps.implementation.protection.BiometricCheck
 import app.aaps.plugins.configuration.activities.OptimizationPermissionContract
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
-import app.aaps.plugins.configuration.setupwizard.SetupWizardActivity
+import app.aaps.plugins.configuration.setupwizard.SWDefinition
 import app.aaps.plugins.main.general.manual.UserManualActivity
 import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
 import app.aaps.plugins.main.skins.SkinProvider
@@ -132,6 +132,7 @@ import app.aaps.ui.compose.automationSheet.AutomationViewModel
 import app.aaps.ui.compose.configuration.ConfigurationViewModel
 import app.aaps.ui.compose.fillDialog.FillPreselect
 import app.aaps.ui.compose.insulinManagement.InsulinManagementViewModel
+import app.aaps.ui.compose.loopSheet.LoopActionViewModel
 import app.aaps.ui.compose.main.MainScreen
 import app.aaps.ui.compose.main.MainViewModel
 import app.aaps.ui.compose.maintenance.ImportViewModel
@@ -182,6 +183,7 @@ class ComposeMainActivity : AppCompatActivity() {
     @Inject lateinit var cryptoUtil: CryptoUtil
     @Inject lateinit var activePlugin: ActivePlugin
     @Inject lateinit var configBuilder: ConfigBuilder
+    @Inject lateinit var swDefinition: SWDefinition
     @Inject lateinit var config: Config
     @Inject lateinit var profileUtil: ProfileUtil
     @Inject lateinit var visibilityContext: PreferenceVisibilityContext
@@ -198,6 +200,7 @@ class ComposeMainActivity : AppCompatActivity() {
     @Inject lateinit var commandQueue: CommandQueue
     @Inject lateinit var skinDashboardPreferenceSync: SkinDashboardPreferenceSync
     @Inject lateinit var skinProvider: SkinProvider
+    @Inject lateinit var bgQualityCheck: BgQualityCheck
 
     private var accessTree: ActivityResultLauncher<Uri?>? = null
     private var callForBatteryOptimization: ActivityResultLauncher<Void?>? = null
@@ -211,6 +214,7 @@ class ComposeMainActivity : AppCompatActivity() {
     private val statusViewModel: StatusViewModel by viewModels()
     private val treatmentViewModel: TreatmentViewModel by viewModels()
     private val automationViewModel: AutomationViewModel by viewModels()
+    private val loopActionViewModel: LoopActionViewModel by viewModels()
     private val graphViewModel: GraphViewModel by viewModels()
     private val treatmentsViewModel: TreatmentsViewModel by viewModels()
     private val insulinManagementViewModel: InsulinManagementViewModel by viewModels()
@@ -427,7 +431,7 @@ class ComposeMainActivity : AppCompatActivity() {
             if (!preferences.get(BooleanNonKey.GeneralSetupWizardProcessed) && !isRunningRealPumpTest()) {
                 protectionCheck.requestProtection(ProtectionCheck.Protection.PREFERENCES) { result ->
                     if (result == ProtectionResult.GRANTED) {
-                        startActivity(Intent(this@ComposeMainActivity, SetupWizardActivity::class.java))
+                        navController.navigate(AppRoute.SetupWizard.route)
                     }
                 }
             }
@@ -545,10 +549,18 @@ class ComposeMainActivity : AppCompatActivity() {
 
                 // Pump setup button in bottom bar
                 val pumpPlugin = activePlugin.activePumpInternal as PluginBase
-                val showPumpSetup = (!activePlugin.activePump.isInitialized() || activePlugin.activePump.isSuspended()) && (pumpPlugin.hasComposeContent() || pumpPlugin.hasFragment())
-                val pumpSetupClassName = if (showPumpSetup) pumpPlugin.javaClass.simpleName else null
-                val pumpSetupIcon = if (showPumpSetup) pumpPlugin.pluginDescription.icon ?: Pump else null
-                val pumpSetupLabel = if (showPumpSetup) stringResource(pumpPlugin.pluginDescription.pluginName) else null
+                val showPumpSetup = (!activePlugin.activePump.isInitialized() || activePlugin.activePump.isSuspended()) &&
+                    (pumpPlugin.hasComposeContent() || pumpPlugin.hasFragment())
+                val pumpSetupPlugin = if (showPumpSetup) pumpPlugin else null
+
+                // BG source shortcut: shown when BG quality check reports FLAT or DOUBLED
+                val bgQualityState by bgQualityCheck.stateFlow.collectAsStateWithLifecycle()
+                val bgSourcePlugin = activePlugin.activeBgSource as PluginBase
+                val showBgSetup = (bgQualityState == BgQualityCheck.State.FLAT || bgQualityState == BgQualityCheck.State.DOUBLED) &&
+                    (bgSourcePlugin.hasComposeContent() || bgSourcePlugin.hasFragment())
+                val bgSetupPlugin = if (showBgSetup) bgSourcePlugin else null
+                val bgQualityBadgeIconRes = if (showBgSetup) bgQualityCheck.icon() else 0
+                val bgQualityBadgeDescription = if (showBgSetup) bgQualityCheck.stateDescription() else null
 
                 val manageSheetState = ManageSheetHost(
                     manageViewModel = manageViewModel,
@@ -585,6 +597,7 @@ class ComposeMainActivity : AppCompatActivity() {
                     statusViewModel = statusViewModel,
                     treatmentViewModel = treatmentViewModel,
                     automationViewModel = automationViewModel,
+                    loopActionViewModel = loopActionViewModel,
                     // Search
                     searchUiState = searchState,
                     onSearchQueryChange = { searchViewModel.onQueryChanged(it) },
@@ -646,9 +659,10 @@ class ComposeMainActivity : AppCompatActivity() {
                     },
                     autoShowNotificationSheet = _autoShowNotifications.value,
                     onAutoShowConsumed = { _autoShowNotifications.value = false },
-                    pumpSetupClassName = pumpSetupClassName,
-                    pumpSetupIcon = pumpSetupIcon,
-                    pumpSetupLabel = pumpSetupLabel,
+                    pumpSetupPlugin = pumpSetupPlugin,
+                    bgSetupPlugin = bgSetupPlugin,
+                    bgQualityBadgeIconRes = bgQualityBadgeIconRes,
+                    bgQualityBadgeDescription = bgQualityBadgeDescription,
                     permissionsMissing = permState.hasAnyMissing,
                     onPermissionsClick = {
                         permissionsViewModel.showSheet()
@@ -699,6 +713,8 @@ class ComposeMainActivity : AppCompatActivity() {
                 statsViewModel = statsViewModel,
                 siteRotationManagementViewModel = siteRotationManagementViewModel,
                 graphViewModel = graphViewModel,
+                swDefinition = swDefinition,
+                rxBus = rxBus,
                 activePlugin = activePlugin,
                 preferences = preferences,
                 rh = rh,
@@ -718,6 +734,13 @@ class ComposeMainActivity : AppCompatActivity() {
                 },
                 onRefreshPermissions = { permissionsViewModel.refresh() },
                 onExecuteQuickWizard = { guid -> mainViewModel.executeQuickWizard(this@ComposeMainActivity, guid) },
+                onRequestDirectoryAccess = {
+                    try {
+                        accessTree?.launch(null)
+                    } catch (_: Exception) {
+                    }
+                },
+                onRequestPermission = { group -> permissionsViewModel.requestPermission(group) },
                 findScreenDef = { key -> findScreenDef(key) },
                 onOpenLegacyXmlPreferences = { pluginSimpleName ->
                     withProtection(ProtectionCheck.Protection.PREFERENCES) {
@@ -1046,7 +1069,7 @@ class ComposeMainActivity : AppCompatActivity() {
 
             ElementType.PROFILE_HELPER          -> navController.navigate(AppRoute.ProfileHelper.route)
             ElementType.HISTORY_BROWSER         -> startActivity(Intent(this@ComposeMainActivity, uiInteraction.historyBrowseActivity))
-            ElementType.SETUP_WIZARD            -> startActivity(Intent(this@ComposeMainActivity, SetupWizardActivity::class.java))
+            ElementType.SETUP_WIZARD            -> navController.navigate(AppRoute.SetupWizard.route)
             ElementType.MAINTENANCE             -> mainViewModel.setShowMaintenanceSheet(true)
             ElementType.CONFIGURATION           -> navController.navigate(AppRoute.Configuration.route)
             ElementType.ABOUT                   -> mainViewModel.setShowAboutDialog(true)

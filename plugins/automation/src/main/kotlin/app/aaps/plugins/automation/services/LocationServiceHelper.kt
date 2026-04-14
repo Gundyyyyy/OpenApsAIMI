@@ -29,6 +29,7 @@ class LocationServiceHelper @Inject constructor(
 ) {
 
     fun startService(context: Context) {
+        if (!hasLocationPermission(context)) return
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
                 // The binder of the service that returns the instance that is created.
@@ -40,7 +41,7 @@ class LocationServiceHelper @Inject constructor(
 
                 // This is the key: Without waiting Android Framework to call this method
                 // inside Service.onCreate(), immediately call here to post the notification.
-                locationService.startForeground(notificationHolder.notificationID, notificationHolder.notification)
+                startForegroundWithLocationType(locationService)
 
                 // Release the connection to prevent leaks.
                 context.unbindService(this)
@@ -64,20 +65,18 @@ class LocationServiceHelper @Inject constructor(
     fun stopService(context: Context) =
         context.stopService(Intent(context, LocationService::class.java))
 
-    private fun startForegroundImmediate(locationService: LocationService, context: Context) {
+    private fun startForegroundWithLocationType(locationService: LocationService) {
         val id = notificationHolder.notificationID
         val notification = notificationHolder.notification
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val fine = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-            val coarse = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-            if (fine || coarse) {
-                locationService.startForeground(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-            } else {
-                locationService.startForeground(id, notification)
-            }
+            locationService.startForeground(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         } else {
             locationService.startForeground(id, notification)
         }
     }
+
+    private fun hasLocationPermission(context: Context): Boolean =
+        ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
 }

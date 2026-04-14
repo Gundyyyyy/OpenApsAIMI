@@ -84,66 +84,38 @@ class LocationService : DaggerService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        if (!hasLocationPermission()) {
+            aapsLogger.error(LTag.LOCATION, "LocationService started without location permission, stopping")
+            stopSelf()
+            return START_NOT_STICKY
+        }
         try {
             aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Ensure permission is granted before starting with LOCATION type (Android 14 requirement)
-                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                    ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-
-                    startForeground(
-                        notificationHolder.notificationID,
-                        notificationHolder.notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                    )
-                } else {
-                    // Try without type if permission missing (might fail on 14 but safer than crash)
-                    aapsLogger.warn(LTag.LOCATION, "Starting without LOCATION type (permissions missing)")
-                    startForeground(notificationHolder.notificationID, notificationHolder.notification)
-                }
+                startForeground(
+                    notificationHolder.notificationID,
+                    notificationHolder.notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
             } else {
                 startForeground(notificationHolder.notificationID, notificationHolder.notification)
             }
         } catch (e: Exception) {
-            // Catch Android 14 ForegroundServiceStartNotAllowedException & SecurityException
             aapsLogger.error(LTag.LOCATION, "Failed to start foreground service: ${e.message}", e)
             try {
-                // Fallback attempt (generic notification ID, no type)
                 startForeground(4711, Notification())
-            } catch (ignored: Exception) {
-                // Total failure to start foreground
+            } catch (_: Exception) {
             }
         }
         return START_STICKY
     }
 
+    private fun hasLocationPermission(): Boolean =
+        ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
     override fun onCreate() {
         super.onCreate()
-        try {
-            aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                    ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-
-                    startForeground(
-                        notificationHolder.notificationID,
-                        notificationHolder.notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                    )
-                } else {
-                    startForeground(notificationHolder.notificationID, notificationHolder.notification)
-                }
-            } else {
-                startForeground(notificationHolder.notificationID, notificationHolder.notification)
-            }
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.LOCATION, "Failed to start foreground service: ${e.message}", e)
-            try {
-                startForeground(4711, Notification())
-            } catch (ignored: Exception) {}
-        }
 
         // Get last location once until we get regular update
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED) {

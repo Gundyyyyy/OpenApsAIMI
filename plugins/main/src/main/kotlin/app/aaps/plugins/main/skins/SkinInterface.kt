@@ -6,7 +6,6 @@ import android.widget.LinearLayout
 import androidx.annotation.StringRes
 import androidx.constraintlayout.widget.ConstraintLayout
 import app.aaps.plugins.main.R
-import app.aaps.plugins.main.databinding.ActionsFragmentBinding
 import app.aaps.plugins.main.databinding.OverviewFragmentBinding
 
 @Deprecated("remove")
@@ -22,10 +21,6 @@ interface SkinInterface {
      * (AIMI hybrid dashboard vs legacy overview home).
      */
     val prefersDashboardHome: Boolean get() = false
-
-    // no pre processing by default
-    fun preProcessLandscapeActionsLayout(isLandscape: Boolean, binding: ActionsFragmentBinding) {
-    }
 
     fun preProcessLandscapeOverviewLayout(binding: OverviewFragmentBinding, isLandscape: Boolean, isTablet: Boolean, isSmallHeight: Boolean) {
         if (isLandscape) {

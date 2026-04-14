@@ -27,8 +27,10 @@ internal fun DashboardGraphComposeRenderer(
     val scheme = MaterialTheme.colorScheme
     val lineColor = scheme.primary
     val lineGlow = scheme.primary.copy(alpha = 0.38f)
-    val predictionColor = scheme.tertiary.copy(alpha = 0.92f)
-    val predictionGlow = scheme.tertiary.copy(alpha = 0.22f)
+    // Prediction (PRED): keep tertiary family but stronger contrast + heavier strokes so the dashed
+    // future curve reads clearly on busy gradients (user feedback: line felt too light).
+    val predictionColor = scheme.tertiary.copy(alpha = 0.98f)
+    val predictionGlow = scheme.tertiary.copy(alpha = 0.38f)
     val targetBandEdge = scheme.primary.copy(alpha = 0.0f)
     val targetBandCore = scheme.primary.copy(alpha = 0.14f)
     val nowLineColor = scheme.tertiary.copy(alpha = 0.95f)
@@ -272,21 +274,21 @@ internal fun DashboardGraphComposeRenderer(
                             val y = toCanvasY(point.value)
                             if (index == 0) predictionPath.moveTo(x, y) else predictionPath.lineTo(x, y)
                         }
-                    val dashPred = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), 0f)
+                    val dashPred = PathEffect.dashPathEffect(floatArrayOf(20f, 12f), 0f)
                     drawPath(
                         path = predictionPath,
                         color = predictionGlow,
                         style = Stroke(
-                            width = 6f,
+                            width = 9f,
                             cap = StrokeCap.Round,
                             pathEffect = dashPred,
                         ),
                     )
                     drawPath(
                         path = predictionPath,
-                        color = predictionColor.copy(alpha = 0.55f),
+                        color = predictionColor.copy(alpha = 0.62f),
                         style = Stroke(
-                            width = 4f,
+                            width = 5.8f,
                             cap = StrokeCap.Round,
                             pathEffect = dashPred,
                         ),
@@ -295,7 +297,7 @@ internal fun DashboardGraphComposeRenderer(
                         path = predictionPath,
                         color = predictionColor,
                         style = Stroke(
-                            width = 2.6f,
+                            width = 3.6f,
                             cap = StrokeCap.Round,
                             pathEffect = dashPred,
                         ),

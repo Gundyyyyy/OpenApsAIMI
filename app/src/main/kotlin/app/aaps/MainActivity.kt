@@ -40,6 +40,7 @@ import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.maintenance.FileListProvider
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginDescription
+import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.protection.ExportPasswordDataStore
 import app.aaps.core.interfaces.protection.ProtectionCheck
@@ -49,7 +50,6 @@ import app.aaps.core.interfaces.rx.events.EventRebuildTabs
 import app.aaps.core.interfaces.smsCommunicator.SmsCommunicator
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
 import app.aaps.core.keys.BooleanKey
-import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.objects.crypto.CryptoUtil
 import app.aaps.core.ui.UIRunnable
@@ -59,9 +59,8 @@ import app.aaps.core.utils.isRunningRealPumpTest
 import app.aaps.databinding.ActivityMainBinding
 import app.aaps.plugins.configuration.activities.DaggerAppCompatActivityWithResult
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
-import app.aaps.plugins.configuration.setupwizard.SetupWizardActivity
-import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
 import app.aaps.plugins.constraints.signatureVerifier.SignatureVerifierPlugin
+import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
 import app.aaps.ui.tabs.TabPageAdapter
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayoutMediator
@@ -182,7 +181,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
 
                     R.id.nav_setupwizard    -> {
                         protectionCheck.queryProtection(this@MainActivity, ProtectionCheck.Protection.PREFERENCES, {
-                            startActivity(Intent(this@MainActivity, SetupWizardActivity::class.java).setAction("info.nightscout.androidaps.MainActivity"))
+                            uiInteraction.openComposeMainAtRoute(this@MainActivity, AppRoute.SetupWizard.route)
                         })
                         true
                     }
@@ -238,16 +237,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
     private fun start() {
         binding.splash.visibility = View.GONE
         setupViews()
-
-        if (startWizard() && !isRunningRealPumpTest()) {
-            protectionCheck.queryProtection(this, ProtectionCheck.Protection.PREFERENCES, {
-                startActivity(Intent(this, SetupWizardActivity::class.java).setAction("info.nightscout.androidaps.MainActivity"))
-            })
-        }
     }
-
-    private fun startWizard(): Boolean =
-        !preferences.get(BooleanNonKey.GeneralSetupWizardProcessed)
 
     override fun onPostCreate(savedInstanceState: Bundle?, persistentState: PersistableBundle?) {
         super.onPostCreate(savedInstanceState, persistentState)
@@ -471,7 +461,7 @@ class MainActivity : DaggerAppCompatActivityWithResult() {
         activePlugin.activeBgSource.let { fabricPrivacy.setUserProperty("BgSource", it::class.java.simpleName) }
         fabricPrivacy.setUserProperty(
             "Profile",
-            activePlugin.getSpecificPluginsList(PluginType.PROFILE).firstOrNull { it.isEnabled() }?.javaClass?.simpleName ?: "none"
+            activePlugin.getSpecificPluginsListByInterface(Profile::class.java).firstOrNull { it.isEnabled() }?.javaClass?.simpleName ?: "none"
         )
         activePlugin.activeSensitivity.let { fabricPrivacy.setUserProperty("Sensitivity", it::class.java.simpleName) }
         fabricPrivacy.setUserProperty("Insulin", insulin::class.java.simpleName)

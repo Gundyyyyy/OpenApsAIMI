@@ -699,7 +699,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                         OKDialog.show(act, rh.gs(R.string.not_available_full), rh.gs(R.string.smscommunicator_pump_disconnected))
                     else
                         protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                            uiInteraction.runProfileSwitchDialog(childFragmentManager)
+                            if (isAdded) uiInteraction.openProfileActivationScreen(act, 0)
                         })
                 }
                 return true

@@ -18,18 +18,15 @@ import app.aaps.wear.interaction.utils.MenuListActivity
 class MainMenuActivity : MenuListActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        when (BuildConfig.FLAVOR) {
-            "full"        -> setTitle(R.string.app_name)
-            "aapsclient"  -> setTitle("AAPSClient")
-            "aapsclient2" -> setTitle("AAPSClient2")
-            "aapsclient3" -> setTitle("AAPSClient3")
-            "pumpcontrol" -> setTitle("Pumpcontrol")
-        }
+        setTitle(R.string.app_name)
         super.onCreate(savedInstanceState)
         rxBus.send(EventWearToMobile(ActionResendData("MainMenuListActivity")))
     }
 
-    override fun provideTitleIcon(): Int = R.drawable.ic_aaps_light
+    override fun provideTitleIcon(): Int = when (BuildConfig.FLAVOR) {
+        "aapsclient", "aapsclient2", "aapsclient3" -> R.drawable.ic_aaps_client_light
+        else                                        -> R.drawable.ic_aaps_light
+    }
 
     override fun provideElements(): List<MenuItem> =
         ArrayList<MenuItem>().apply {

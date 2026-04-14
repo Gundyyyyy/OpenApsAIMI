@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -39,9 +40,9 @@ import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.interfaces.notifications.AapsNotification
 import app.aaps.core.interfaces.pump.BolusProgressState
+import app.aaps.core.ui.compose.AapsFab
 import app.aaps.core.ui.compose.pump.PumpActivityDialog
 import app.aaps.core.ui.compose.pump.PumpActivityFab
-import app.aaps.core.ui.compose.AapsFab
 import app.aaps.core.ui.compose.LocalDateUtil
 import app.aaps.core.ui.compose.LocalSnackbarHostState
 import app.aaps.core.ui.compose.dialogs.OkCancelDialog
@@ -128,7 +129,9 @@ fun MainScreen(
     queueStatusText: String? = null,
     isPumpCommunicating: Boolean = false,
     onStopBolus: () -> Unit = {},
-    /** When non-null, replaces Compose OverviewScreen (e.g. AIMI hybrid dashboard hosted in the activity). */
+    /** When true, overview uses the ring glucose hero instead of the flat BG circle (Compose overview only). */
+    useRingHeroHome: Boolean = false,
+    /** When non-null, replaces [OverviewScreen] with the embedded AIMI hybrid [app.aaps.plugins.main.general.dashboard.DashboardFragment]. */
     dashboardOverview: (@Composable (PaddingValues, Dp) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -263,7 +266,8 @@ fun MainScreen(
                                 pumpStatusText = pumpStatusText,
                                 queueStatusText = queueStatusText,
                                 isPumpCommunicating = isPumpCommunicating,
-                                onStopBolus = onStopBolus
+                                onStopBolus = onStopBolus,
+                                useRingHeroHome = useRingHeroHome,
                             )
                         }
 
@@ -374,6 +378,14 @@ fun MainScreen(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
                                     .padding(bottom = fabBottomPadding, end = 16.dp)
+                                    .then(
+                                        if (isDashboardEmbedded) {
+                                            // Sit lower so the swap FAB clears the dashboard graph TBR lane.
+                                            Modifier.offset(y = 40.dp)
+                                        } else {
+                                            Modifier
+                                        },
+                                    ),
                             )
                             if (isDashboardEmbedded) {
                                 val fabBottomOffset = if (hasToolbar && showChrome) 56.dp else 0.dp
@@ -433,16 +445,6 @@ fun MainScreen(
             )
         }
 
-        // Automation bottom sheet
-        if (showAutomationSheet) {
-            val automationState by automationViewModel.uiState.collectAsStateWithLifecycle()
-            AutomationBottomSheet(
-                onDismiss = { showAutomationSheet = false },
-                automationItems = automationState.items,
-                onItemClick = { item -> mainViewModel.requestAutomationConfirmation(item.eventId) }
-            )
-        }
-
         if (isDashboardEmbedded && dashboardPumpDialog) {
             PumpActivityDialog(
                 bolusState = bolusState,
@@ -459,6 +461,16 @@ fun MainScreen(
                 onDismissSheet = { dashboardNotificationSheet = false },
                 onDismissNotification = onDismissNotification,
                 onNotificationActionClick = onNotificationActionClick
+            )
+        }
+
+        // Automation bottom sheet
+        if (showAutomationSheet) {
+            val automationState by automationViewModel.uiState.collectAsStateWithLifecycle()
+            AutomationBottomSheet(
+                onDismiss = { showAutomationSheet = false },
+                automationItems = automationState.items,
+                onItemClick = { item -> mainViewModel.requestAutomationConfirmation(item.eventId) }
             )
         }
 

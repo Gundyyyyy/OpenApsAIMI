@@ -67,9 +67,12 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventBucketedDataCreated
 import app.aaps.core.interfaces.rx.events.EventIobCalculationProgress
+import app.aaps.core.interfaces.rx.events.EventInitializationChanged
 import app.aaps.core.interfaces.rx.events.EventLoopUpdateGui
 import app.aaps.core.interfaces.rx.events.EventNewOpenLoopNotification
 import app.aaps.core.interfaces.rx.events.EventNsClientStatusUpdated
+import app.aaps.core.interfaces.rx.events.EventRefreshOverview
+import app.aaps.core.interfaces.rx.events.EventUpdateOverviewIobCob
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.Round
@@ -231,10 +234,18 @@ class OverviewDataCacheImpl @Inject constructor(
         // TT and EPS chip observers are handled below in Category B reactive graph observers
         // RM chip observer is also handled below in Category B
 
-        // Refresh trend arrow after bucketed data is created (bucketed data is ready after this event)
+        // BG / delta / trend use [iobCobCalculator.ads] + [glucoseStatusProvider], which are often still empty on
+        // cold start when this singleton's first [updateBgInfoFromDatabase] runs. Classic overview also reacts to
+        // [EventRefreshOverview] and post-loop GUI events — mirror those here so Compose home matches after app open.
         scope.launch {
-            rxBus.toFlow(EventBucketedDataCreated::class.java).collect {
-                aapsLogger.debug(LTag.UI, "Bucketed data created, refreshing BgInfo for trend arrow")
+            merge(
+                rxBus.toFlow(EventBucketedDataCreated::class.java),
+                rxBus.toFlow(EventRefreshOverview::class.java),
+                rxBus.toFlow(EventLoopUpdateGui::class.java),
+                rxBus.toFlow(EventInitializationChanged::class.java),
+                activePlugin.activeOverview.overviewBus.toFlow(EventUpdateOverviewIobCob::class.java),
+            ).collect {
+                aapsLogger.debug(LTag.UI, "OverviewDataCache: BgInfo refresh (${it.javaClass.simpleName})")
                 updateBgInfoFromDatabase()
             }
         }
@@ -392,9 +403,17 @@ class OverviewDataCacheImpl @Inject constructor(
     // =========================================================================
 
     private suspend fun updateBgInfoFromDatabase() {
-        // Use bucketed (smoothed) data like legacy, with raw DB fallback
-        val lastBg = iobCobCalculator.ads.bucketedData?.firstOrNull()
-        val lastGv = lastBg ?: persistenceLayer.getLastGlucoseValue()?.let { InMemoryGlucoseValue.fromGv(it) }
+        // Same rule as [LastBgDataImpl.lastBg]: bucketed first, but DB wins if it has a newer timestamp
+        // (Compose shell has no resumed OverviewFragment to drive immediate bucket reload after background).
+        val fromBucket = iobCobCalculator.ads.lastBg()
+        val fromGv = persistenceLayer.getLastGlucoseValue()
+        val fromDb = fromGv?.let { InMemoryGlucoseValue.fromGv(it) }
+        val lastGv = when {
+            fromBucket == null -> fromDb
+            fromDb == null -> fromBucket
+            fromDb.timestamp > fromBucket.timestamp -> fromDb
+            else -> fromBucket
+        }
         if (lastGv == null) {
             _bgInfoFlow.value = null
             return

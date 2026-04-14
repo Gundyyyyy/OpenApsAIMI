@@ -1,0 +1,24 @@
+package app.aaps.plugins.main.general.dashboard.compose
+
+import androidx.compose.runtime.compositionLocalOf
+import app.aaps.plugins.main.general.dashboard.views.CircleTopActionListener
+
+/**
+ * Actions for the AIMI dashboard hero in Compose (loop / context + [CircleTopActionListener] tiles).
+ */
+interface DashboardHeroCommands : CircleTopActionListener {
+    fun openLoopDialogFromHero()
+    fun openContextFromBadge()
+}
+
+object NoopDashboardHeroCommands : DashboardHeroCommands {
+    override fun openLoopDialogFromHero() {}
+    override fun openContextFromBadge() {}
+    override fun onAimiAdvisorClicked() {}
+    override fun onAdjustClicked() {}
+    override fun onAimiPreferencesClicked() {}
+    override fun onStatsClicked() {}
+    override fun onAimiPulseClicked() {}
+}
+
+val LocalDashboardHeroCommands = compositionLocalOf<DashboardHeroCommands> { NoopDashboardHeroCommands }

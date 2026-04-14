@@ -16,6 +16,8 @@
     <dimen name="dashboard_graph_height">320dp</dimen>
     <dimen name="dashboard_graph_height_min">176dp</dimen>
     <dimen name="dashboard_graph_height_max">340dp</dimen>
+    <!-- Simple (one-screen) dashboard: cap Compose graph so hero + actions stay visible -->
+    <dimen name="dashboard_graph_height_max_simple">196dp</dimen>
     <!-- Split so hero content can use more width without shrinking vertical breathing room. -->
     <dimen name="dashboard_card_inner_padding_horizontal">4dp</dimen>
     <dimen name="dashboard_card_inner_padding_vertical">8dp</dimen>
@@ -32,7 +34,8 @@
     <dimen name="dashboard_hero_status_column_margin_start">4dp</dimen>
     <!-- Extra inset so the TIR block reads as a card inside the hero, not edge-to-edge -->
     <dimen name="dashboard_tir_horizontal_inset">8dp</dimen>
-    <dimen name="dashboard_compact_metric_min_width">76dp</dimen>
+    <!-- Wide enough for localized insulin / U·h strings (e.g. "6,50 U/h") without clipping in the chip row -->
+    <dimen name="dashboard_compact_metric_min_width">92dp</dimen>
     <!-- ConstraintLayout top hero block: space under ring row (was hardcoded 4dp in hybrid layout). -->
     <dimen name="dashboard_hero_constraint_padding_bottom">2dp</dimen>
 </resources>

@@ -54,6 +54,7 @@ fun OverviewScreenSplit(
     statusLightsDef: PreferenceSubScreenDef,
     onNavigate: (NavigationRequest) -> Unit,
     paddingValues: PaddingValues,
+    useRingHeroHome: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val config = LocalConfig.current
@@ -100,10 +101,17 @@ fun OverviewScreenSplit(
                     verticalAlignment = Alignment.Bottom
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        BgInfoSection(
-                            bgInfo = bgInfoState.bgInfo,
-                            timeAgoText = bgInfoState.timeAgoText
-                        )
+                        if (useRingHeroHome) {
+                            RingHeroHomeSection(
+                                bgInfo = bgInfoState.bgInfo,
+                                timeAgoText = bgInfoState.timeAgoText
+                            )
+                        } else {
+                            BgInfoSection(
+                                bgInfo = bgInfoState.bgInfo,
+                                timeAgoText = bgInfoState.timeAgoText
+                            )
+                        }
                         SensitivityChipBlock(state = sensitivityUiState)
                     }
 

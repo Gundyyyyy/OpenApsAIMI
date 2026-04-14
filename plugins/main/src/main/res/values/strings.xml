@@ -123,6 +123,13 @@
     <string name="graph_long_scale_12h">12 hours</string>
     <string name="graph_long_scale_18h">18 hours</string>
     <string name="graph_long_scale_24h">24 hours</string>
+    <string name="graph_live">Live</string>
+    <string name="graph_following">Following</string>
+    <string name="graph_fixed">Fixed</string>
+    <string name="graph_no_data">No data</string>
+    <string name="graph_refresh_unknown">Refresh status unavailable</string>
+    <string name="graph_refresh_now">Updated just now</string>
+    <string name="graph_refresh_minutes_ago">Updated %1$d min ago</string>
     <string name="a11y_graph">graph</string>
     <string name="a11y_graph_scale">select graph scale</string>
     <string name="a11y_graph_scale_6h">graph scale 6 hours</string>
@@ -148,7 +155,7 @@
     <string name="overview_dashboard_extended_metrics_title">Dashboard: extended metrics</string>
     <string name="overview_dashboard_extended_metrics_summary">Full two-column stats and AIMI trajectory strip. Off = compact row (steps, IOB, heart rate, TBR).</string>
     <string name="dashboard_metrics_mode_simple">Simple</string>
-    <string name="dashboard_metrics_mode_extended">Étendu</string>
+    <string name="dashboard_metrics_mode_extended">Extended</string>
     <string name="dashboard_compact_label_steps">Pas</string>
     <string name="dashboard_compact_label_iob">IOB</string>
     <string name="dashboard_compact_label_hr">FC</string>
@@ -258,6 +265,17 @@
     <string name="dashboard_activity_tbr_basal_delivery_stopped">Basal off (TBR 0 U/h)</string>
     <string name="dashboard_hero_status_reading_line">Reading · %1$s</string>
     <string name="dashboard_hero_status_sensor_line">Sensor · %1$s</string>
+    <string name="dashboard_hero_status_reading_sensor_one_line">%1$s · %2$s</string>
+    <string name="dashboard_hero_sensor_badge_short">CGM %1$s</string>
+    <string name="dashboard_hero_sensor_dialog_title">CGM</string>
+    <string name="dashboard_hero_sensor_dialog_message">%1$s\n\n%2$s</string>
+    <string name="graph_legend_smb">SMB</string>
+    <string name="dashboard_graph_smb_toast">SMB · %1$s</string>
+    <string name="dashboard_metrics_overflow_a11y">Dashboard layout options</string>
+    <string name="graph_legend_tbr">TBR</string>
+    <string name="dashboard_hero_cgm_smoothing_chip_two">%1$s · %2$s</string>
+    <string name="dashboard_hero_cgm_smoothing_dialog_title">Sensor &amp; smoothing</string>
+    <string name="dashboard_notifications_compact_header">%1$d× %2$s</string>
     <string name="dashboard_extended_section_left">Activity &amp; stock</string>
     <string name="dashboard_extended_section_right">Insulin &amp; delivery</string>
     <string name="dashboard_cd_aimi_pulse">Last AIMI loop summary. Double tap to open full details.</string>

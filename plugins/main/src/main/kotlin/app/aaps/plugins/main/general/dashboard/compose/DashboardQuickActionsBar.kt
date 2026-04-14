@@ -41,6 +41,7 @@ fun DashboardQuickActionsBar(
     onAdjust: () -> Unit,
     onMeal: () -> Unit,
     onContext: () -> Unit,
+    compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val view = LocalView.current
@@ -63,7 +64,10 @@ fun DashboardQuickActionsBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 8.dp),
+            .padding(
+                horizontal = 4.dp,
+                vertical = if (compact) 2.dp else 8.dp,
+            ),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.Top,
     ) {
@@ -72,6 +76,7 @@ fun DashboardQuickActionsBar(
             label = stringResource(R.string.advisor_button),
             contentDescription = stringResource(R.string.dashboard_cd_chip_aimi_advisor),
             onClick = wrapped(onAdvisor, R.string.dashboard_chip_announced_advisor_opened),
+            compact = compact,
             modifier = Modifier.weight(1f),
         )
         QuickActionTile(
@@ -79,6 +84,7 @@ fun DashboardQuickActionsBar(
             label = stringResource(R.string.adjust_button),
             contentDescription = stringResource(R.string.dashboard_cd_chip_adjust),
             onClick = wrapped(onAdjust, R.string.dashboard_chip_announced_adjust_opened),
+            compact = compact,
             modifier = Modifier.weight(1f),
         )
         QuickActionTile(
@@ -86,6 +92,7 @@ fun DashboardQuickActionsBar(
             label = stringResource(R.string.dashboard_mode_meal),
             contentDescription = stringResource(R.string.dashboard_cd_chip_meal_mode),
             onClick = wrapped(onMeal, R.string.dashboard_chip_announced_meal_mode_opened),
+            compact = compact,
             modifier = Modifier.weight(1f),
         )
         QuickActionTile(
@@ -93,6 +100,7 @@ fun DashboardQuickActionsBar(
             label = stringResource(R.string.aimi_context),
             contentDescription = stringResource(R.string.dashboard_cd_chip_aimi_context),
             onClick = wrapped(onContext, R.string.dashboard_chip_announced_context_opened),
+            compact = compact,
             modifier = Modifier.weight(1f),
         )
     }
@@ -104,6 +112,7 @@ private fun QuickActionTile(
     label: String,
     contentDescription: String,
     onClick: () -> Unit,
+    compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val accent = elementType.color()
@@ -119,12 +128,16 @@ private fun QuickActionTile(
         )
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium,
+            style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
             color = accent,
             textAlign = TextAlign.Center,
-            maxLines = 2,
+            maxLines = if (compact) 1 else 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
+            modifier = Modifier.padding(
+                top = if (compact) 4.dp else 6.dp,
+                start = 2.dp,
+                end = 2.dp,
+            ),
         )
     }
 }

@@ -331,7 +331,9 @@ internal fun DashboardGraphComposeRenderer(
                 x1 = x1.coerceIn(plotLeft, plotRight)
                 x2 = x2.coerceIn(plotLeft, plotRight)
                 val barW = (x2 - x1).coerceAtLeast(3f)
-                val barH = (tbrLaneH * seg.intensity01).coerceIn(6f, tbrLaneH - 2f)
+                // Very small canvases can make (tbrLaneH - 2f) < 6f; keep a valid coerceIn range.
+                val barHMax = (tbrLaneH - 2f).coerceAtLeast(6f)
+                val barH = (tbrLaneH * seg.intensity01).coerceIn(6f, barHMax)
                 val barTop = tbrLaneBottom - barH
                 drawRoundRect(
                     color = tbrMarkerColor.copy(alpha = 0.35f),

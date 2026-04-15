@@ -54,7 +54,10 @@ class UnifiedReactivityLearner @Inject constructor(
         val globalFactor: Double,
         val shortTermFactor: Double,
         val previousFactor: Double,
-        val adjustmentReason: String
+        val adjustmentReason: String,
+        val floorLocked: Boolean = false,
+        val floorLockReason: String = "",
+        val floorReleased: Boolean = false
     )
     
     var lastAnalysis: AnalysisSnapshot? = null
@@ -289,6 +292,8 @@ class UnifiedReactivityLearner @Inject constructor(
         
         val previousFactor = globalFactor
         var targetFactor = globalFactor * adjustment
+        var floorReleased = false
+        var floorLockReason = ""
 
         if (isOptimal) {
             // EMA douce vers 1.0 (decay de 5% par analyse)
@@ -312,9 +317,36 @@ class UnifiedReactivityLearner @Inject constructor(
             // Apply EMA: New = (Target * alpha) + (Old * (1-alpha))
             globalFactor = (targetFactor * alpha + globalFactor * (1 - alpha)).coerceIn(0.5, 1.5)
         }
+
+        // 🛡️ Floor release: avoid being indefinitely stuck at 0.50 when hyper is sustained and no recent hypos.
+        val canReleaseFloor = globalFactor <= 0.52 &&
+            perf.hypo_count == 0 &&
+            perf.cv_percent < 45 &&
+            (perf.tir_above_180 > 40 || (isConfirmedRise && perf.tir_above_180 > 30))
+        if (canReleaseFloor) {
+            val released = (globalFactor + 0.03).coerceAtMost(0.65)
+            if (released > globalFactor) {
+                floorReleased = true
+                globalFactor = released
+                reasons.add("Floor release +0.03 (sustained hyper, no recent hypo)")
+            }
+        }
+        if (globalFactor <= 0.5001) {
+            floorLockReason = when {
+                perf.hypo_count > 0 -> "Recent hypo burden"
+                perf.cv_percent > 40 -> "High variability (CV)"
+                perf.tir_above_180 < 25 -> "No sustained hyper pressure"
+                else -> "Awaiting stronger rise confirmation"
+            }
+        }
         
         val reasonsStr = reasons.joinToString(", ")
         log.info(LTag.APS, "UnifiedReactivityLearner: Nouveau globalFactor = ${"%.3f".format(globalFactor)} | $reasonsStr")
+        if (globalFactor <= 0.5001) {
+            log.info(LTag.APS, "UnifiedReactivityLearner: Floor lock active at 0.50 | reason=$floorLockReason")
+        } else if (floorReleased) {
+            log.info(LTag.APS, "UnifiedReactivityLearner: Floor released progressively to ${"%.3f".format(globalFactor)}")
+        }
         
         // 📊 Capture snapshot for rT display
         val now = dateUtil.now()
@@ -326,7 +358,10 @@ class UnifiedReactivityLearner @Inject constructor(
             globalFactor = globalFactor,
             shortTermFactor = shortTermFactor,
             previousFactor = previousFactor,
-            adjustmentReason = reasonsStr
+            adjustmentReason = reasonsStr,
+            floorLocked = globalFactor <= 0.5001,
+            floorLockReason = floorLockReason,
+            floorReleased = floorReleased
         )
         
         save()

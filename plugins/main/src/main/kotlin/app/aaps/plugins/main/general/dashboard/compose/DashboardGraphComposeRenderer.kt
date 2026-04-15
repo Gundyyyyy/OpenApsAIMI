@@ -31,8 +31,11 @@ internal fun DashboardGraphComposeRenderer(
     // future curve reads clearly on busy gradients (user feedback: line felt too light).
     val predictionColor = scheme.tertiary.copy(alpha = 0.98f)
     val predictionGlow = scheme.tertiary.copy(alpha = 0.38f)
-    val targetBandEdge = scheme.primary.copy(alpha = 0.0f)
-    val targetBandCore = scheme.primary.copy(alpha = 0.14f)
+    val targetBandEdge = scheme.primary.copy(alpha = 0.02f)
+    val targetBandCore = scheme.primary.copy(alpha = 0.24f)
+    val targetBandLine = scheme.primary.copy(alpha = 0.74f)
+    val hypoOverlay = scheme.error.copy(alpha = 0.12f)
+    val hyperOverlay = scheme.error.copy(alpha = 0.08f)
     val nowLineColor = scheme.tertiary.copy(alpha = 0.95f)
     val nowLineGlow = scheme.tertiary.copy(alpha = 0.28f)
     val smbMarkerColor = scheme.error
@@ -155,12 +158,27 @@ internal fun DashboardGraphComposeRenderer(
             val yTop = toCanvasY(targetHigh)
             val yBottom = toCanvasY(targetLow)
             val bandH = (yBottom - yTop).coerceAtLeast(1f)
+            val topOutHeight = (yTop - plotTop).coerceAtLeast(0f)
+            if (topOutHeight > 0f) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0f to hyperOverlay,
+                            1f to Color.Transparent,
+                        ),
+                        startY = plotTop,
+                        endY = yTop,
+                    ),
+                    topLeft = Offset(plotLeft, plotTop),
+                    size = Size(plotWidth, topOutHeight),
+                )
+            }
             drawRect(
                 brush = Brush.verticalGradient(
                     colorStops = arrayOf(
                         0f to targetBandEdge,
                         0.22f to targetBandCore,
-                        0.5f to targetBandCore.copy(alpha = 0.18f),
+                        0.5f to targetBandCore.copy(alpha = 0.30f),
                         0.78f to targetBandCore,
                         1f to targetBandEdge,
                     ),
@@ -170,6 +188,45 @@ internal fun DashboardGraphComposeRenderer(
                 topLeft = Offset(plotLeft, yTop),
                 size = androidx.compose.ui.geometry.Size(plotWidth, bandH),
             )
+            drawLine(
+                color = targetBandLine.copy(alpha = 0.42f),
+                start = Offset(plotLeft, yTop),
+                end = Offset(plotRight, yTop),
+                strokeWidth = 4.4f,
+            )
+            drawLine(
+                color = targetBandLine,
+                start = Offset(plotLeft, yTop),
+                end = Offset(plotRight, yTop),
+                strokeWidth = 2.2f,
+            )
+            drawLine(
+                color = targetBandLine.copy(alpha = 0.42f),
+                start = Offset(plotLeft, yBottom),
+                end = Offset(plotRight, yBottom),
+                strokeWidth = 4.4f,
+            )
+            drawLine(
+                color = targetBandLine,
+                start = Offset(plotLeft, yBottom),
+                end = Offset(plotRight, yBottom),
+                strokeWidth = 2.2f,
+            )
+            val bottomOutHeight = (plotBottom - yBottom).coerceAtLeast(0f)
+            if (bottomOutHeight > 0f) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0f to Color.Transparent,
+                            1f to hypoOverlay,
+                        ),
+                        startY = yBottom,
+                        endY = plotBottom,
+                    ),
+                    topLeft = Offset(plotLeft, yBottom),
+                    size = Size(plotWidth, bottomOutHeight),
+                )
+            }
         }
 
         val nowEpoch = renderInput.nowEpochMs.takeIf { it in minX..maxX }

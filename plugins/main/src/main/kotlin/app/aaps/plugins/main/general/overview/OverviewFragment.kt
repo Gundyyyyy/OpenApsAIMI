@@ -129,6 +129,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -447,14 +448,19 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             updateNotification()
             updateAimiContextIndicator()
         }
-        updateBg()
-        updateTemporaryBasal()
-        updateExtendedBolus()
-        updateIobCob()
-        processButtonsVisibility()
-        processAps()
-        updateProfile()
-        updateTemporaryTarget()
+        // refreshAll is posted from a background HandlerThread; anything touching the Fragment view,
+        // viewLifecycleOwner, or loop.runningMode (DB via runBlocking) must run on the main thread.
+        activity?.runOnUiThread {
+            if (_binding == null || !isAdded) return@runOnUiThread
+            updateBg()
+            updateTemporaryBasal()
+            updateExtendedBolus()
+            updateIobCob()
+            processButtonsVisibility()
+            processAps()
+            updateProfile()
+            updateTemporaryTarget()
+        }
     }
 
     private fun updateAimiContextIndicator() {
@@ -710,6 +716,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
     @SuppressLint("SetTextI18n")
     private fun processButtonsVisibility() {
+        if (!isAdded || view == null) return
         viewLifecycleOwner.lifecycleScope.launch {
             iobCobCalculator.ads.lastBg()
             val pump = activePlugin.activePump
@@ -717,6 +724,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             profileFunction.getProfileName()
             iobCobCalculator.ads.actualBg()
             var list = ""
+            val runningMode = withContext(Dispatchers.IO) { loop.runningMode }
 
             // **** Temp button ****
             val lastRun = loop.lastRun
@@ -725,9 +733,14 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                     (lastRun.lastOpenModeAccept == 0L || lastRun.lastOpenModeAccept < lastRun.lastAPSRun) &&// never accepted or before last result
                     lastRun.constraintsProcessed?.isChangeRequested == true // change is requested
 
+            val events = automation.userEvents()
+            val runnableEvents = withContext(Dispatchers.IO) {
+                events.filter { it.isEnabled && it.canRun() }
+            }
+
             runOnUiThread {
                 _binding ?: return@runOnUiThread
-                if (resultAvailable && pump.isInitialized() && loop.runningMode == RM.Mode.OPEN_LOOP && (loop as PluginBase).isEnabled()) {
+                if (resultAvailable && pump.isInitialized() && runningMode == RM.Mode.OPEN_LOOP && (loop as PluginBase).isEnabled()) {
                     binding.buttonsLayout.acceptTempButton.visibility = View.VISIBLE
                     binding.buttonsLayout.acceptTempButton.text = "${rh.gs(R.string.set_basal_question)}\n${lastRun.constraintsProcessed?.resultAsString()}"
                 } else {
@@ -736,10 +749,8 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
                 // Automation buttons
                 binding.buttonsLayout.userButtonsLayout.removeAllViews()
-                val events = automation.userEvents()
-                if (!loop.runningMode.isSuspended() && pump.isInitialized() && profile != null && !config.isEnabled(ExternalOptions.SHOW_USER_ACTIONS_ON_WATCH_ONLY))
-                    for (event in events)
-                        if (event.isEnabled && runBlocking { event.canRun() }) {
+                if (!runningMode.isSuspended() && pump.isInitialized() && profile != null && !config.isEnabled(ExternalOptions.SHOW_USER_ACTIONS_ON_WATCH_ONLY))
+                    for (event in runnableEvents) {
                             context?.let { context ->
                                 SingleClickButton(context, null, app.aaps.core.ui.R.attr.customBtnStyle).also {
                                     it.setTextColor(rh.gac(context, app.aaps.core.ui.R.attr.userOptionColor))
@@ -767,7 +778,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                                 }
                             }
                             list += event.hashCode()
-                        }
+                    }
                 binding.buttonsLayout.userButtonsLayout.visibility = events.isNotEmpty().toVisibility()
             }
             if (list != lastUserAction) {
@@ -780,96 +791,111 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
     private fun processAps() {
         val pump = activePlugin.activePump
+        suspend fun readLoopUiInputs(): Pair<RM.Mode, Int> {
+            val mode = loop.runningMode
+            val mins = loop.minutesToEndOfSuspend()
+            return mode to mins
+        }
+        suspend fun applyLoopUiOnMain(loopMode: RM.Mode, minsToEndOfSuspend: Int) {
+            withContext(Dispatchers.Main) {
+                _binding ?: return@withContext
+                // aps mode
+                fun apsModeSetA11yLabel(stringRes: Int) {
+                    binding.infoLayout.apsMode.stateDescription = rh.gs(stringRes)
+                }
 
-        // aps mode
-        fun apsModeSetA11yLabel(stringRes: Int) {
-            binding.infoLayout.apsMode.stateDescription = rh.gs(stringRes)
+                if (pump.pumpDescription.isTempBasalCapable) {
+                    binding.infoLayout.apsMode.visibility = View.VISIBLE
+                    binding.infoLayout.apsModeText.visibility = View.VISIBLE
+                    when (loopMode) {
+                        RM.Mode.SUPER_BOLUS       -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_superbolus)
+                            apsModeSetA11yLabel(app.aaps.core.ui.R.string.superbolus)
+                            binding.infoLayout.apsModeText.text = dateUtil.age(minsToEndOfSuspend * 60000L, true, rh)
+                            binding.infoLayout.apsModeText.visibility = View.VISIBLE
+                        }
+
+                        RM.Mode.DISCONNECTED_PUMP -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_disconnected)
+                            apsModeSetA11yLabel(app.aaps.core.ui.R.string.disconnected)
+                            binding.infoLayout.apsModeText.text = dateUtil.age(minsToEndOfSuspend * 60000L, true, rh)
+                            binding.infoLayout.apsModeText.visibility = View.VISIBLE
+                        }
+
+                        RM.Mode.SUSPENDED_BY_PUMP -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_paused)
+                            apsModeSetA11yLabel(app.aaps.core.ui.R.string.pumpsuspended)
+                            binding.infoLayout.apsModeText.text = rh.gs(app.aaps.core.ui.R.string.pumpsuspended)
+                            binding.infoLayout.apsModeText.visibility = View.GONE
+                        }
+
+                        RM.Mode.SUSPENDED_BY_USER -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_paused)
+                            apsModeSetA11yLabel(app.aaps.core.ui.R.string.loopsuspended)
+                            binding.infoLayout.apsModeText.text = dateUtil.age(minsToEndOfSuspend * 60000L, true, rh)
+                            binding.infoLayout.apsModeText.visibility = View.VISIBLE
+                        }
+
+                        RM.Mode.SUSPENDED_BY_DST  -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_paused)
+                            apsModeSetA11yLabel(app.aaps.core.ui.R.string.loop_suspended_by_dst)
+                            binding.infoLayout.apsModeText.text = dateUtil.age(minsToEndOfSuspend * 60000L, true, rh)
+                            binding.infoLayout.apsModeText.visibility = View.VISIBLE
+                        }
+
+                        RM.Mode.CLOSED_LOOP_LGS   -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_lgs)
+                            apsModeSetA11yLabel(app.aaps.core.ui.R.string.uel_lgs_loop_mode)
+                            binding.infoLayout.apsModeText.visibility = View.GONE
+                        }
+
+                        RM.Mode.CLOSED_LOOP       -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.objects.R.drawable.ic_loop_closed)
+                            apsModeSetA11yLabel(app.aaps.core.ui.R.string.closedloop)
+                            binding.infoLayout.apsModeText.visibility = View.GONE
+                        }
+
+                        RM.Mode.OPEN_LOOP         -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_open)
+                            apsModeSetA11yLabel(app.aaps.core.ui.R.string.openloop)
+                            binding.infoLayout.apsModeText.visibility = View.GONE
+                        }
+
+                        RM.Mode.DISABLED_LOOP     -> {
+                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_disabled)
+                            apsModeSetA11yLabel(R.string.disabled_loop)
+                            binding.infoLayout.apsModeText.visibility = View.GONE
+                        }
+
+                        RM.Mode.RESUME            -> error("Invalid mode")
+                    }
+                } else {
+                    binding.infoLayout.apsMode.visibility = View.GONE
+                    binding.infoLayout.apsModeText.visibility = View.GONE
+                }
+
+                binding.pump.text = processedDeviceStatusData.pumpStatus(nsSettingsStatus)
+                binding.pump.setOnClickListener { activity?.let { uiInteraction.showOkDialog(context = it, title = rh.gs(app.aaps.core.ui.R.string.pump), message = processedDeviceStatusData.extendedPumpStatusHtml) } }
+
+                binding.openaps.text = processedDeviceStatusData.openApsStatus
+                binding.openaps.setOnClickListener { activity?.let { uiInteraction.showOkDialog(context = it, title = rh.gs(app.aaps.core.ui.R.string.openaps), message = processedDeviceStatusData.extendedOpenApsStatusHtml) } }
+
+                binding.uploader.text = processedDeviceStatusData.uploaderStatusSpanned
+                binding.uploader.setOnClickListener { activity?.let { uiInteraction.showOkDialog(context = it, title = rh.gs(app.aaps.core.ui.R.string.uploader), message = processedDeviceStatusData.extendedUploaderStatusHtml) } }
+            }
         }
 
-        runOnUiThread {
-            _binding ?: return@runOnUiThread
-            if (pump.pumpDescription.isTempBasalCapable) {
-                binding.infoLayout.apsMode.visibility = View.VISIBLE
-                binding.infoLayout.apsModeText.visibility = View.VISIBLE
-                when (loop.runningMode) {
-                    RM.Mode.SUPER_BOLUS       -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_superbolus)
-                        apsModeSetA11yLabel(app.aaps.core.ui.R.string.superbolus)
-                        binding.infoLayout.apsModeText.text = dateUtil.age(loop.minutesToEndOfSuspend() * 60000L, true, rh)
-                        binding.infoLayout.apsModeText.visibility = View.VISIBLE
-                    }
-
-                    RM.Mode.DISCONNECTED_PUMP -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_disconnected)
-                        apsModeSetA11yLabel(app.aaps.core.ui.R.string.disconnected)
-                        binding.infoLayout.apsModeText.text = dateUtil.age(loop.minutesToEndOfSuspend() * 60000L, true, rh)
-                        binding.infoLayout.apsModeText.visibility = View.VISIBLE
-                    }
-
-                    RM.Mode.SUSPENDED_BY_PUMP -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_paused)
-                        apsModeSetA11yLabel(app.aaps.core.ui.R.string.pumpsuspended)
-                        binding.infoLayout.apsModeText.text = rh.gs(app.aaps.core.ui.R.string.pumpsuspended)
-                        binding.infoLayout.apsModeText.visibility = View.GONE
-                    }
-
-                    RM.Mode.SUSPENDED_BY_USER -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_paused)
-                        apsModeSetA11yLabel(app.aaps.core.ui.R.string.loopsuspended)
-                        binding.infoLayout.apsModeText.text = dateUtil.age(loop.minutesToEndOfSuspend() * 60000L, true, rh)
-                        binding.infoLayout.apsModeText.visibility = View.VISIBLE
-                    }
-
-                    RM.Mode.SUSPENDED_BY_DST  -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_paused)
-                        apsModeSetA11yLabel(app.aaps.core.ui.R.string.loop_suspended_by_dst)
-                        binding.infoLayout.apsModeText.text = dateUtil.age(loop.minutesToEndOfSuspend() * 60000L, true, rh)
-                        binding.infoLayout.apsModeText.visibility = View.VISIBLE
-                    }
-
-                    RM.Mode.CLOSED_LOOP_LGS   -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_lgs)
-                        apsModeSetA11yLabel(app.aaps.core.ui.R.string.uel_lgs_loop_mode)
-                        binding.infoLayout.apsModeText.visibility = View.GONE
-                    }
-
-                    RM.Mode.CLOSED_LOOP       -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.objects.R.drawable.ic_loop_closed)
-                        apsModeSetA11yLabel(app.aaps.core.ui.R.string.closedloop)
-                        binding.infoLayout.apsModeText.visibility = View.GONE
-                    }
-
-                    RM.Mode.OPEN_LOOP         -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_open)
-                        apsModeSetA11yLabel(app.aaps.core.ui.R.string.openloop)
-                        binding.infoLayout.apsModeText.visibility = View.GONE
-                    }
-
-                    RM.Mode.DISABLED_LOOP     -> {
-                        binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_disabled)
-                        apsModeSetA11yLabel(R.string.disabled_loop)
-                        binding.infoLayout.apsModeText.visibility = View.GONE
-                    }
-
-                    RM.Mode.RESUME            -> error("Invalid mode")
-                }
-            } else {
-                // loop not supported by pump, hide aps mode
-                binding.infoLayout.apsMode.visibility = View.GONE
-                binding.infoLayout.apsModeText.visibility = View.GONE
+        if (android.os.Looper.getMainLooper().thread == Thread.currentThread()) {
+            if (!isAdded || view == null) return
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                val (loopMode, mins) = readLoopUiInputs()
+                applyLoopUiOnMain(loopMode, mins)
             }
-
-            // pump status from ns
-            binding.pump.text = processedDeviceStatusData.pumpStatus(nsSettingsStatus)
-            binding.pump.setOnClickListener { activity?.let { uiInteraction.showOkDialog(context = it, title = rh.gs(app.aaps.core.ui.R.string.pump), message = processedDeviceStatusData.extendedPumpStatusHtml) } }
-
-            // OpenAPS status from ns
-            binding.openaps.text = processedDeviceStatusData.openApsStatus
-            binding.openaps.setOnClickListener { activity?.let { uiInteraction.showOkDialog(context = it, title = rh.gs(app.aaps.core.ui.R.string.openaps), message = processedDeviceStatusData.extendedOpenApsStatusHtml) } }
-
-            // Uploader status from ns
-            binding.uploader.text = processedDeviceStatusData.uploaderStatusSpanned
-            binding.uploader.setOnClickListener { activity?.let { uiInteraction.showOkDialog(context = it, title = rh.gs(app.aaps.core.ui.R.string.uploader), message = processedDeviceStatusData.extendedUploaderStatusHtml) } }
+        } else {
+            runBlocking(Dispatchers.IO) {
+                val (loopMode, mins) = readLoopUiInputs()
+                applyLoopUiOnMain(loopMode, mins)
+            }
         }
     }
 

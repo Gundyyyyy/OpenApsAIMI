@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @Immutable
@@ -64,6 +66,7 @@ class LoopActionViewModel @Inject constructor(
         val pump = activePlugin.activePump
         val profile = profileFunction.getProfile()
         val lastRun = loop.lastRun
+        val runningMode = withContext(Dispatchers.IO) { loop.runningMode }
 
         val resultAvailable = lastRun != null &&
             (lastRun.lastOpenModeAccept == 0L || lastRun.lastOpenModeAccept < lastRun.lastAPSRun) &&
@@ -72,7 +75,7 @@ class LoopActionViewModel @Inject constructor(
         val available = resultAvailable &&
             pump.isInitialized() &&
             profile != null &&
-            loop.runningMode == RM.Mode.OPEN_LOOP &&
+            runningMode == RM.Mode.OPEN_LOOP &&
             (loop as PluginBase).isEnabled()
 
         uiState.update {

@@ -66,9 +66,11 @@ class DashboardModesActivity : TranslatedDaggerAppCompatActivity() {
             binding.actionsContainer.removeAllViews()
             val spacing = resources.getDimensionPixelSize(R.dimen.dashboard_chip_spacing)
             actions.forEach { event ->
-                val icon = AppCompatResources.getDrawable(
+                val icon = event.firstActionIcon()?.let {
+                    rasterizeAutomationIconForViews(this@DashboardModesActivity, it)
+                } ?: AppCompatResources.getDrawable(
                     this@DashboardModesActivity,
-                    event.firstActionIcon() ?: app.aaps.core.ui.R.drawable.ic_user_options_24dp
+                    app.aaps.core.ui.R.drawable.ic_user_options_24dp
                 )
                 val button = MaterialButton(this@DashboardModesActivity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                     text = event.title

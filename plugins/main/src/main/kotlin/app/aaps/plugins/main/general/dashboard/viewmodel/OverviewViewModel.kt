@@ -611,6 +611,13 @@ class OverviewViewModel(
         val aimiPulseMeta = buildAimiPulseMeta(lastApsRequest)
         val aimiPulseHypoRisk = lastApsRequest?.isHypoRisk == true
 
+        val tirStatsLine = if (avgBgMgdl != null && a1c != null) {
+            val avgStr = profileUtil.fromMgdlToStringInUnits(avgBgMgdl)
+            resourceHelper.gs(R.string.dashboard_tir_stats_format, avgStr, a1c)
+        } else {
+            resourceHelper.gs(R.string.dashboard_tir_stats_placeholder)
+        }
+
         // 12. AIMI Insights (Autodrive V3)
         val request = lastApsRequest
         val rt = request?.rawData() as? RT
@@ -678,6 +685,7 @@ class OverviewViewModel(
             avgBgMgdl = avgBgMgdl,
             bgCv = bgCv,
             a1c = a1c,
+            tirStatsLine = tirStatsLine,
             
             // AIMI Insights
             insightT3c = insightT3c,
@@ -1207,6 +1215,8 @@ data class StatusCardState(
     val avgBgMgdl: Double? = null,
     val bgCv: Double? = null,
     val a1c: Double? = null,
+    /** Pre-formatted TIR summary line (average BG uses current unit preference). */
+    val tirStatsLine: String = "",
     
     // AIMI Insights
     val insightT3c: String? = null,

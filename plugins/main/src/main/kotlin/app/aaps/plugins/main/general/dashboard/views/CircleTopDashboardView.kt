@@ -376,17 +376,8 @@ class CircleTopDashboardView @JvmOverloads constructor(
             val startOfDay = currentTime / (1000 * 3600 * 24) * (1000 * 3600 * 24) - TimeZone.getDefault().getOffset(currentTime)
             val endOfDay = startOfDay + (1000 * 3600 * 24)
 
-            val avg = getProp<Double>("avgBgMgdl") ?: Double.NaN
-            val a1c = getProp<Double>("a1c") ?: Double.NaN
-            if (!avg.isNaN() && !a1c.isNaN()) {
-                binding.tirStatsText.text = context.getString(
-                    app.aaps.plugins.main.R.string.dashboard_tir_stats_format,
-                    avg,
-                    a1c
-                )
-            } else {
-                binding.tirStatsText.text = context.getString(app.aaps.plugins.main.R.string.dashboard_tir_stats_placeholder)
-            }
+            binding.tirStatsText.text = getProp<String>("tirStatsLine")?.takeIf { it.isNotBlank() }
+                ?: context.getString(app.aaps.plugins.main.R.string.dashboard_tir_stats_placeholder)
 
             val vl = getProp<Double>("tirVeryLow") ?: 0.0
             val l = getProp<Double>("tirLow") ?: 0.0

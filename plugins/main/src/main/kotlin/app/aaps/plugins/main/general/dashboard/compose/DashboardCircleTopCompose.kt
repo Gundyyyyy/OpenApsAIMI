@@ -476,11 +476,7 @@ private fun MetricCell(label: String, value: String) {
 
 @Composable
 private fun ExtendedMetricsBlock(state: StatusCardState, modifier: Modifier = Modifier) {
-    val avg = state.avgBgMgdl
-    val a1c = state.a1c
-    val tirStats = if (avg != null && a1c != null && !avg.isNaN() && !a1c.isNaN()) {
-        stringResource(R.string.dashboard_tir_stats_format, avg, a1c)
-    } else {
+    val tirStats = state.tirStatsLine.ifBlank {
         stringResource(R.string.dashboard_tir_stats_placeholder)
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -95,6 +95,17 @@ enum class StringKey(
         defaultedBySM = true
     ),
 
+    /**
+     * Selected skin implementation (fully qualified class name).
+     * Used by Compose home routing and SkinProvider.
+     */
+    GeneralSkin(
+        key = "skin",
+        defaultValue = "",
+        titleResId = R.string.pref_title_skin,
+        preferenceType = PreferenceType.LIST,
+    ),
+
     AapsDirectoryUri(key = "aaps_directory", defaultValue = "", titleResId = R.string.pref_title_aaps_directory),
 
     ProtectionMasterPassword(key = "master_password", defaultValue = "", titleResId = R.string.pref_title_master_password, isPassword = true, isHashed = true),

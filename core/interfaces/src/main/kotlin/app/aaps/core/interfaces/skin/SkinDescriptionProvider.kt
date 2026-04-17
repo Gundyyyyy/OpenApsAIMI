@@ -5,7 +5,7 @@ package app.aaps.core.interfaces.skin
  * This minimal interface exposes only what's needed for the skin preference dropdown,
  * without exposing View-related skin functionality.
  *
- * Extended by SkinProvider in plugins:main which adds View-related methods.
+ * Extended by [app.aaps.plugins.main.skins.SkinProvider] in plugins:main which adds View-related methods.
  */
 interface SkinDescriptionProvider {
 

@@ -6,7 +6,6 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshots.SnapshotStateMap
-import androidx.core.os.bundleOf
 
 /**
  * Hierarchy level for preference sections.
@@ -86,11 +85,11 @@ class PreferenceSectionState(
                 state.sectionLevels.forEach { (k, v) -> lvl.putInt(k, v.ordinal) }
                 val par = Bundle()
                 state.sectionParents.forEach { (k, v) -> par.putString(k, v) }
-                bundleOf(
-                    "exp" to exp,
-                    "lvl" to lvl,
-                    "par" to par,
-                )
+                Bundle().apply {
+                    putBundle("exp", exp)
+                    putBundle("lvl", lvl)
+                    putBundle("par", par)
+                }
             },
             restore = { bundle ->
                 val expBundle = bundle.getBundle("exp")

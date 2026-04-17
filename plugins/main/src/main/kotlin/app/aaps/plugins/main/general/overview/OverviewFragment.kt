@@ -108,7 +108,6 @@ import app.aaps.plugins.main.general.overview.graphData.GraphData
 import app.aaps.plugins.main.general.overview.graphData.viewportShouldFollowLiveRange
 import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
 import app.aaps.plugins.main.general.overview.ui.StatusLightHandler
-import app.aaps.plugins.main.skins.SkinProvider
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusIndicator
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusLiveData
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorNotificationManager
@@ -159,7 +158,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
     @Inject lateinit var protectionCheck: ProtectionCheck
     @Inject lateinit var fabricPrivacy: FabricPrivacy
     @Inject lateinit var overviewMenus: OverviewMenus
-    @Inject lateinit var skinProvider: SkinProvider
     @Inject lateinit var trendCalculator: TrendCalculator
     @Inject lateinit var dateUtil: DateUtil
     @Inject lateinit var uel: UserEntryLogger
@@ -219,7 +217,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
         val screenHeight = wm.bounds.height()
         smallWidth = screenWidth <= Constants.SMALL_WIDTH
         smallHeight = screenHeight <= Constants.SMALL_HEIGHT
-        val landscape = screenHeight < screenWidth
 
         if (config.AAPSCLIENT1)
             binding.nsclientCard.setBackgroundColor(Color.argb(80, 0xE8, 0xC5, 0x0C))
@@ -230,7 +227,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
         overview.setVersionView(binding.infoLayout.version)
 
-        skinProvider.activeSkin().preProcessLandscapeOverviewLayout(binding, landscape, rh.gb(app.aaps.core.ui.R.bool.isTablet), smallHeight)
         binding.nsclientCard.visibility = config.AAPSCLIENT.toVisibility()
 
         binding.notifications.setHasFixedSize(false)
@@ -246,9 +242,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
         binding.graphsLayout.bgGraph.gridLabelRenderer?.gridColor = rh.gac(context, app.aaps.core.ui.R.attr.graphGrid)
         binding.graphsLayout.bgGraph.gridLabelRenderer?.reloadStyles()
         binding.graphsLayout.bgGraph.gridLabelRenderer?.labelVerticalWidth = axisWidth
-        binding.graphsLayout.bgGraph.layoutParams?.height = rh.dpToPx(skinProvider.activeSkin().mainGraphHeight)
-        binding.graphsLayout.bgGraph.viewport.isScrollable = true
-        binding.graphsLayout.bgGraph.viewport.isScalable = true
 
         carbAnimation = binding.infoLayout.carbsIcon.background as AnimationDrawable?
         carbAnimation?.setEnterFadeDuration(1200)
@@ -912,7 +905,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
                 val graph = GraphViewWithCleanup(requireContext())
                 graph.layoutParams =
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh.dpToPx(skinProvider.activeSkin().secondaryGraphHeight)).also { it.setMargins(0, rh.dpToPx(15), 0, rh.dpToPx(10)) }
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh.dpToPx(100)).also { it.setMargins(0, rh.dpToPx(15), 0, rh.dpToPx(10)) }
                 graph.gridLabelRenderer?.gridColor = rh.gac(context, app.aaps.core.ui.R.attr.graphGrid)
                 graph.gridLabelRenderer?.reloadStyles()
                 graph.gridLabelRenderer?.isHorizontalLabelsVisible = false

@@ -41,7 +41,6 @@ class OttaiPlugin @Inject constructor(
                 title = rh.gs(R.string.ottai_app)
             )
         }
-        .pluginIcon(app.aaps.core.objects.R.drawable.ic_ottai)
         .icon(IcGenericCgm)
         .pluginName(R.string.ottai_app)
         .preferencesVisibleInSimpleMode(false)

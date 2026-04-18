@@ -1,8 +1,11 @@
 package app.aaps.plugins.main.general.dashboard
 
+import android.content.res.Configuration
 import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -16,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.viewinterop.AndroidView
 import app.aaps.core.keys.BooleanKey
@@ -28,6 +32,7 @@ import app.aaps.plugins.main.general.dashboard.compose.DashboardHeroLayoutProfil
 import app.aaps.plugins.main.general.dashboard.compose.DashboardNotificationsComposeList
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.general.dashboard.views.GlucoseGraphView
+import app.aaps.ui.compose.overview.graphs.GraphViewModel
 
 /**
  * AIMI dashboard column for the Compose main shell.
@@ -43,6 +48,7 @@ internal fun AimiDashboardComposeEmbedded(
     embeddedState: DashboardEmbeddedComposeState,
     preferences: Preferences,
     viewModel: OverviewViewModel,
+    graphViewModel: GraphViewModel,
     onShellBindingReady: (DashboardShellBinding) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -83,10 +89,14 @@ internal fun AimiDashboardComposeEmbedded(
             .fillMaxWidth()
             .padding(start = bodyHorizontalPadding, end = bodyHorizontalPadding)
         val graphMaxHeightSimple = dimensionResource(R.dimen.dashboard_graph_height_max_simple)
+        val configuration = LocalConfiguration.current
+        val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val landscapeHeroScrollState = rememberScrollState()
 
         val graphCard: @Composable (Modifier) -> Unit = { graphMod ->
             DashboardGraphComposeCard(
                 composeState = embeddedState,
+                graphViewModel = graphViewModel,
                 attachLegacyGraphBackend = attachLegacyGraphBackendForCompose,
                 hideDetailedGraphStatus = !extendedMetrics,
                 expandGraphVertically = !extendedMetrics,
@@ -131,6 +141,42 @@ internal fun AimiDashboardComposeEmbedded(
                 )
                 graphCard(
                     graphModifierBase.padding(bottom = blockSpacing),
+                )
+            }
+        } else if (isLandscape) {
+            Row(modifier = modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .weight(0.42f)
+                        .fillMaxHeight()
+                        .verticalScroll(landscapeHeroScrollState)
+                        .padding(start = bodyHorizontalPadding),
+                ) {
+                    DashboardCircleTopCompose(
+                        viewModel = viewModel,
+                        embeddedState = embeddedState,
+                        preferences = preferences,
+                        onAuditorHostAttached = { fl ->
+                            if (auditorHost !== fl) auditorHost = fl
+                        },
+                        layoutProfile = DashboardHeroLayoutProfile.SimpleOneScreen,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    DashboardNotificationsComposeList(
+                        composeState = embeddedState,
+                        compact = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = bodyHorizontalPadding)
+                            .padding(top = bodyVerticalPadding / 2, bottom = blockSpacing / 2),
+                    )
+                }
+                graphCard(
+                    Modifier
+                        .weight(0.58f)
+                        .fillMaxHeight()
+                        .fillMaxWidth()
+                        .padding(start = blockSpacing, end = bodyHorizontalPadding, bottom = bodyVerticalPadding),
                 )
             }
         } else {

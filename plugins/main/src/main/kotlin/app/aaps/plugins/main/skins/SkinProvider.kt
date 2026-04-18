@@ -4,10 +4,10 @@ import app.aaps.core.interfaces.skin.SkinDescriptionProvider
 
 /**
  * Full skin provider interface with View-related functionality.
- * Extends SkinDescriptionProvider to include methods that return SkinInterface.
+ * Extends [SkinDescriptionProvider] to include methods that return [SkinInterface].
  *
- * Use this interface for consumers that need activeSkin() or list.
- * Use SkinDescriptionProvider for consumers that only need skinDescriptions.
+ * Use this interface for consumers that need [activeSkin] or [list].
+ * Use [SkinDescriptionProvider] for consumers that only need [skinDescriptions].
  */
 @Deprecated("remove")
 interface SkinProvider : SkinDescriptionProvider {

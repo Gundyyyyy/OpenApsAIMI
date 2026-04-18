@@ -4,6 +4,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,9 +26,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -35,9 +38,14 @@ import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
+import app.aaps.core.interfaces.overview.graph.SeriesType
+import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.toast.ToastUtils
 import app.aaps.plugins.main.R
 import app.aaps.plugins.main.general.dashboard.DashboardEmbeddedComposeState
+import app.aaps.ui.compose.overview.graphs.GraphViewModel
+import app.aaps.ui.compose.overview.graphs.bgReadingTintColor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,6 +56,7 @@ import kotlin.math.min
 @Composable
 internal fun DashboardGraphComposeCard(
     composeState: DashboardEmbeddedComposeState,
+    graphViewModel: GraphViewModel,
     attachLegacyGraphBackend: Boolean,
     /** When true, hides graph update line + range/live/follow + freshness (compact Simple mode). */
     hideDetailedGraphStatus: Boolean = false,
@@ -55,6 +64,14 @@ internal fun DashboardGraphComposeCard(
     graphContent: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val useVicoGraph = !attachLegacyGraphBackend
+    val vicoChartLook by graphViewModel.vicoChartLookFlow.collectAsStateWithLifecycle()
+    val graphConfig by graphViewModel.graphConfigFlow.collectAsStateWithLifecycle()
+    val showPredictionLegend = dashboardGraphPredictionLegendVisible(
+        useVicoGraph = useVicoGraph,
+        canvasRenderInput = composeState.graphRenderInput,
+        graphViewModel = graphViewModel,
+    )
     val cardInnerPaddingHorizontal = dimensionResource(R.dimen.dashboard_card_inner_padding_horizontal)
     val cardInnerPaddingVertical = dimensionResource(R.dimen.dashboard_card_inner_padding_vertical)
     val graphMinHeight = dimensionResource(R.dimen.dashboard_graph_height_min)
@@ -63,6 +80,18 @@ internal fun DashboardGraphComposeCard(
     val context = LocalContext.current
     val density = LocalDensity.current
     val smbHitPx = remember(density) { with(density) { 36.dp.toPx() } }
+    /** Same horizontal inset as Vico start axis min width for SMB hit-testing. */
+    val vicoSmbChartStartPx = remember(density) { with(density) { 30.dp.toPx() } }
+    val scheme = MaterialTheme.colorScheme
+    val originalBgValue = AapsTheme.generalColors.originalBgValue
+    /** Matches [BgGraphCompose] on dashboard: original BG palette + optional reading tint, soft alpha. */
+    val bgLegendLineColor = remember(useVicoGraph, vicoChartLook.bgReadingTintKey, scheme, originalBgValue) {
+        if (useVicoGraph) {
+            bgReadingTintColor(vicoChartLook.bgReadingTintKey, originalBgValue, scheme).copy(alpha = 0.88f)
+        } else {
+            scheme.primary
+        }
+    }
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -98,7 +127,7 @@ internal fun DashboardGraphComposeCard(
                                 .width(14.dp)
                                 .height(3.dp)
                                 .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
+                                .background(bgLegendLineColor),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -111,7 +140,7 @@ internal fun DashboardGraphComposeCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    if (composeState.graphRenderInput.predictionPoints.isNotEmpty()) {
+                    if (showPredictionLegend) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
@@ -128,12 +157,33 @@ internal fun DashboardGraphComposeCard(
                             )
                         }
                     }
+                    if (useVicoGraph && SeriesType.ACTIVITY in graphConfig.bgOverlays) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .width(14.dp)
+                                    .height(3.dp)
+                                    .clip(CircleShape)
+                                    .background(AapsTheme.elementColors.activity.copy(alpha = 0.85f)),
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(R.string.graph_legend_activity),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     if (!attachLegacyGraphBackend && composeState.graphRenderInput.smbMarkers.isNotEmpty()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = "▲",
                                 fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.error,
+                                color = if (useVicoGraph) {
+                                    MaterialTheme.colorScheme.secondary.copy(alpha = 0.62f)
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                },
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
@@ -154,7 +204,13 @@ internal fun DashboardGraphComposeCard(
                                 modifier = Modifier
                                     .width(2.dp)
                                     .height(12.dp)
-                                    .background(MaterialTheme.colorScheme.tertiary),
+                                    .background(
+                                        if (useVicoGraph) {
+                                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.92f)
+                                        } else {
+                                            MaterialTheme.colorScheme.tertiary
+                                        },
+                                    ),
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
@@ -182,17 +238,11 @@ internal fun DashboardGraphComposeCard(
                 )
             }
             val renderInput = composeState.graphRenderInput
-            val statusUi = remember(
-                renderInput,
-                composeState.graphUiState.freshnessConfig.warningThresholdMinutes,
-                composeState.graphUiState.freshnessConfig.staleThresholdMinutes,
-            ) {
-                GraphStatusPresenter.present(
-                    renderInput = renderInput,
-                    freshnessConfig = composeState.graphUiState.freshnessConfig,
-                    nowEpochMs = System.currentTimeMillis(),
-                )
-            }
+            val statusUi = dashboardGraphStatusRowModel(
+                useVicoGraph = useVicoGraph,
+                composeState = composeState,
+                graphViewModel = graphViewModel,
+            )
             if (!hideDetailedGraphStatus) {
                 val renderSummary = buildString {
                     append(statusUi.summaryRangeHours)
@@ -253,22 +303,24 @@ internal fun DashboardGraphComposeCard(
                     },
                 verticalAlignment = Alignment.Bottom,
             ) {
-                val yAxisLabels = remember(renderInput) {
-                    graphYAxisLabels(renderInput)
-                }
-                Column(
-                    modifier = Modifier
-                        .width(44.dp)
-                        .then(if (expandGraphVertically) Modifier.fillMaxHeight() else Modifier.height(graphMinHeight))
-                        .padding(end = 6.dp, top = 4.dp, bottom = 4.dp),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    yAxisLabels.forEach { label ->
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f),
-                        )
+                if (!useVicoGraph) {
+                    val yAxisLabels = remember(renderInput) {
+                        graphYAxisLabels(renderInput)
+                    }
+                    Column(
+                        modifier = Modifier
+                            .width(44.dp)
+                            .then(if (expandGraphVertically) Modifier.fillMaxHeight() else Modifier.height(graphMinHeight))
+                            .padding(end = 6.dp, top = 4.dp, bottom = 4.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        yAxisLabels.forEach { label ->
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f),
+                            )
+                        }
                     }
                 }
                 Column(
@@ -277,7 +329,10 @@ internal fun DashboardGraphComposeCard(
                         .then(if (expandGraphVertically) Modifier.fillMaxHeight() else Modifier)
                         .clip(RoundedCornerShape(graphCorner))
                         .then(
-                            if (!attachLegacyGraphBackend && composeState.graphCommands.onGraphPanFromDragFraction != null) {
+                            if (!useVicoGraph &&
+                                !attachLegacyGraphBackend &&
+                                composeState.graphCommands.onGraphPanFromDragFraction != null
+                            ) {
                                 Modifier.pointerInput(
                                     composeState.graphCommands.onGraphPanFromDragFraction,
                                     renderInput.rangeHours,
@@ -297,6 +352,7 @@ internal fun DashboardGraphComposeCard(
                 ) {
                     val smbTapModifier =
                         if (!attachLegacyGraphBackend && renderInput.smbMarkers.isNotEmpty()) {
+                            val chartStartPxForSmbHit = if (useVicoGraph) vicoSmbChartStartPx else 0f
                             Modifier.pointerInput(
                                 renderInput.smbMarkers,
                                 renderInput.fromTimeEpochMs,
@@ -304,6 +360,7 @@ internal fun DashboardGraphComposeCard(
                                 renderInput.points,
                                 renderInput.predictionPoints,
                                 smbHitPx,
+                                chartStartPxForSmbHit,
                             ) {
                                 detectTapGestures { offset ->
                                     val marker = findNearestSmbByX(
@@ -311,6 +368,7 @@ internal fun DashboardGraphComposeCard(
                                         widthPx = size.width.toFloat(),
                                         hitPx = smbHitPx,
                                         input = renderInput,
+                                        chartPlotStartPx = chartStartPxForSmbHit,
                                     )
                                     if (marker != null) {
                                         ToastUtils.infoToast(
@@ -323,33 +381,53 @@ internal fun DashboardGraphComposeCard(
                         } else {
                             Modifier
                         }
-                    DashboardGraphComposeRenderer(
-                        renderInput = renderInput,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (expandGraphVertically) Modifier.weight(1f) else Modifier.height(graphMinHeight))
-                            .then(smbTapModifier),
-                    )
-                    val tickLabels = remember(renderInput.fromTimeEpochMs, renderInput.toTimeEpochMs) {
-                        graphTickLabels(
-                            fromTimeEpochMs = renderInput.fromTimeEpochMs,
-                            toTimeEpochMs = renderInput.toTimeEpochMs,
+                    if (useVicoGraph) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (expandGraphVertically) Modifier.weight(1f) else Modifier.height(graphMinHeight))
+                                .then(smbTapModifier),
+                        ) {
+                            DashboardBgGraphVico(
+                                graphViewModel = graphViewModel,
+                                graphRenderInput = renderInput,
+                                viewportResetGeneration = composeState.vicoViewportResetGeneration,
+                                viewportFollowingLive = composeState.vicoViewportFollowingLive,
+                                onViewportFollowingLiveChanged = composeState::setVicoViewportFollowingLive,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    } else {
+                        DashboardGraphComposeRenderer(
+                            renderInput = renderInput,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (expandGraphVertically) Modifier.weight(1f) else Modifier.height(graphMinHeight))
+                                .then(smbTapModifier),
                         )
                     }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 6.dp)
-                            .offset(y = (-2).dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        tickLabels.forEach { label ->
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f),
+                    if (!useVicoGraph) {
+                        val tickLabels = remember(renderInput.fromTimeEpochMs, renderInput.toTimeEpochMs) {
+                            graphTickLabels(
+                                fromTimeEpochMs = renderInput.fromTimeEpochMs,
+                                toTimeEpochMs = renderInput.toTimeEpochMs,
                             )
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 6.dp)
+                                .offset(y = (-2).dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            tickLabels.forEach { label ->
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f),
+                                )
+                            }
                         }
                     }
                     if (attachLegacyGraphBackend) {
@@ -368,16 +446,63 @@ internal fun DashboardGraphComposeCard(
     }
 }
 
+@Composable
+private fun dashboardGraphStatusRowModel(
+    useVicoGraph: Boolean,
+    composeState: DashboardEmbeddedComposeState,
+    graphViewModel: GraphViewModel,
+): GraphStatusUi {
+    val renderInput = composeState.graphRenderInput
+    val freshnessConfig = composeState.graphUiState.freshnessConfig
+    val nowEpochMs = System.currentTimeMillis()
+    if (!useVicoGraph) {
+        return remember(
+            renderInput,
+            freshnessConfig.warningThresholdMinutes,
+            freshnessConfig.staleThresholdMinutes,
+        ) {
+            GraphStatusPresenter.present(
+                renderInput = renderInput,
+                freshnessConfig = freshnessConfig,
+                nowEpochMs = nowEpochMs,
+            )
+        }
+    }
+    val bgReadings by graphViewModel.bgReadingsFlow.collectAsStateWithLifecycle()
+    return GraphStatusPresenter.presentForVicoDashboard(
+        rangeHours = composeState.graphUiState.rangeHours,
+        hasBgReadings = bgReadings.isNotEmpty(),
+        viewportFollowingLive = composeState.vicoViewportFollowingLive,
+        lastRefreshEpochMs = renderInput.lastRefreshEpochMs,
+        freshnessConfig = freshnessConfig,
+        nowEpochMs = nowEpochMs,
+    )
+}
+
+@Composable
+private fun dashboardGraphPredictionLegendVisible(
+    useVicoGraph: Boolean,
+    canvasRenderInput: DashboardEmbeddedComposeState.GraphRenderInput,
+    graphViewModel: GraphViewModel,
+): Boolean {
+    if (!useVicoGraph) {
+        return canvasRenderInput.predictionPoints.isNotEmpty()
+    }
+    val predictions by graphViewModel.predictionsFlow.collectAsStateWithLifecycle()
+    return predictions.isNotEmpty()
+}
+
 private fun findNearestSmbByX(
     tapX: Float,
     widthPx: Float,
     hitPx: Float,
     input: DashboardEmbeddedComposeState.GraphRenderInput,
-): DashboardEmbeddedComposeState.SmbMarker? {
+    chartPlotStartPx: Float = 0f,
+): ChartSmbMarker? {
     if (input.smbMarkers.isEmpty() || widthPx <= 1f) return null
     val reservedFabInset = min(72f, widthPx * 0.16f)
     val plotRight = widthPx - reservedFabInset
-    val plotLeft = 0f
+    val plotLeft = chartPlotStartPx
     val plotWidth = (plotRight - plotLeft).coerceAtLeast(1f)
     val basePoints = if (input.points.isNotEmpty()) input.points else input.predictionPoints
     if (basePoints.isEmpty()) return null
@@ -387,7 +512,7 @@ private fun findNearestSmbByX(
     fun toCanvasX(epochMs: Long): Float =
         plotLeft + (((epochMs - minX) / xRange) * plotWidth)
 
-    var best: DashboardEmbeddedComposeState.SmbMarker? = null
+    var best: ChartSmbMarker? = null
     var bestDist = Float.POSITIVE_INFINITY
     for (m in input.smbMarkers) {
         val cx = toCanvasX(m.timestampEpochMs)

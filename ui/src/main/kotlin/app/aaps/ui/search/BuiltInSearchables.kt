@@ -9,14 +9,12 @@ import androidx.compose.material.icons.outlined.Palette
 import app.aaps.core.interfaces.insulin.Insulin
 import app.aaps.core.interfaces.insulin.InsulinManager
 import app.aaps.core.interfaces.resources.ResourceHelper
-import app.aaps.core.interfaces.skin.SkinDescriptionProvider
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.withChangeGuard
-import app.aaps.core.keys.interfaces.withEntries
 import app.aaps.core.ui.compose.icons.IcBolus
 import app.aaps.core.ui.compose.icons.IcCalculator
 import app.aaps.core.ui.compose.icons.IcCarbs
@@ -40,20 +38,10 @@ import javax.inject.Singleton
  */
 @Singleton
 class BuiltInSearchables @Inject constructor(
-    private val skinDescriptionProvider: SkinDescriptionProvider,
     private val rh: ResourceHelper,
     private val insulinManager: InsulinManager,
     private val insulin: Insulin
 ) : SearchableProvider {
-
-    /**
-     * Skin entries computed from SkinDescriptionProvider.
-     * Maps skin class name to localized display name.
-     */
-    private val skinEntries: Map<String, String>
-        get() = skinDescriptionProvider.skinDescriptions.associate { (className, descriptionResId) ->
-            className to rh.gs(descriptionResId)
-        }
 
     private fun hasNonU100Insulin(): Boolean =
         insulinManager.insulins.any { it.concentration != 1.0 } || insulin.iCfg.concentration != 1.0
@@ -98,9 +86,16 @@ class BuiltInSearchables @Inject constructor(
                     UnitDoubleKey.OverviewHighMark
                 )
             ),
+            PreferenceSubScreenDef(
+                key = "vico_chart_appearance",
+                titleResId = app.aaps.core.keys.R.string.prefs_vico_chart_appearance_title,
+                items = listOf(
+                    StringKey.OverviewVicoBgReadingTint,
+                    StringKey.OverviewVicoChartBackdrop,
+                )
+            ),
 
             BooleanKey.OverviewShowNotesInDialogs,
-            StringKey.GeneralSkin.withEntries(skinEntries),
             StringKey.GeneralDarkMode
         ),
         icon = Icons.Outlined.Palette

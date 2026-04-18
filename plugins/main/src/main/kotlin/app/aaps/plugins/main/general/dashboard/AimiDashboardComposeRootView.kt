@@ -22,6 +22,7 @@ import app.aaps.core.ui.compose.LocalPreferences
 import app.aaps.plugins.main.general.dashboard.compose.LocalDashboardHeroCommands
 import app.aaps.plugins.main.general.dashboard.compose.NoopDashboardHeroCommands
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
+import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.CoroutineScope
 
@@ -70,6 +71,7 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
             VIEW_MODEL_KEY,
             OverviewViewModel::class.java,
         )
+        val graphViewModel = ViewModelProvider(act)[GraphViewModel::class.java]
         val cv = ComposeView(context).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setContent {
@@ -84,6 +86,7 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
                         embeddedState = embeddedComposeState,
                         preferences = deps.preferences,
                         viewModel = viewModel,
+                        graphViewModel = graphViewModel,
                         onShellBindingReady = { shellBinding ->
                             if (shellCtrl == null) {
                                 val controller = DashboardShellController(

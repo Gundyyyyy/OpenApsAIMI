@@ -188,12 +188,6 @@
     <string name="graph_menu_divider_header">Graph</string>
     <string name="temp_basal_overview_short_name">T:</string>
 
-    <!-- Skins -->
-    <string name="classic_description">Original skin</string>
-    <string name="lowres_description">Low Resolution skin</string>
-    <string name="buttonson_description">Buttons are always displayed on bottom of screen</string>
-    <string name="largedisplay_description">Large display</string>
-
     <string name="cannula_usage">usage:</string>
 
     <!--    Iob-->
@@ -273,6 +267,7 @@
     <string name="dashboard_graph_smb_toast">SMB · %1$s</string>
     <string name="dashboard_metrics_overflow_a11y">Dashboard layout options</string>
     <string name="graph_legend_tbr">TBR</string>
+    <string name="graph_legend_activity">Activity</string>
     <string name="dashboard_hero_cgm_smoothing_chip_two">%1$s · %2$s</string>
     <string name="dashboard_hero_cgm_smoothing_dialog_title">Sensor &amp; smoothing</string>
     <string name="dashboard_notifications_compact_header">%1$d× %2$s</string>

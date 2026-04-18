@@ -21,7 +21,10 @@ import app.aaps.core.graph.vico.Square
 import app.aaps.core.interfaces.overview.graph.ActivityGraphData
 import app.aaps.core.interfaces.overview.graph.BasalGraphData
 import app.aaps.core.interfaces.overview.graph.BgDataPoint
+import app.aaps.core.interfaces.overview.graph.BgRange
 import app.aaps.core.interfaces.overview.graph.BgType
+import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
+import app.aaps.core.interfaces.overview.graph.ChartTbrSegment
 import app.aaps.core.interfaces.overview.graph.EpsGraphPoint
 import app.aaps.core.interfaces.overview.graph.SeriesType
 import app.aaps.core.interfaces.overview.graph.TargetLineData
@@ -57,6 +60,7 @@ private const val SERIES_PRED_COB = "pred_cob"
 private const val SERIES_PRED_ACOB = "pred_acob"
 private const val SERIES_PRED_UAM = "pred_uam"
 private const val SERIES_PRED_ZT = "pred_zt"
+private const val SERIES_DASHBOARD_SMB = "dashboard_smb"
 
 /** All prediction series identifiers */
 private val PREDICTION_SERIES = listOf(SERIES_PRED_IOB, SERIES_PRED_COB, SERIES_PRED_ACOB, SERIES_PRED_UAM, SERIES_PRED_ZT)
@@ -81,6 +85,31 @@ fun BgGraphCompose(
     zoomState: VicoZoomState,
     derivedTimeRange: Pair<Long, Long>?,
     nowTimestamp: Long,
+    /** When true, BG dots + prediction strokes use [MaterialTheme] (dashboard parity with Canvas). */
+    useMaterial3DashboardStyle: Boolean = false,
+    /** Dashboard-only SMB markers as a Vico line series (triangles), empty on overview. */
+    dashboardSmbMarkers: List<ChartSmbMarker> = emptyList(),
+    dashboardTbrSegments: List<ChartTbrSegment> = emptyList(),
+    dashboardTbrMarkerEpochMs: List<Long> = emptyList(),
+    /**
+     * When true, the BG start axis uses a fixed **0 … max** vertical range so decorations (TBR) align with the
+     * glycémie = 0 grid line (dashboard). Overview keeps the default auto Y range when false.
+     */
+    lockStartAxisYFromZero: Boolean = false,
+    /**
+     * Fallback TBR vertical layout when [lockStartAxisYFromZero] is false: distance from layer bottom (pixels).
+     */
+    dashboardTbrLegacyBottomReservePx: Float = 0f,
+    /**
+     * Dashboard: SMB/TBR, « now » line and BG point outlines use a **muted** palette (no alarm red for SMB)
+     * and lighter weights to keep therapy cues readable without a punitive feel.
+     */
+    dashboardSoftTherapyVisuals: Boolean = false,
+    /**
+     * When true with [SeriesType.ACTIVITY] in [bgOverlays], activity is drawn in [DashboardActivityStripChart]
+     * below this chart (own Y scale) instead of being scaled into mg/dL space.
+     */
+    dashboardSplitActivityToStrip: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     // Collect flows independently - each triggers recomposition only when it changes
@@ -97,9 +126,17 @@ fun BgGraphCompose(
     @Suppress("DEPRECATION")
     val basalData = if (showBasalOnBgGraph) rawBasalData else BasalGraphData(emptyList(), emptyList(), 0.0)
     val epsPoints by viewModel.epsGraphFlow.collectAsStateWithLifecycle()
-    val showActivity = SeriesType.ACTIVITY in bgOverlays
+    val showActivityOnMainChart = SeriesType.ACTIVITY in bgOverlays && !dashboardSplitActivityToStrip
     val activityData by viewModel.activityGraphFlow.collectAsStateWithLifecycle()
     val chartConfig by viewModel.chartConfigFlow.collectAsStateWithLifecycle()
+    val vicoChartLook by viewModel.vicoChartLookFlow.collectAsStateWithLifecycle()
+
+    val startAxisMaxY = remember(bgReadings, bucketedData, predictions, chartConfig.highMark) {
+        val allBgValues = (bgReadings + bucketedData).map { it.value }
+        val fromBg = if (allBgValues.isNotEmpty()) allBgValues.max() else chartConfig.highMark
+        val predMax = predictions.maxOfOrNull { it.value }
+        maxOf(fromBg, predMax ?: fromBg, chartConfig.highMark)
+    }
 
     // Use derived time range or fall back to default (last 24 hours)
     val (minTimestamp, maxTimestamp) = derivedTimeRange ?: run {
@@ -114,8 +151,16 @@ fun BgGraphCompose(
     // Series registry - tracks current data for each series
     val seriesRegistry = remember { mutableStateMapOf<String, List<BgDataPoint>>() }
 
-    // Colors from theme (stable - won't change)
-    val regularColor = AapsTheme.generalColors.originalBgValue
+    // Colors from theme + optional Vico tint preference (discrete BG dots only)
+    val scheme = MaterialTheme.colorScheme
+    val regularColorBase = if (useMaterial3DashboardStyle) {
+        scheme.primary
+    } else {
+        AapsTheme.generalColors.originalBgValue
+    }
+    val regularColor = remember(vicoChartLook.bgReadingTintKey, regularColorBase, scheme) {
+        bgReadingTintColor(vicoChartLook.bgReadingTintKey, regularColorBase, scheme)
+    }
     val lowColor = AapsTheme.generalColors.bgLow
     val inRangeColor = AapsTheme.generalColors.bgInRange
     val highColor = AapsTheme.generalColors.bgHigh
@@ -123,7 +168,7 @@ fun BgGraphCompose(
     val targetLineColor = AapsTheme.elementColors.tempTarget
     val activityColor = AapsTheme.elementColors.activity
 
-    // Prediction colors
+    // Predictions: keep AAPS palette (overview parity). Dashboard only overrides BG dot stroke above.
     val iobPredColor = AapsTheme.generalColors.iobPrediction
     val cobPredColor = AapsTheme.generalColors.cobPrediction
     val aCobPredColor = AapsTheme.generalColors.aCobPrediction
@@ -153,8 +198,9 @@ fun BgGraphCompose(
     ) {
         val regularPoints = seriesRegistry[SERIES_REGULAR] ?: emptyList()
         val bucketedPoints = seriesRegistry[SERIES_BUCKETED] ?: emptyList()
+        val smbPoints = seriesRegistry[SERIES_DASHBOARD_SMB] ?: emptyList()
 
-        if (regularPoints.isEmpty() && bucketedPoints.isEmpty()) return
+        if (regularPoints.isEmpty() && bucketedPoints.isEmpty() && smbPoints.isEmpty()) return
 
         modelProducer.runTransaction {
             // Block 1 → BG layer (layer 0, start axis)
@@ -175,6 +221,14 @@ fun BgGraphCompose(
                         .sortedBy { it.first }
                     series(x = dataPoints.map { it.first }, y = dataPoints.map { it.second })
                     activeSeries.add(SERIES_BUCKETED)
+                }
+
+                if (smbPoints.isNotEmpty()) {
+                    val dataPoints = smbPoints
+                        .map { timestampToX(it.timestamp, minTimestamp) to it.value }
+                        .sortedBy { it.first }
+                    series(x = dataPoints.map { it.first }, y = dataPoints.map { it.second })
+                    activeSeries.add(SERIES_DASHBOARD_SMB)
                 }
 
                 // Prediction series - each type as a separate line
@@ -251,7 +305,7 @@ fun BgGraphCompose(
             // Scale so maxActivity maps to 80% of maxBgY (same as legacy: maxY * 0.8 / maxIAValue)
             lineSeries {
                 val maxAct = currentActivityData.maxActivity
-                if (!showActivity || maxAct <= 0.0 || currentActivityData.activity.size < 2) {
+                if (!showActivityOnMainChart || maxAct <= 0.0 || currentActivityData.activity.size < 2) {
                     // Activity disabled or no data — emit dummy series (history + prediction)
                     series(x = listOf(0.0, 1.0), y = listOf(0.0, 0.0))
                     series(x = listOf(0.0, 1.0), y = listOf(0.0, 0.0))
@@ -288,12 +342,45 @@ fun BgGraphCompose(
     }
 
     // Single LaunchedEffect for all data - ensures atomic updates
-    LaunchedEffect(bgReadings, bucketedData, predictionsByType, basalData, targetData, epsPoints, activityData, showActivity, chartConfig, stableTimeRange) {
+    LaunchedEffect(
+        bgReadings,
+        bucketedData,
+        predictionsByType,
+        basalData,
+        targetData,
+        epsPoints,
+        activityData,
+        showActivityOnMainChart,
+        chartConfig,
+        stableTimeRange,
+        dashboardSmbMarkers,
+        dashboardSplitActivityToStrip,
+    ) {
         seriesRegistry[SERIES_REGULAR] = bgReadings
         seriesRegistry[SERIES_BUCKETED] = bucketedData
         for ((key, points) in predictionsByType) {
             seriesRegistry[key] = points
         }
+        val sortedBgAsc = bgReadings.sortedBy { it.timestamp }
+        val fallbackSmbY = (chartConfig.lowMark + chartConfig.highMark) / 2.0
+        seriesRegistry[SERIES_DASHBOARD_SMB] =
+            if (dashboardSplitActivityToStrip) {
+                emptyList()
+            } else {
+                dashboardSmbMarkers.map { m ->
+                    val y = interpolateBgForDashboardMarker(
+                        epochMs = m.timestampEpochMs,
+                        sortedAsc = sortedBgAsc,
+                        fallbackY = fallbackSmbY,
+                    )
+                    BgDataPoint(
+                        timestamp = m.timestampEpochMs,
+                        value = y,
+                        range = BgRange.IN_RANGE,
+                        type = BgType.REGULAR,
+                    )
+                }
+            }
         // maxBgY clamped against highMark (same as legacy GraphData.maxY logic)
         val allBgValues = (bgReadings + bucketedData).map { it.value }
         val maxBgY = if (allBgValues.isNotEmpty()) maxOf(allBgValues.max(), chartConfig.highMark) else chartConfig.highMark
@@ -305,10 +392,6 @@ fun BgGraphCompose(
         bucketedData.associateBy { timestampToX(it.timestamp, minTimestamp) }
     }
 
-    val bucketedPointProvider = remember(bucketedLookup, lowColor, inRangeColor, highColor) {
-        BucketedPointProvider(bucketedLookup, lowColor, inRangeColor, highColor)
-    }
-
     // Time formatter and axis configuration
     val timeFormatter = rememberTimeFormatter(minTimestamp)
     val bottomAxisItemPlacer = rememberBottomAxisItemPlacer(minTimestamp)
@@ -317,16 +400,35 @@ fun BgGraphCompose(
     // BG layer lines (layer 0)
     // =========================================================================
 
-    val regularLine = remember(regularColor) {
+    val regularColorChart = if (dashboardSoftTherapyVisuals) regularColor.copy(alpha = 0.88f) else regularColor
+    val regularOutlineAlpha = if (dashboardSoftTherapyVisuals) 0.22f else 0.3f
+    val customTintDots = vicoChartLook.bgReadingTintKey != VicoChartAppearance.TINT_THEME
+    // Bucketed series is drawn on top of regular; keep in-range fill aligned with reading tint pref.
+    val bucketedInRangeColor = if (customTintDots) regularColorChart else inRangeColor
+    val bucketedPointProvider = remember(bucketedLookup, lowColor, bucketedInRangeColor, highColor) {
+        BucketedPointProvider(bucketedLookup, lowColor, bucketedInRangeColor, highColor)
+    }
+    val regularDotFillAlpha = if (customTintDots) {
+        if (dashboardSoftTherapyVisuals) 0.38f else 0.52f
+    } else {
+        0f
+    }
+    val regularLine = remember(regularColorChart, regularOutlineAlpha, regularDotFillAlpha) {
         LineCartesianLayer.Line(
             fill = LineCartesianLayer.LineFill.single(Fill(Color.Transparent)),
             areaFill = null,
             pointProvider = LineCartesianLayer.PointProvider.single(
                 LineCartesianLayer.Point(
                     component = ShapeComponent(
-                        fill = Fill(Color.Transparent),
+                        fill = Fill(
+                            if (regularDotFillAlpha > 0f) {
+                                regularColorChart.copy(alpha = regularDotFillAlpha)
+                            } else {
+                                Color.Transparent
+                            },
+                        ),
                         shape = CircleShape,
-                        strokeFill = Fill(regularColor.copy(alpha = 0.3f)),
+                        strokeFill = Fill(regularColorChart.copy(alpha = regularOutlineAlpha)),
                         strokeThickness = 1.dp
                     ),
                     size = 6.dp
@@ -343,20 +445,66 @@ fun BgGraphCompose(
         )
     }
 
+    val smbFillResolved = if (dashboardSoftTherapyVisuals) {
+        scheme.secondaryContainer.copy(alpha = 0.52f)
+    } else {
+        scheme.error.copy(alpha = 0.42f)
+    }
+    val smbStrokeResolved = if (dashboardSoftTherapyVisuals) {
+        scheme.outline.copy(alpha = 0.48f)
+    } else {
+        scheme.error.copy(alpha = 0.88f)
+    }
+    val smbPointSize = if (dashboardSoftTherapyVisuals) 9.dp else 11.dp
+    val smbStrokeThickness = if (dashboardSoftTherapyVisuals) 1.dp else 2.dp
+    val smbDashboardLine = remember(smbFillResolved, smbStrokeResolved, smbPointSize, smbStrokeThickness) {
+        LineCartesianLayer.Line(
+            fill = LineCartesianLayer.LineFill.single(Fill(Color.Transparent)),
+            areaFill = null,
+            pointProvider = LineCartesianLayer.PointProvider.single(
+                LineCartesianLayer.Point(
+                    component = ShapeComponent(
+                        fill = Fill(smbFillResolved),
+                        shape = TriangleShape,
+                        strokeFill = Fill(smbStrokeResolved),
+                        strokeThickness = smbStrokeThickness
+                    ),
+                    size = smbPointSize
+                )
+            )
+        )
+    }
+
     val normalizerLine = remember { createNormalizerLine() }
 
-    // Prediction lines - transparent connecting line with small filled circle points
-    val iobPredLine = remember(iobPredColor) { createPredictionLine(iobPredColor) }
-    val cobPredLine = remember(cobPredColor) { createPredictionLine(cobPredColor) }
-    val aCobPredLine = remember(aCobPredColor) { createPredictionLine(aCobPredColor) }
-    val uamPredLine = remember(uamPredColor) { createPredictionLine(uamPredColor) }
-    val ztPredLine = remember(ztPredColor) { createPredictionLine(ztPredColor) }
+    val surfaceForBlend = scheme.surface
+    val iobPredLine = remember(iobPredColor, dashboardSoftTherapyVisuals, surfaceForBlend) {
+        val c = if (dashboardSoftTherapyVisuals) softenChartColor(iobPredColor, surfaceForBlend) else iobPredColor
+        if (dashboardSoftTherapyVisuals) createSoftPredictionLine(c) else createPredictionLine(c)
+    }
+    val cobPredLine = remember(cobPredColor, dashboardSoftTherapyVisuals, surfaceForBlend) {
+        val c = if (dashboardSoftTherapyVisuals) softenChartColor(cobPredColor, surfaceForBlend) else cobPredColor
+        if (dashboardSoftTherapyVisuals) createSoftPredictionLine(c) else createPredictionLine(c)
+    }
+    val aCobPredLine = remember(aCobPredColor, dashboardSoftTherapyVisuals, surfaceForBlend) {
+        val c = if (dashboardSoftTherapyVisuals) softenChartColor(aCobPredColor, surfaceForBlend) else aCobPredColor
+        if (dashboardSoftTherapyVisuals) createSoftPredictionLine(c) else createPredictionLine(c)
+    }
+    val uamPredLine = remember(uamPredColor, dashboardSoftTherapyVisuals, surfaceForBlend) {
+        val c = if (dashboardSoftTherapyVisuals) softenChartColor(uamPredColor, surfaceForBlend) else uamPredColor
+        if (dashboardSoftTherapyVisuals) createSoftPredictionLine(c) else createPredictionLine(c)
+    }
+    val ztPredLine = remember(ztPredColor, dashboardSoftTherapyVisuals, surfaceForBlend) {
+        val c = if (dashboardSoftTherapyVisuals) softenChartColor(ztPredColor, surfaceForBlend) else ztPredColor
+        if (dashboardSoftTherapyVisuals) createSoftPredictionLine(c) else createPredictionLine(c)
+    }
 
     val activeSeries by activeSeriesState
-    val bgLines = remember(activeSeries, regularLine, bucketedLine, iobPredLine, cobPredLine, aCobPredLine, uamPredLine, ztPredLine, normalizerLine) {
+    val bgLines = remember(activeSeries, regularLine, bucketedLine, smbDashboardLine, iobPredLine, cobPredLine, aCobPredLine, uamPredLine, ztPredLine, normalizerLine) {
         buildList {
             if (SERIES_REGULAR in activeSeries) add(regularLine)
             if (SERIES_BUCKETED in activeSeries) add(bucketedLine)
+            if (SERIES_DASHBOARD_SMB in activeSeries) add(smbDashboardLine)
             if (SERIES_PRED_IOB in activeSeries) add(iobPredLine)
             if (SERIES_PRED_COB in activeSeries) add(cobPredLine)
             if (SERIES_PRED_ACOB in activeSeries) add(aCobPredLine)
@@ -403,9 +551,10 @@ fun BgGraphCompose(
     // Target line (layer 2) — single line on start (BG) axis
     // =========================================================================
 
-    val targetLine = remember(targetLineColor) {
+    val targetLineColorUse = if (dashboardSoftTherapyVisuals) targetLineColor.copy(alpha = 0.48f) else targetLineColor
+    val targetLine = remember(targetLineColorUse) {
         LineCartesianLayer.Line(
-            fill = LineCartesianLayer.LineFill.single(Fill(targetLineColor)),
+            fill = LineCartesianLayer.LineFill.single(Fill(targetLineColorUse)),
             stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 1.dp),
             areaFill = null,
             pointConnector = Square
@@ -440,19 +589,22 @@ fun BgGraphCompose(
     // Activity layer lines (layer 4) — solid historical + dashed prediction
     // =========================================================================
 
-    val activityHistLine = remember(activityColor) {
+    val activityColorUse = if (dashboardSoftTherapyVisuals) activityColor.copy(alpha = 0.42f) else activityColor
+    val activityHistStroke = if (dashboardSoftTherapyVisuals) 1.dp else 1.5.dp
+    val activityPredStroke = if (dashboardSoftTherapyVisuals) 1.dp else 1.5.dp
+    val activityHistLine = remember(activityColorUse, activityHistStroke) {
         LineCartesianLayer.Line(
-            fill = LineCartesianLayer.LineFill.single(Fill(activityColor)),
-            stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 1.5.dp),
+            fill = LineCartesianLayer.LineFill.single(Fill(activityColorUse)),
+            stroke = LineCartesianLayer.LineStroke.Continuous(thickness = activityHistStroke),
             areaFill = null
         )
     }
 
-    val activityPredLine = remember(activityColor) {
+    val activityPredLine = remember(activityColorUse, activityPredStroke) {
         LineCartesianLayer.Line(
-            fill = LineCartesianLayer.LineFill.single(Fill(activityColor)),
+            fill = LineCartesianLayer.LineFill.single(Fill(activityColorUse)),
             stroke = LineCartesianLayer.LineStroke.Dashed(
-                thickness = 1.5.dp,
+                thickness = activityPredStroke,
                 cap = StrokeCap.Round,
                 dashLength = 4.dp,
                 gapLength = 4.dp
@@ -475,16 +627,63 @@ fun BgGraphCompose(
     // Decorations
     // =========================================================================
 
-    val nowLineColor = MaterialTheme.colorScheme.onSurface
+    val nowLineColor = if (dashboardSoftTherapyVisuals) {
+        scheme.onSurface.copy(alpha = 0.36f)
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
     val nowLine = rememberNowLine(minTimestamp, nowTimestamp, nowLineColor)
-    val decorations = remember(nowLine) { listOf(nowLine) }
+    val tbrLaneWash = if (dashboardSoftTherapyVisuals) scheme.surfaceContainerHighest else scheme.tertiary.copy(alpha = 0.78f)
+    val tbrBarHalo = if (dashboardSoftTherapyVisuals) scheme.outlineVariant else scheme.tertiary.copy(alpha = 0.78f)
+    val tbrBarCore = if (dashboardSoftTherapyVisuals) scheme.secondary else scheme.tertiary.copy(alpha = 0.78f)
+    val tbrMarkerLine = if (dashboardSoftTherapyVisuals) scheme.outline else scheme.tertiary.copy(alpha = 0.78f)
+    val tbrDecoration = rememberDashboardTbrLaneDecoration(
+        minTimestamp = minTimestamp,
+        segments = if (dashboardSplitActivityToStrip) emptyList() else dashboardTbrSegments,
+        markerEpochMs = if (dashboardSplitActivityToStrip) emptyList() else dashboardTbrMarkerEpochMs,
+        bgAxisYMin = if (lockStartAxisYFromZero) 0.0 else null,
+        bgAxisYMax = if (lockStartAxisYFromZero) startAxisMaxY else null,
+        legacyBottomReservePx = dashboardTbrLegacyBottomReservePx,
+        laneBackground = tbrLaneWash,
+        barFillSoft = tbrBarHalo,
+        barFillStrong = tbrBarCore,
+        markerLineColor = tbrMarkerLine,
+        softStyle = dashboardSoftTherapyVisuals,
+    )
+    val comfortCorridorPair =
+        if (dashboardSoftTherapyVisuals && lockStartAxisYFromZero && chartConfig.lowMark < chartConfig.highMark) {
+            chartConfig.lowMark to chartConfig.highMark
+        } else {
+            null
+        }
+    val comfortCorridorDecoration = rememberTargetComfortCorridorDecoration(
+        corridor = comfortCorridorPair,
+        bgAxisMinY = 0.0,
+        bgAxisMaxY = startAxisMaxY,
+        fillColor = scheme.secondaryContainer,
+        fillAlpha = 0.095f,
+    )
+    val axisLabelColor = if (dashboardSoftTherapyVisuals) scheme.onSurfaceVariant.copy(alpha = 0.72f) else scheme.onSurface
+    val gridGuideAlpha = if (dashboardSoftTherapyVisuals) 0.22f else 0.5f
+    val yAxisStep = if (dashboardSoftTherapyVisuals && lockStartAxisYFromZero) 9.0 else 1.0
+    val decorations = remember(comfortCorridorDecoration, tbrDecoration, nowLine) {
+        buildList {
+            comfortCorridorDecoration?.let { add(it) }
+            tbrDecoration?.let { add(it) }
+            add(nowLine)
+        }
+    }
 
     // =========================================================================
     // Range providers — hoisted out of rememberCartesianChart so keys are re-evaluated on recomposition
     // =========================================================================
 
-    val startAxisRangeProvider = remember(maxX) {
-        CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX)
+    val startAxisRangeProvider = remember(maxX, lockStartAxisYFromZero, startAxisMaxY) {
+        if (lockStartAxisYFromZero) {
+            CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = startAxisMaxY)
+        } else {
+            CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX)
+        }
     }
     val endAxisRangeProvider = remember(maxX, basalMaxY) {
         CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY)
@@ -527,20 +726,20 @@ fun BgGraphCompose(
                 verticalAxisPosition = Axis.Position.Vertical.Start
             ),
             startAxis = VerticalAxis.rememberStart(
-                itemPlacer = VerticalAxis.ItemPlacer.step({ 1.0 }),
+                itemPlacer = VerticalAxis.ItemPlacer.step({ yAxisStep }),
                 label = rememberTextComponent(
-                    style = TextStyle(color = MaterialTheme.colorScheme.onSurface),
+                    style = TextStyle(color = axisLabelColor),
                     minWidth = TextComponent.MinWidth.fixed(30.dp)
                 ),
-                guideline = LineComponent(fill = Fill(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
+                guideline = LineComponent(fill = Fill(scheme.outlineVariant.copy(alpha = gridGuideAlpha)))
             ),
             bottomAxis = HorizontalAxis.rememberBottom(
                 valueFormatter = timeFormatter,
                 itemPlacer = bottomAxisItemPlacer,
                 label = rememberTextComponent(
-                    style = TextStyle(color = MaterialTheme.colorScheme.onSurface)
+                    style = TextStyle(color = axisLabelColor)
                 ),
-                guideline = LineComponent(fill = Fill(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
+                guideline = LineComponent(fill = Fill(scheme.outlineVariant.copy(alpha = gridGuideAlpha)))
             ),
             decorations = decorations,
             getXStep = { 1.0 }
@@ -550,4 +749,24 @@ fun BgGraphCompose(
         scrollState = scrollState,
         zoomState = zoomState
     )
+}
+
+private fun interpolateBgForDashboardMarker(
+    epochMs: Long,
+    sortedAsc: List<BgDataPoint>,
+    fallbackY: Double,
+): Double {
+    if (sortedAsc.isEmpty()) return fallbackY
+    if (sortedAsc.size == 1) return sortedAsc.first().value
+    if (epochMs <= sortedAsc.first().timestamp) return sortedAsc.first().value
+    if (epochMs >= sortedAsc.last().timestamp) return sortedAsc.last().value
+    for (i in 0 until sortedAsc.lastIndex) {
+        val a = sortedAsc[i]
+        val b = sortedAsc[i + 1]
+        if (epochMs < a.timestamp || epochMs > b.timestamp) continue
+        val span = (b.timestamp - a.timestamp).toDouble().coerceAtLeast(1.0)
+        val t = ((epochMs - a.timestamp).toDouble() / span).coerceIn(0.0, 1.0)
+        return a.value + t * (b.value - a.value)
+    }
+    return sortedAsc.last().value
 }

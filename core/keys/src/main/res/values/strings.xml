@@ -14,6 +14,21 @@
     <string name="pref_summary_overview_show_hybrid_aimi_pulse">When enabled, shows the summary card under the glucose ring (last loop, SMB, etc.). Off by default to leave more room for the graph.</string>
     <string name="pref_title_overview_dashboard_extended_metrics">Dashboard: extended metrics</string>
     <string name="pref_summary_overview_dashboard_extended_metrics">Full two-column stats and AIMI trajectory strip. Off = compact row (steps, IOB, heart rate, TBR).</string>
+    <string name="prefs_vico_chart_appearance_title">Home graph (Vico) appearance</string>
+    <string name="pref_title_vico_bg_reading_tint">BG reading dot color</string>
+    <string name="pref_summary_vico_bg_reading_tint">Tint for discrete CGM dots on the main glucose chart. Range-colored bucketed points are unchanged.</string>
+    <string name="pref_title_vico_chart_backdrop">Chart background style</string>
+    <string name="pref_summary_vico_chart_backdrop">Background wash behind the dashboard / overview glucose chart.</string>
+    <string name="pref_vico_tint_theme">Theme default</string>
+    <string name="pref_vico_tint_mauve">Mauve</string>
+    <string name="pref_vico_tint_ocean">Ocean</string>
+    <string name="pref_vico_tint_amber">Amber</string>
+    <string name="pref_vico_tint_rose">Rose</string>
+    <string name="pref_vico_backdrop_theme">Theme default</string>
+    <string name="pref_vico_backdrop_deep">Deep</string>
+    <string name="pref_vico_backdrop_warm">Warm</string>
+    <string name="pref_vico_backdrop_cool">Cool</string>
+    <string name="pref_vico_backdrop_muted">Muted</string>
     <string name="pref_title_show_treatment_button">Show treatment button</string>
     <string name="pref_title_show_wizard_button">Show wizard button</string>
     <string name="pref_title_show_insulin_button">Show insulin button</string>
@@ -335,7 +350,6 @@
     <string name="lang_tr">Turkish</string>
     <string name="lang_zh_tw">Chinese, Traditional</string>
     <string name="lang_zh_cn">Chinese, Simplified</string>
-    <string name="pref_title_skin">Skin</string>
     <string name="pref_title_patient_name">Name</string>
     <string name="pref_summary_patient_name">Name to identify this AAPS instance (shown in reports and sync)</string>
 
@@ -357,6 +371,7 @@
     <string name="pref_dark_theme">Dark theme</string>
     <string name="pref_light_theme">Light theme</string>
     <string name="pref_follow_system_theme">Use device theme</string>
+    <string name="pref_title_skin">Overview layout</string>
 
     <!-- StringKey: Safety preferences -->
     <string name="pref_title_patient_age">Patient age</string>

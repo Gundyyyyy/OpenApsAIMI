@@ -24,6 +24,7 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.keys.BooleanNonKey
+import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.extensions.displayText
@@ -34,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flow
@@ -106,6 +108,12 @@ data class SensitivityUiState(
     val hasData: Boolean = false
 )
 
+@Immutable
+data class VicoChartLook(
+    val bgReadingTintKey: String,
+    val chartBackdropKey: String,
+)
+
 @HiltViewModel
 @Stable
 class GraphViewModel @Inject constructor(
@@ -128,24 +136,40 @@ class GraphViewModel @Inject constructor(
 ) : ViewModel() {
 
     // Chart config - updates when high/low mark preferences change
-    val chartConfigFlow: StateFlow<ChartConfig>
-        field = MutableStateFlow(
-            ChartConfig(
-                highMark = preferences.get(UnitDoubleKey.OverviewHighMark),
-                lowMark = preferences.get(UnitDoubleKey.OverviewLowMark)
-            )
+    private val _chartConfigFlow = MutableStateFlow(
+        ChartConfig(
+            highMark = preferences.get(UnitDoubleKey.OverviewHighMark),
+            lowMark = preferences.get(UnitDoubleKey.OverviewLowMark)
         )
+    )
+    val chartConfigFlow: StateFlow<ChartConfig> = _chartConfigFlow.asStateFlow()
+
+    private val _vicoChartLook = MutableStateFlow(
+        VicoChartLook(
+            bgReadingTintKey = preferences.get(StringKey.OverviewVicoBgReadingTint),
+            chartBackdropKey = preferences.get(StringKey.OverviewVicoChartBackdrop),
+        )
+    )
+    val vicoChartLookFlow: StateFlow<VicoChartLook> = _vicoChartLook.asStateFlow()
 
     init {
         // Update chart config when high/low mark preferences change
         // drop(1) skips the initial emission (already set in field initializer)
         preferences.observe(UnitDoubleKey.OverviewHighMark)
             .drop(1)
-            .onEach { highMark -> chartConfigFlow.update { it.copy(highMark = highMark) } }
+            .onEach { highMark -> _chartConfigFlow.update { it.copy(highMark = highMark) } }
             .launchIn(viewModelScope)
         preferences.observe(UnitDoubleKey.OverviewLowMark)
             .drop(1)
-            .onEach { lowMark -> chartConfigFlow.update { it.copy(lowMark = lowMark) } }
+            .onEach { lowMark -> _chartConfigFlow.update { it.copy(lowMark = lowMark) } }
+            .launchIn(viewModelScope)
+        preferences.observe(StringKey.OverviewVicoBgReadingTint)
+            .drop(1)
+            .onEach { v -> _vicoChartLook.update { it.copy(bgReadingTintKey = v) } }
+            .launchIn(viewModelScope)
+        preferences.observe(StringKey.OverviewVicoChartBackdrop)
+            .drop(1)
+            .onEach { v -> _vicoChartLook.update { it.copy(chartBackdropKey = v) } }
             .launchIn(viewModelScope)
     }
 

@@ -38,4 +38,38 @@ internal object GraphStatusPresenter {
             freshnessLevel = freshness.level,
         )
     }
+
+    /**
+     * Status line for the Vico dashboard graph: BG presence from the overview cache, range from
+     * shell UI state, follow/fixed from live scroll heuristics. Freshness still uses the shell
+     * pipeline [DashboardEmbeddedComposeState.GraphRenderInput.lastRefreshEpochMs] (updated with
+     * each [DashboardShellController.updateGraph]).
+     */
+    fun presentForVicoDashboard(
+        rangeHours: Int,
+        hasBgReadings: Boolean,
+        viewportFollowingLive: Boolean,
+        lastRefreshEpochMs: Long,
+        freshnessConfig: DashboardEmbeddedComposeState.GraphFreshnessConfig,
+        nowEpochMs: Long,
+    ): GraphStatusUi {
+        val freshness = GraphRefreshPolicy.evaluate(
+            lastRefreshEpochMs = lastRefreshEpochMs,
+            nowEpochMs = nowEpochMs,
+            warningThresholdMinutes = freshnessConfig.warningThresholdMinutes,
+            staleThresholdMinutes = freshnessConfig.staleThresholdMinutes,
+        )
+        return GraphStatusUi(
+            summaryRangeHours = rangeHours,
+            dataStateRes = if (hasBgReadings) R.string.graph_live else R.string.graph_no_data,
+            followStateRes = if (viewportFollowingLive) {
+                R.string.graph_following
+            } else {
+                R.string.graph_fixed
+            },
+            freshnessMessageRes = freshness.messageRes,
+            freshnessMinutes = freshness.minutesAgo,
+            freshnessLevel = freshness.level,
+        )
+    }
 }

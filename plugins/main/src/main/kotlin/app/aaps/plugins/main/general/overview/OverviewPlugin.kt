@@ -73,7 +73,6 @@ class OverviewPlugin @Inject constructor(
         .alwaysVisible(true)
         .alwaysEnabled(true)
         .simpleModePosition(PluginDescription.Position.TAB)
-        .pluginIcon(app.aaps.core.ui.R.drawable.ic_home)
         .pluginName(app.aaps.core.ui.R.string.overview)
         .shortName(R.string.overview_shortname)
         .description(R.string.description_overview),
@@ -120,6 +119,8 @@ class OverviewPlugin @Inject constructor(
             .put(StringNonKey.TempTargetPresets, preferences)
             .put(UnitDoubleKey.OverviewLowMark, preferences)
             .put(UnitDoubleKey.OverviewHighMark, preferences)
+            .put(StringKey.OverviewVicoBgReadingTint, preferences)
+            .put(StringKey.OverviewVicoChartBackdrop, preferences)
             .put(IntKey.OverviewCageWarning, preferences)
             .put(IntKey.OverviewCageCritical, preferences)
             .put(IntKey.OverviewIageWarning, preferences)
@@ -144,6 +145,8 @@ class OverviewPlugin @Inject constructor(
             .store(StringNonKey.TempTargetPresets, preferences)
             .store(UnitDoubleKey.OverviewLowMark, preferences)
             .store(UnitDoubleKey.OverviewHighMark, preferences)
+            .store(StringKey.OverviewVicoBgReadingTint, preferences)
+            .store(StringKey.OverviewVicoChartBackdrop, preferences)
             .store(IntKey.OverviewCageWarning, preferences)
             .store(IntKey.OverviewCageCritical, preferences)
             .store(IntKey.OverviewIageWarning, preferences)
@@ -215,6 +218,14 @@ class OverviewPlugin @Inject constructor(
                 items = listOf(
                     UnitDoubleKey.OverviewLowMark,
                     UnitDoubleKey.OverviewHighMark
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "vico_chart_appearance",
+                titleResId = app.aaps.core.keys.R.string.prefs_vico_chart_appearance_title,
+                items = listOf(
+                    StringKey.OverviewVicoBgReadingTint,
+                    StringKey.OverviewVicoChartBackdrop,
                 )
             ),
             BooleanKey.OverviewShowNotesInDialogs,

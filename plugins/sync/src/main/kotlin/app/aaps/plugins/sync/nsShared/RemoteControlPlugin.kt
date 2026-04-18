@@ -1,5 +1,7 @@
 package app.aaps.plugins.sync.nsShared
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
 import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -24,7 +26,7 @@ class RemoteControlPlugin @Inject constructor(
     PluginDescription()
         .mainType(PluginType.GENERAL)
         .fragmentClass(RemoteControlFragment::class.java.name)
-        .pluginIcon(app.aaps.core.ui.R.drawable.ic_home)
+        .icon(Icons.Default.Home)
         .pluginName(R.string.remote_control_title)
         .shortName(R.string.remote_control_title)
         .neverVisible(false)

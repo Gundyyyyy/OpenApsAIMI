@@ -17,7 +17,10 @@
     <dimen name="dashboard_graph_height_min">176dp</dimen>
     <dimen name="dashboard_graph_height_max">340dp</dimen>
     <!-- Simple (one-screen) dashboard: cap Compose graph so hero + actions stay visible -->
-    <dimen name="dashboard_graph_height_max_simple">196dp</dimen>
+    <!-- Slightly shorter main chart so the therapy/activity strip can grow without crowding the hero. -->
+    <dimen name="dashboard_graph_height_max_simple">172dp</dimen>
+    <!-- Vico strip under BG: activity + SMB + TBR (shared scroll/zoom). -->
+    <dimen name="dashboard_activity_strip_height">116dp</dimen>
     <!-- Split so hero content can use more width without shrinking vertical breathing room. -->
     <dimen name="dashboard_card_inner_padding_horizontal">4dp</dimen>
     <dimen name="dashboard_card_inner_padding_vertical">8dp</dimen>

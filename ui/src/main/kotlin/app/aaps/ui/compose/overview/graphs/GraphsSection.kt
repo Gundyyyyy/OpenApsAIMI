@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -132,6 +133,12 @@ fun GraphsSection(
     // causing minTimestamp divergence and scroll misalignment (pixel position
     // maps to different time when x-axis ranges differ).
     val derivedTimeRange by graphViewModel.derivedTimeRange.collectAsStateWithLifecycle()
+
+    val vicoChartLook by graphViewModel.vicoChartLookFlow.collectAsStateWithLifecycle()
+    val schemeForBackdrop = MaterialTheme.colorScheme
+    val overviewBackdropPalette = remember(vicoChartLook.chartBackdropKey, schemeForBackdrop) {
+        vicoChartBackdropPalette(vicoChartLook.chartBackdropKey, schemeForBackdrop)
+    }
 
     // Treatment belt graph - non-interactive, synced from BG
     val beltScrollState = rememberVicoScrollState(
@@ -269,7 +276,11 @@ fun GraphsSection(
         )
         // BG Graph - primary interactive graph
         var editingBgOverlays by remember { mutableStateOf(false) }
-        Box(modifier = Modifier.offset(y = (-16).dp)) {
+        Box(
+            modifier = Modifier
+                .offset(y = (-16).dp)
+                .drawBehind { drawVicoChartBackdrop(overviewBackdropPalette) },
+        ) {
             BgGraphCompose(
                 viewModel = graphViewModel,
                 bgOverlays = graphConfig.bgOverlays,

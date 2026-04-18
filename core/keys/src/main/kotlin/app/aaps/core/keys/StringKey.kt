@@ -241,6 +241,35 @@ enum class StringKey(
     OApsAIMIThyroidTreatmentPhase("key_aimi_thyroid_treatment_phase", "NONE", preferenceType = PreferenceType.LIST),
     OApsAIMIThyroidGuardLevel("key_aimi_thyroid_guard_level", "HIGH", preferenceType = PreferenceType.LIST),
 
+    OverviewVicoBgReadingTint(
+        key = "overview_vico_bg_reading_tint",
+        defaultValue = "theme",
+        titleResId = R.string.pref_title_vico_bg_reading_tint,
+        summaryResId = R.string.pref_summary_vico_bg_reading_tint,
+        preferenceType = PreferenceType.LIST,
+        entries = mapOf(
+            "theme" to R.string.pref_vico_tint_theme,
+            "mauve" to R.string.pref_vico_tint_mauve,
+            "ocean" to R.string.pref_vico_tint_ocean,
+            "amber" to R.string.pref_vico_tint_amber,
+            "rose" to R.string.pref_vico_tint_rose,
+        ),
+    ),
+    OverviewVicoChartBackdrop(
+        key = "overview_vico_chart_backdrop",
+        defaultValue = "theme",
+        titleResId = R.string.pref_title_vico_chart_backdrop,
+        summaryResId = R.string.pref_summary_vico_chart_backdrop,
+        preferenceType = PreferenceType.LIST,
+        entries = mapOf(
+            "theme" to R.string.pref_vico_backdrop_theme,
+            "deep" to R.string.pref_vico_backdrop_deep,
+            "warm" to R.string.pref_vico_backdrop_warm,
+            "cool" to R.string.pref_vico_backdrop_cool,
+            "muted" to R.string.pref_vico_backdrop_muted,
+        ),
+    ),
+
     // 🚨 Emergency SOS (Hypo)
     AimiEmergencySosPhone("aimi_emergency_sos_phone", ""),
 }

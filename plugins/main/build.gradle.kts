@@ -30,6 +30,7 @@ dependencies {
     implementation(project(":core:utils"))
     implementation(project(":shared:impl"))
     implementation(project(":plugins:aps"))  // For AIMI Auditor UI components
+    implementation(project(":ui")) // GraphViewModel + BgGraphCompose (Vico) for dashboard graph
 
     testImplementation(project(":implementation"))
     testImplementation(project(":plugins:aps"))

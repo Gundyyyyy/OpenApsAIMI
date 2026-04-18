@@ -1,5 +1,8 @@
 package app.aaps.plugins.main.general.dashboard
 
+import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
+import app.aaps.core.interfaces.overview.graph.ChartTbrSegment
+
 /**
  * Central builder for Compose graph render snapshots.
  *
@@ -22,9 +25,9 @@ internal object GraphRenderInputFactory {
         targetHighMgdl: Double?,
         points: List<DashboardEmbeddedComposeState.GraphPoint>,
         predictionPoints: List<DashboardEmbeddedComposeState.GraphPoint> = emptyList(),
-        smbMarkers: List<DashboardEmbeddedComposeState.SmbMarker> = emptyList(),
+        smbMarkers: List<ChartSmbMarker> = emptyList(),
         tbrMarkerEpochMs: List<Long> = emptyList(),
-        tbrSegments: List<DashboardEmbeddedComposeState.TbrSegment> = emptyList(),
+        tbrSegments: List<ChartTbrSegment> = emptyList(),
     ): DashboardEmbeddedComposeState.GraphRenderInput =
         DashboardEmbeddedComposeState.GraphRenderInput(
             rangeHours = rangeHours,

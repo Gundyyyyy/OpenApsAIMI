@@ -267,6 +267,7 @@
     <string name="dashboard_graph_smb_toast">SMB · %1$s</string>
     <string name="dashboard_metrics_overflow_a11y">Dashboard layout options</string>
     <string name="graph_legend_tbr">TBR</string>
+    <string name="graph_legend_activity">Activity</string>
     <string name="dashboard_hero_cgm_smoothing_chip_two">%1$s · %2$s</string>
     <string name="dashboard_hero_cgm_smoothing_dialog_title">Sensor &amp; smoothing</string>
     <string name="dashboard_notifications_compact_header">%1$d× %2$s</string>

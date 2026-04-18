@@ -21,6 +21,8 @@ import app.aaps.core.graph.data.ScaledDataPoint
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
+import app.aaps.core.interfaces.overview.graph.ChartTbrSegment
 import app.aaps.core.interfaces.overview.OverviewMenus.CharType
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.protection.ProtectionCheck
@@ -410,6 +412,7 @@ internal class DashboardShellController(
         host.embeddedComposeState?.onRunLoopRequested = null
         host.embeddedComposeState?.onDismissNotification = null
         host.embeddedComposeState?.resetGraphPan()
+        host.embeddedComposeState?.resetVicoViewportFollowState()
         host.embeddedComposeState?.updateGraphCommands(DashboardEmbeddedComposeState.GraphComposeCommands())
         host.embeddedComposeState?.updateGraphMessage("")
         host.embeddedComposeState?.updateGraphRenderInput(
@@ -682,6 +685,8 @@ internal class DashboardShellController(
 
         currentRange = clampedHours
         host.embeddedComposeState?.resetGraphPan()
+        host.embeddedComposeState?.bumpVicoViewportReset()
+        host.embeddedComposeState?.resetVicoViewportFollowState()
         host.embeddedComposeState?.updateGraphRange(clampedHours)
         overviewData.rangeToDisplay = clampedHours
         overviewData.initRange()
@@ -753,6 +758,8 @@ internal class DashboardShellController(
         forceGraphViewportReset = false
         if (snapComposeViewportToLive) {
             composeState?.resetGraphPan()
+            composeState?.bumpVicoViewportReset()
+            composeState?.resetVicoViewportFollowState()
         }
         if (!useComposeOnlyGraphPipeline) {
             val graphView = binding.glucoseGraph ?: return
@@ -858,12 +865,12 @@ internal class DashboardShellController(
         )
     }
 
-    private fun extractSmbMarkers(fromMs: Long, toMs: Long): List<DashboardEmbeddedComposeState.SmbMarker> = runCatching {
+    private fun extractSmbMarkers(fromMs: Long, toMs: Long): List<ChartSmbMarker> = runCatching {
         val series =
             overviewData.treatmentsSeries as? PointsWithLabelGraphSeries<DataPointWithLabelInterface>
                 ?: return@runCatching emptyList()
         val bolusStep = activePlugin.activePump.pumpDescription.bolusStep
-        val out = ArrayList<DashboardEmbeddedComposeState.SmbMarker>()
+        val out = ArrayList<ChartSmbMarker>()
         val iterator = series.getValues(fromMs.toDouble(), toMs.toDouble())
         while (iterator.hasNext()) {
             when (val dp = iterator.next()) {
@@ -871,7 +878,7 @@ internal class DashboardShellController(
                     if (dp.data.type == BS.Type.SMB) {
                         val t = dp.x.toLong()
                         val label = decimalFormatter.toPumpSupportedBolusWithUnits(dp.data.amount, bolusStep)
-                        out.add(DashboardEmbeddedComposeState.SmbMarker(timestampEpochMs = t, amountLabel = label))
+                        out.add(ChartSmbMarker(timestampEpochMs = t, amountLabel = label))
                     }
                 else -> Unit
             }
@@ -904,7 +911,7 @@ internal class DashboardShellController(
         decimateMarkerTimes(raw, minGapMs = 5 * 60_000L, maxMarkers = 36)
     }.getOrElse { emptyList() }
 
-    private fun extractTbrSegments(fromMs: Long, toMs: Long): List<DashboardEmbeddedComposeState.TbrSegment> = runCatching {
+    private fun extractTbrSegments(fromMs: Long, toMs: Long): List<ChartTbrSegment> = runCatching {
         val series = overviewData.tempBasalGraphSeries as? LineGraphSeries<ScaledDataPoint>
             ?: return@runCatching emptyList()
         val points = ArrayList<ScaledDataPoint>()
@@ -931,7 +938,7 @@ internal class DashboardShellController(
         }
         runs.add(Triple(runStart, runEnd, runY))
         val maxMag = runs.maxOf { abs(it.third) }.coerceAtLeast(1e-6)
-        val out = ArrayList<DashboardEmbeddedComposeState.TbrSegment>()
+        val out = ArrayList<ChartTbrSegment>()
         for ((s, e, y) in runs) {
             val duration = e - s
             if (duration < 30_000L) continue
@@ -940,7 +947,7 @@ internal class DashboardShellController(
             if (overlapEnd <= overlapStart) continue
             val intensity = (abs(y) / maxMag).toFloat().coerceIn(0.1f, 1f)
             out.add(
-                DashboardEmbeddedComposeState.TbrSegment(
+                ChartTbrSegment(
                     startEpochMs = overlapStart,
                     endEpochMs = overlapEnd,
                     intensity01 = intensity,

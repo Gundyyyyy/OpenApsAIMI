@@ -86,6 +86,14 @@ class BuiltInSearchables @Inject constructor(
                     UnitDoubleKey.OverviewHighMark
                 )
             ),
+            PreferenceSubScreenDef(
+                key = "vico_chart_appearance",
+                titleResId = app.aaps.core.keys.R.string.prefs_vico_chart_appearance_title,
+                items = listOf(
+                    StringKey.OverviewVicoBgReadingTint,
+                    StringKey.OverviewVicoChartBackdrop,
+                )
+            ),
 
             BooleanKey.OverviewShowNotesInDialogs,
             StringKey.GeneralDarkMode

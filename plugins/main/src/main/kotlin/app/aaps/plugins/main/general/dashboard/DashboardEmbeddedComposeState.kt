@@ -5,6 +5,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
+import app.aaps.core.interfaces.overview.graph.ChartTbrSegment
 import app.aaps.plugins.main.BuildConfig
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.overview.notifications.NotificationStore
@@ -40,30 +42,14 @@ class DashboardEmbeddedComposeState {
         val targetHighMgdl: Double? = null,
         val points: List<GraphPoint> = emptyList(),
         val predictionPoints: List<GraphPoint> = emptyList(),
-        val smbMarkers: List<SmbMarker> = emptyList(),
+        val smbMarkers: List<ChartSmbMarker> = emptyList(),
         val tbrMarkerEpochMs: List<Long> = emptyList(),
-        val tbrSegments: List<TbrSegment> = emptyList(),
+        val tbrSegments: List<ChartTbrSegment> = emptyList(),
     )
 
     data class GraphPoint(
         val timestampEpochMs: Long,
         val value: Double,
-    )
-
-    data class SmbMarker(
-        val timestampEpochMs: Long,
-        val amountLabel: String,
-    )
-
-    /**
-     * Temp basal segment in the visible graph window: horizontal extent encodes **duration**,
-     * bar height encodes **relative delivery** (from scaled basal series, normalized in the window).
-     */
-    data class TbrSegment(
-        val startEpochMs: Long,
-        val endEpochMs: Long,
-        /** 0..1 for bar height in the TBR lane (minimum visual floor applied in renderer). */
-        val intensity01: Float,
     )
 
     data class GraphComposeCommands(
@@ -83,6 +69,34 @@ class DashboardEmbeddedComposeState {
     var graphUiState by mutableStateOf(GraphComposeUiState())
     var graphRenderInput by mutableStateOf(GraphRenderInput())
     var graphCommands by mutableStateOf(GraphComposeCommands())
+
+    /**
+     * Incremented when the shell snaps the graph to « live » (range change, recovery, etc.) so the
+     * Vico dashboard chart can reset scroll/zoom to match the legacy Canvas viewport behaviour.
+     */
+    var vicoViewportResetGeneration by mutableIntStateOf(0)
+        private set
+
+    internal fun bumpVicoViewportReset() {
+        vicoViewportResetGeneration++
+    }
+
+    /**
+     * When the dashboard uses Vico, reflects whether the chart viewport is at the « live » edge
+     * (right side), as opposed to the user having panned into history.
+     */
+    var vicoViewportFollowingLive by mutableStateOf(true)
+        private set
+
+    internal fun setVicoViewportFollowingLive(following: Boolean) {
+        if (vicoViewportFollowingLive != following) {
+            vicoViewportFollowingLive = following
+        }
+    }
+
+    internal fun resetVicoViewportFollowState() {
+        vicoViewportFollowingLive = true
+    }
 
     /**
      * Horizontal pan for the Compose-only graph: shifts the visible window backward in time

@@ -89,8 +89,6 @@ class OverviewPlugin @Inject constructor(
         overviewMenus.loadGraphConfig()
         overviewData.initRange()
 
-        notificationManager.createNotificationChannel()
-
         disposable += rxBus
             .toObservable(EventIobCalculationProgress::class.java)
             .observeOn(aapsSchedulers.io)

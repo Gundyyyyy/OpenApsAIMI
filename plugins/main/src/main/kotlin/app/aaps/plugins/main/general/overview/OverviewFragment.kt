@@ -63,6 +63,7 @@ import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.protection.ProtectionCheck
+import app.aaps.core.interfaces.protection.ProtectionResult
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
@@ -92,11 +93,11 @@ import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.objects.extensions.directionToIcon
+import app.aaps.core.objects.extensions.directionToLegacyDrawable
 import app.aaps.core.objects.extensions.displayText
 import app.aaps.core.objects.extensions.round
+import app.aaps.core.objects.overview.DashboardCoherentGlucose
 import app.aaps.core.objects.profile.ProfileSealed
-import app.aaps.core.ui.UIRunnable
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.elements.SingleClickButton
 import app.aaps.core.ui.extensions.runOnUiThread
@@ -628,20 +629,21 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                         val lastRun = loop.lastRun
                         loop.invoke("Accept temp button", false)
                         if (lastRun?.lastAPSRun != null && lastRun.constraintsProcessed?.isChangeRequested == true) {
-                            protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable {
-                                if (isAdded)
-                                    uiInteraction.showOkCancelDialog(
-                                        context = requireActivity(),
-                                        title = rh.gs(app.aaps.core.ui.R.string.tempbasal_label),
-                                        message = lastRun.constraintsProcessed?.resultAsHtmlString() ?: "",
-                                        ok = {
-                                            uel.log(Action.ACCEPTS_TEMP_BASAL, Sources.Overview)
-                                            (context?.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager?)?.cancel(Constants.notificationID)
-                                            rxBus.send(EventMobileToWear(EventData.CancelNotification(dateUtil.now())))
-                                            handler.post { loop.acceptChangeRequest() }
-                                            binding.buttonsLayout.acceptTempButton.visibility = View.GONE
-                                        })
-                            })
+                            protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                                if (result != ProtectionResult.GRANTED) return@requestProtection
+                                if (!isAdded) return@requestProtection
+                                uiInteraction.showOkCancelDialog(
+                                    context = requireActivity(),
+                                    title = rh.gs(app.aaps.core.ui.R.string.tempbasal_label),
+                                    message = lastRun.constraintsProcessed?.resultAsHtmlString() ?: "",
+                                    ok = {
+                                        uel.log(Action.ACCEPTS_TEMP_BASAL, Sources.Overview)
+                                        (context?.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager?)?.cancel(Constants.notificationID)
+                                        rxBus.send(EventMobileToWear(EventData.CancelNotification(dateUtil.now())))
+                                        handler.post { loop.acceptChangeRequest() }
+                                        binding.buttonsLayout.acceptTempButton.visibility = View.GONE
+                                    })
+                            }
                         }
                     }
                 }
@@ -649,9 +651,9 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
             R.id.temp_target          -> {
                 val act = activity ?: return
-                protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                    if (isAdded) uiInteraction.openTempTargetManagementScreen(act)
-                })
+                protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                    if (result == ProtectionResult.GRANTED && isAdded) uiInteraction.openTempTargetManagementScreen(act)
+                }
             }
 
             R.id.pump_status_layout   -> {
@@ -665,9 +667,9 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
             R.id.aps_mode, R.id.loop_indicator, R.id.loop_status -> {
                 val act = activity ?: return
-                protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                    if (isAdded) uiInteraction.openRunningModeScreen(act)
-                })
+                protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                    if (result == ProtectionResult.GRANTED && isAdded) uiInteraction.openRunningModeScreen(act)
+                }
             }
 
             R.id.active_profile       -> {
@@ -681,9 +683,9 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
         when (v.id) {
             R.id.aps_mode, R.id.loop_indicator, R.id.loop_status -> {
                 activity?.let { act ->
-                    protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                        if (isAdded) uiInteraction.openRunningModeScreen(act)
-                    })
+                    protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                        if (result == ProtectionResult.GRANTED && isAdded) uiInteraction.openRunningModeScreen(act)
+                    }
                 }
                 return true
             }
@@ -698,9 +700,9 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                     if (loop.runningMode == RM.Mode.DISCONNECTED_PUMP)
                         OKDialog.show(act, rh.gs(R.string.not_available_full), rh.gs(R.string.smscommunicator_pump_disconnected))
                     else
-                        protectionCheck.queryProtection(act, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                            if (isAdded) uiInteraction.openProfileActivationScreen(act, 0)
-                        })
+                        protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                            if (result == ProtectionResult.GRANTED && isAdded) uiInteraction.openProfileActivationScreen(act, 0)
+                        }
                 }
                 return true
             }
@@ -987,7 +989,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             _binding ?: return@runOnUiThread
             binding.infoLayout.bg.text = profileUtil.fromMgdlToStringInUnits(displayMgdl)
             binding.infoLayout.bg.setTextColor(displayBgColor)
-            trendArrow?.let { binding.infoLayout.arrow.setImageResource(it.directionToIcon()) }
+            trendArrow?.let { binding.infoLayout.arrow.setImageResource(it.directionToLegacyDrawable()) }
             binding.infoLayout.arrow.visibility = (trendArrow != null).toVisibilityKeepSpace()
             binding.infoLayout.arrow.setColorFilter(displayBgColor)
             binding.infoLayout.arrow.contentDescription = displayBgDescription + " " + rh.gs(app.aaps.core.ui.R.string.and) + " " + trendDescription
@@ -1181,7 +1183,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             // 6. UPDATE TREND ARROW (Right of circle)
             // ───────────────────────────────────────────────────────────────────────
             if (trendArrowView != null && trendArrow != null) {
-                trendArrowView.setImageResource(trendArrow.directionToIcon())
+                trendArrowView.setImageResource(trendArrow.directionToLegacyDrawable())
                 trendArrowView.visibility = android.view.View.VISIBLE
                 trendArrowView.setColorFilter(displayBgColor)
             } else if (trendArrowView != null) {

@@ -61,7 +61,7 @@ import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.data.time.T
-import app.aaps.core.objects.extensions.directionToIcon
+import app.aaps.core.objects.extensions.directionToLegacyDrawable
 import app.aaps.core.objects.extensions.displayText
 import java.io.Serializable
 import app.aaps.core.objects.extensions.round
@@ -70,7 +70,7 @@ import app.aaps.core.objects.extensions.toStringFull
 import app.aaps.core.objects.extensions.toStringShort
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.plugins.main.R
-import app.aaps.plugins.main.general.overview.DashboardCoherentGlucose
+import app.aaps.core.objects.overview.DashboardCoherentGlucose
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import kotlinx.coroutines.CancellationException
@@ -400,7 +400,7 @@ class OverviewViewModel(
         val displayMgdl = DashboardCoherentGlucose.displayMgdl(lastBg, gs, smoothing, now)
         val displayTs = DashboardCoherentGlucose.displayTimestamp(lastBg, gs, smoothing, now)
         val glucoseText = profileUtil.fromMgdlToStringInUnits(displayMgdl)
-        val trendArrow = trendCalculator.getTrendArrow(iobCobCalculator.ads)?.directionToIcon()
+        val trendArrow = trendCalculator.getTrendArrow(iobCobCalculator.ads)?.directionToLegacyDrawable()
         val trendDescription = trendCalculator.getTrendDescription(iobCobCalculator.ads) ?: ""
         val deltaMgdlForDisplay = when {
             gs == null -> null

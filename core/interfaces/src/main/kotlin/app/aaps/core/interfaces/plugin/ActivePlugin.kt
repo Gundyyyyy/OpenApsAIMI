@@ -7,10 +7,10 @@ import app.aaps.core.interfaces.aps.Sensitivity
 import app.aaps.core.interfaces.constraints.Objectives
 import app.aaps.core.interfaces.constraints.Safety
 import app.aaps.core.interfaces.iob.IobCobCalculator
-import app.aaps.core.interfaces.overview.Overview
 
 import app.aaps.core.interfaces.pump.Pump
 import app.aaps.core.interfaces.pump.PumpWithConcentration
+import app.aaps.core.interfaces.overview.Overview
 import app.aaps.core.interfaces.smoothing.Smoothing
 import app.aaps.core.interfaces.source.BgSource
 import app.aaps.core.interfaces.sync.NsClient
@@ -49,12 +49,6 @@ interface ActivePlugin {
     val activeSensitivity: Sensitivity
 
     /**
-     *  Currently selected Overview plugin
-     *  Always OverviewPlugin
-     */
-    val activeOverview: Overview
-
-    /**
      *  Currently selected Safety plugin
      *  Always SafetyPlugin
      */
@@ -75,6 +69,11 @@ interface ActivePlugin {
      *  Smoothing plugin
      */
     val activeSmoothing: Smoothing
+
+    /**
+     * Overview / dashboard plugin (provides [Overview.overviewBus] for UI refresh coordination).
+     */
+    val activeOverview: Overview
 
     /**
      *  Currently selected NsClient plugin

@@ -15,6 +15,9 @@ interface BgQualityCheck {
     var state: State
     var message: String
     val stateFlow: StateFlow<State>
-    @DrawableRes fun icon(): Int
+
+    @DrawableRes
+    fun icon(): Int
+
     fun stateDescription(): String
 }

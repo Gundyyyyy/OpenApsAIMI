@@ -22,20 +22,8 @@ interface UiInteraction {
     /** The main activity of the application. */
     val mainActivity: Class<*>
 
-    /**
-     * Activity class used for legacy XML preference entry points.
-     * Prefer Compose navigation; this typically points at [app.aaps.ComposeMainActivity].
-     */
-    val preferencesActivity: Class<*>
-
-    /** The activity for browsing history. */
-    val historyBrowseActivity: Class<*>
-
     /** The activity for displaying error information. */
     val errorHelperActivity: Class<*>
-
-    /** A generic activity that can host a single fragment. */
-    val singleFragmentActivity: Class<*>
 
     /**
      * Display names for units preferences.

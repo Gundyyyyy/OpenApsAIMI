@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.openAPSAIMI.advisor.auditor
 import app.aaps.core.interfaces.aps.GlucoseStatusAIMI
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.OapsProfileAimi
+import app.aaps.core.interfaces.profile.EffectiveProfile
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.keys.BooleanKey
@@ -106,6 +107,7 @@ class AuditorOrchestrator @Inject constructor(
      * @param smb30min SMB delivered in last 30min (for trigger logic)
      * @param predictionAvailable Is prediction available
      * @param inPrebolusWindow Is in prebolus window (P1/P2)
+     * @param effectiveProfile When non-null, trajectory history for the auditor uses time-correct IOB samples.
      * @param callback Optional callback with verdict and modulated decision
      */
     fun auditDecision(
@@ -140,6 +142,7 @@ class AuditorOrchestrator @Inject constructor(
         predictedBg: Double?,
         eventualBg: Double?,
         inPrebolusWindow: Boolean,
+        effectiveProfile: EffectiveProfile? = null,
         callback: ((AuditorVerdict?, DecisionResult) -> Unit)? = null
     ) {
         val now = System.currentTimeMillis()
@@ -316,7 +319,8 @@ class AuditorOrchestrator @Inject constructor(
                     wcycleFactor = wcycleFactor,
                     tbrMaxMode = tbrMaxMode,
                     tbrMaxAutoDrive = tbrMaxAutoDrive,
-                    physio = physioCtx
+                    physio = physioCtx,
+                    effectiveProfile = effectiveProfile,
                 )
                 
                 // Get provider

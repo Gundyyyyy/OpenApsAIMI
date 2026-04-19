@@ -67,6 +67,7 @@ internal fun DashboardGraphComposeCard(
     val useVicoGraph = !attachLegacyGraphBackend
     val vicoChartLook by graphViewModel.vicoChartLookFlow.collectAsStateWithLifecycle()
     val graphConfig by graphViewModel.graphConfigFlow.collectAsStateWithLifecycle()
+    val generalUnits by graphViewModel.generalUnits.collectAsStateWithLifecycle()
     val showPredictionLegend = dashboardGraphPredictionLegendVisible(
         useVicoGraph = useVicoGraph,
         canvasRenderInput = composeState.graphRenderInput,
@@ -304,8 +305,8 @@ internal fun DashboardGraphComposeCard(
                 verticalAlignment = Alignment.Bottom,
             ) {
                 if (!useVicoGraph) {
-                    val yAxisLabels = remember(renderInput) {
-                        graphYAxisLabels(renderInput)
+                    val yAxisLabels = remember(renderInput, generalUnits) {
+                        graphYAxisLabels(renderInput) { y -> graphViewModel.formatBgVerticalAxisValue(y) }
                     }
                     Column(
                         modifier = Modifier
@@ -536,7 +537,10 @@ private fun graphTickLabels(fromTimeEpochMs: Long, toTimeEpochMs: Long): List<St
     }
 }
 
-private fun graphYAxisLabels(renderInput: DashboardEmbeddedComposeState.GraphRenderInput): List<String> {
+private fun graphYAxisLabels(
+    renderInput: DashboardEmbeddedComposeState.GraphRenderInput,
+    formatY: (Double) -> String,
+): List<String> {
     val values = buildList {
         addAll(renderInput.points.map { it.value })
         addAll(renderInput.predictionPoints.map { it.value })
@@ -553,6 +557,6 @@ private fun graphYAxisLabels(renderInput: DashboardEmbeddedComposeState.GraphRen
     return (0..ticks).map { idx ->
         val ratio = idx.toDouble() / ticks.toDouble()
         val value = paddedMax - ((paddedMax - paddedMin) * ratio)
-        value.toInt().toString()
+        formatY(value)
     }
 }

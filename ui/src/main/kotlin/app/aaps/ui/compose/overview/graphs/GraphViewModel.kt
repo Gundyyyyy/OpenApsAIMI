@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
@@ -151,6 +152,9 @@ class GraphViewModel @AssistedInject constructor(
     )
     val chartConfigFlow: StateFlow<ChartConfig> = _chartConfigFlow.asStateFlow()
 
+    /** Drives BG Y-axis label recomposition when the user switches mg/dl ↔ mmol in General. */
+    val generalUnits: StateFlow<String> = preferences.observe(StringKey.GeneralUnits)
+
     private val _vicoChartLook = MutableStateFlow(
         VicoChartLook(
             bgReadingTintKey = preferences.get(StringKey.OverviewVicoBgReadingTint),
@@ -184,6 +188,19 @@ class GraphViewModel @AssistedInject constructor(
     val graphConfigFlow: StateFlow<GraphConfig> = graphConfigRepository.graphConfigFlow
 
     fun updateGraphConfig(config: GraphConfig) = graphConfigRepository.update(config)
+
+    /**
+     * Formats a BG chart Y value. [mgdlY] is always in mg/dL (internal chart coordinates);
+     * output follows [ProfileFunction.getUnits] (General → Units).
+     */
+    fun formatBgVerticalAxisValue(mgdlY: Double): String {
+        val u = profileFunction.getUnits()
+        val v = profileUtil.fromMgdlToUnits(mgdlY, u)
+        return when (u) {
+            GlucoseUnit.MMOL -> decimalFormatter.to1Decimal(v)
+            GlucoseUnit.MGDL -> decimalFormatter.to0Decimal(v)
+        }
+    }
 
     // Individual series flows - each can trigger independent recomposition
     val bgReadingsFlow: StateFlow<List<BgDataPoint>> = cache.bgReadingsFlow

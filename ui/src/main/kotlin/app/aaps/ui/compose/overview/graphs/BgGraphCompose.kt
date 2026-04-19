@@ -37,6 +37,7 @@ import com.patrykandpatrick.vico.compose.cartesian.axis.Axis
 import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModelProducer
+import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianLayerRangeProvider
 import com.patrykandpatrick.vico.compose.cartesian.data.lineSeries
 import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
@@ -395,6 +396,10 @@ fun BgGraphCompose(
     // Time formatter and axis configuration
     val timeFormatter = rememberTimeFormatter(minTimestamp)
     val bottomAxisItemPlacer = rememberBottomAxisItemPlacer(minTimestamp)
+    val generalUnits by viewModel.generalUnits.collectAsStateWithLifecycle()
+    val bgStartAxisValueFormatter = remember(generalUnits) {
+        CartesianValueFormatter { _, y, _ -> viewModel.formatBgVerticalAxisValue(y) }
+    }
 
     // =========================================================================
     // BG layer lines (layer 0)
@@ -727,6 +732,7 @@ fun BgGraphCompose(
             ),
             startAxis = VerticalAxis.rememberStart(
                 itemPlacer = VerticalAxis.ItemPlacer.step({ yAxisStep }),
+                valueFormatter = bgStartAxisValueFormatter,
                 label = rememberTextComponent(
                     style = TextStyle(color = axisLabelColor),
                     minWidth = TextComponent.MinWidth.fixed(30.dp)

@@ -9,6 +9,7 @@ import app.aaps.core.interfaces.iob.GlucoseStatusProvider
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.overview.LastBgData
+import app.aaps.core.interfaces.overview.Overview
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.overview.OverviewMenus
 import app.aaps.core.interfaces.plugin.ActivePlugin
@@ -39,6 +40,7 @@ import app.aaps.plugins.main.general.overview.OverviewDataImpl
 import app.aaps.plugins.main.general.overview.OverviewEntryFragment
 import app.aaps.plugins.main.general.overview.OverviewFragment
 import app.aaps.plugins.main.general.overview.OverviewMenusImpl
+import app.aaps.plugins.main.general.overview.OverviewPlugin
 import app.aaps.plugins.main.general.overview.graphData.GraphData
 import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
 import app.aaps.plugins.main.general.overview.notifications.receivers.DismissNotificationReceiver
@@ -183,5 +185,6 @@ abstract class OverviewModule {
 
         @Binds fun bindOverviewMenus(overviewMenusImpl: OverviewMenusImpl): OverviewMenus
         @Binds fun bindOverviewData(overviewData: OverviewDataImpl): OverviewData
+        @Binds fun bindOverview(overviewPlugin: OverviewPlugin): Overview
     }
 }

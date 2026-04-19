@@ -31,6 +31,7 @@
         <item name="smbColor">@color/tempbasal</item>
         <item name="bolusDataPointColor">@color/pumpHistory</item>
         <item name="profileSwitchColor">@color/profileSwitch</item>
+        <item name="profileColor">?attr/profileSwitchColor</item>
         <item name="originalBgValueColor">@color/white</item>
         <item name="notificationAnnouncement">@color/notificationAnnouncement</item>
         <item name="notificationSettingsExport">@color/notificationSettingsExport</item>
@@ -53,8 +54,10 @@
         <item name="ribbonCriticalColor">@color/ribbonCritical</item>
         <item name="ribbonTextDefaultColor">@color/ribbonTextDefault</item>
         <item name="ribbonTextWarningColor">@color/ribbonTextWarning</item>
+        <item name="pumpStatusBackground">?attr/ribbonDefaultColor</item>
         <item name="popupWindowBackground">@color/black</item>
         <item name="tempTargetBackgroundColor">@color/tempTargetBackground</item>
+        <item name="tempTargetConfirmation">@color/tempTargetConfirmation</item>
         <item name="devSlopePosColor">@color/devSlopePos</item>
         <item name="predictionColor">@color/prediction</item>
         <item name="bgiColor">@color/bgi</item>
@@ -125,6 +128,8 @@
         <item name="icBolusColor">@color/colorInsulinButton</item>
         <item name="icBolusCarbsColor">@color/colorCarbsButton</item>
         <item name="icQuickWizardColor">@color/colorQuickWizardButton</item>
+        <item name="calibrationButtonColor">@color/calibrationButton</item>
+        <item name="statsColor">@color/statsIcon</item>
         <!-- IOB -->
         <item name="iobColor">@color/iob</item>
         <!-- Basal -->

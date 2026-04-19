@@ -124,6 +124,8 @@
     <color name="colorInsulinButton">#67dfe8</color>
     <color name="colorCarbsButton">#E19701</color>
     <color name="colorQuickWizardButton">#E19701</color>
+    <color name="calibrationButton">#E93057</color>
+    <color name="statsIcon">#5C6BC0</color>
 
     <color name="cardObjectiveText">#779ECB</color>
 

@@ -134,6 +134,7 @@
     <string name="graph_refresh_now">Updated just now</string>
     <string name="graph_refresh_minutes_ago">Updated %1$d min ago</string>
     <string name="a11y_graph">graph</string>
+    <string name="chart_menu">Chart menu</string>
     <string name="a11y_graph_scale">select graph scale</string>
     <string name="a11y_graph_scale_6h">graph scale 6 hours</string>
     <string name="a11y_graph_scale_9h">graph scale 9 hours</string>

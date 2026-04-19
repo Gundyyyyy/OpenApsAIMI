@@ -153,6 +153,8 @@ class ExponentialSmoothingPlugin @Inject constructor(
     aapsLogger, rh
 ), Smoothing {
 
+    override fun preferDashboardGlucoseFromGlucoseStatus(): Boolean = true
+
     /* REMOVED: DANGEROUS AUTO-CALIBRATION
      * This function was blindly subtracting 20 mg/dL from all values > 220 mg/dL
      * WITHOUT any validation against IOB, COB, or historical trends.

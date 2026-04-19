@@ -32,6 +32,7 @@ import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TT
+import app.aaps.core.data.time.T
 import app.aaps.core.data.pump.defs.PumpType
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
@@ -946,24 +947,54 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
     @SuppressLint("SetTextI18n")
     fun updateBg() {
         val lastBg = lastBgData.lastBg()
-        val lastBgColor = lastBgData.lastBgColor(context)
-        val isActualBg = lastBgData.isActualBg()
+        val now = dateUtil.now()
         val glucoseStatus = glucoseStatusProvider.glucoseStatusData
+        val displayMgdl = DashboardCoherentGlucose.displayMgdl(
+            lastBg,
+            glucoseStatus,
+            activePlugin.activeSmoothing,
+            now
+        )
+        val displayTs = DashboardCoherentGlucose.displayTimestamp(
+            lastBg,
+            glucoseStatus,
+            activePlugin.activeSmoothing,
+            now
+        )
+        val displayBgColor = DashboardCoherentGlucose.displayBgColor(
+            context,
+            displayMgdl,
+            profileFunction,
+            preferences,
+            rh
+        )
+        val isActualBg = DashboardCoherentGlucose.isDisplayActual(
+            lastBg,
+            glucoseStatus,
+            activePlugin.activeSmoothing,
+            now,
+            T.mins(9).msecs()
+        )
         val trendDescription = trendCalculator.getTrendDescription(iobCobCalculator.ads)
         val trendArrow = trendCalculator.getTrendArrow(iobCobCalculator.ads)
-        val lastBgDescription = lastBgData.lastBgDescription()
+        val displayBgDescription = DashboardCoherentGlucose.displayBgDescription(
+            displayMgdl,
+            profileFunction,
+            preferences,
+            rh
+        )
         runOnUiThread {
             _binding ?: return@runOnUiThread
-            binding.infoLayout.bg.text = profileUtil.fromMgdlToStringInUnits(lastBg?.recalculated)
-            binding.infoLayout.bg.setTextColor(lastBgColor)
+            binding.infoLayout.bg.text = profileUtil.fromMgdlToStringInUnits(displayMgdl)
+            binding.infoLayout.bg.setTextColor(displayBgColor)
             trendArrow?.let { binding.infoLayout.arrow.setImageResource(it.directionToIcon()) }
             binding.infoLayout.arrow.visibility = (trendArrow != null).toVisibilityKeepSpace()
-            binding.infoLayout.arrow.setColorFilter(lastBgColor)
-            binding.infoLayout.arrow.contentDescription = lastBgDescription + " " + rh.gs(app.aaps.core.ui.R.string.and) + " " + trendDescription
+            binding.infoLayout.arrow.setColorFilter(displayBgColor)
+            binding.infoLayout.arrow.contentDescription = displayBgDescription + " " + rh.gs(app.aaps.core.ui.R.string.and) + " " + trendDescription
 
             if (glucoseStatus != null) {
                 binding.infoLayout.deltaLarge.text = profileUtil.fromMgdlToSignedStringInUnits(glucoseStatus.delta)
-                binding.infoLayout.deltaLarge.setTextColor(lastBgColor)
+                binding.infoLayout.deltaLarge.setTextColor(displayBgColor)
                 binding.infoLayout.delta.text = profileUtil.fromMgdlToSignedStringInUnits(glucoseStatus.delta)
                 binding.infoLayout.avgDelta.text = profileUtil.fromMgdlToSignedStringInUnits(glucoseStatus.shortAvgDelta)
                 binding.infoLayout.longAvgDelta.text = profileUtil.fromMgdlToSignedStringInUnits(glucoseStatus.longAvgDelta)
@@ -980,11 +1011,11 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                 else binding.infoLayout.bg.paintFlags and Paint.STRIKE_THRU_TEXT_FLAG.inv()
 
             val outDate = (if (!isActualBg) rh.gs(R.string.a11y_bg_outdated) else "")
-            binding.infoLayout.bg.contentDescription = rh.gs(R.string.a11y_blood_glucose) + " " + binding.infoLayout.bg.text.toString() + " " + lastBgDescription + " " + outDate
+            binding.infoLayout.bg.contentDescription = rh.gs(R.string.a11y_blood_glucose) + " " + binding.infoLayout.bg.text.toString() + " " + displayBgDescription + " " + outDate
 
-            binding.infoLayout.timeAgo.text = dateUtil.minOrSecAgo(rh, lastBg?.timestamp)
-            binding.infoLayout.timeAgo.contentDescription = dateUtil.minAgoLong(rh, lastBg?.timestamp)
-            binding.infoLayout.timeAgoShort.text = dateUtil.minAgoShort(lastBg?.timestamp)
+            binding.infoLayout.timeAgo.text = dateUtil.minOrSecAgo(rh, displayTs)
+            binding.infoLayout.timeAgo.contentDescription = dateUtil.minAgoLong(rh, displayTs)
+            binding.infoLayout.timeAgoShort.text = dateUtil.minAgoShort(displayTs)
 
             val qualityIcon = bgQualityCheck.icon()
             if (qualityIcon != 0) {
@@ -1025,8 +1056,27 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
             // Get current data from providers (same as updateBg)
             val lastBg = lastBgData.lastBg()
-            val lastBgColor = lastBgData.lastBgColor(context)
+            val nowCircle = dateUtil.now()
             val glucoseStatus = glucoseStatusProvider.glucoseStatusData
+            val displayMgdl = DashboardCoherentGlucose.displayMgdl(
+                lastBg,
+                glucoseStatus,
+                activePlugin.activeSmoothing,
+                nowCircle
+            )
+            val displayTs = DashboardCoherentGlucose.displayTimestamp(
+                lastBg,
+                glucoseStatus,
+                activePlugin.activeSmoothing,
+                nowCircle
+            )
+            val displayBgColor = DashboardCoherentGlucose.displayBgColor(
+                context,
+                displayMgdl,
+                profileFunction,
+                preferences,
+                rh
+            )
             val trendArrow = trendCalculator.getTrendArrow(iobCobCalculator.ads)
 
             // Try to find Modern Circle components (component_status_card.xml)
@@ -1067,9 +1117,9 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             // ───────────────────────────────────────────────────────────────────────
             // 1. UPDATE GLUCOSE CIRCLE (Custom View with animation)
             // ───────────────────────────────────────────────────────────────────────
-            if (lastBg != null) {
+            if (displayMgdl != null) {
                 glucoseCircle.setGlucose(
-                    glucoseMgDl = lastBg.recalculated,
+                    glucoseMgDl = displayMgdl,
                     targetLow = profile.getTargetLowMgdl(),
                     targetHigh = profile.getTargetHighMgdl(),
                     animate = true
@@ -1080,20 +1130,20 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             // 2. UPDATE DYNAMIC UNICORN COLOR (Based on BG range)
             // ───────────────────────────────────────────────────────────────────────
             val unicornColor = when {
-                lastBg == null -> android.graphics.Color.GRAY
-                lastBg.recalculated < 54.0 -> androidx.core.content.ContextCompat.getColor(
+                displayMgdl == null -> android.graphics.Color.GRAY
+                displayMgdl < 54.0 -> androidx.core.content.ContextCompat.getColor(
                     requireContext(),
                     app.aaps.core.ui.R.color.critical_low
                 ) // Red - Severe hypo
-                lastBg.recalculated < profile.getTargetLowMgdl() -> androidx.core.content.ContextCompat.getColor(
+                displayMgdl < profile.getTargetLowMgdl() -> androidx.core.content.ContextCompat.getColor(
                     requireContext(),
                     app.aaps.core.ui.R.color.low
                 ) // Orange - Hypo
-                lastBg.recalculated <= profile.getTargetHighMgdl() -> androidx.core.content.ContextCompat.getColor(
+                displayMgdl <= profile.getTargetHighMgdl() -> androidx.core.content.ContextCompat.getColor(
                     requireContext(),
                     app.aaps.core.ui.R.color.inRange
                 ) // Green - In range ✅
-                lastBg.recalculated <= 250.0 -> androidx.core.content.ContextCompat.getColor(
+                displayMgdl <= 250.0 -> androidx.core.content.ContextCompat.getColor(
                     requireContext(),
                     app.aaps.core.ui.R.color.high
                 ) // Yellow - High
@@ -1108,13 +1158,13 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             // ───────────────────────────────────────────────────────────────────────
             // 3. UPDATE GLUCOSE VALUE (Inside circle)
             // ───────────────────────────────────────────────────────────────────────
-            glucoseValue?.text = profileUtil.fromMgdlToStringInUnits(lastBg?.recalculated)
-            glucoseValue?.setTextColor(lastBgColor)
+            glucoseValue?.text = profileUtil.fromMgdlToStringInUnits(displayMgdl)
+            glucoseValue?.setTextColor(displayBgColor)
 
             // ───────────────────────────────────────────────────────────────────────
             // 4. UPDATE TIME AGO (Inside circle)
             // ───────────────────────────────────────────────────────────────────────
-            timeAgo?.text = dateUtil.minAgoShort(lastBg?.timestamp)
+            timeAgo?.text = dateUtil.minAgoShort(displayTs)
 
             // ───────────────────────────────────────────────────────────────────────
             // 5. UPDATE DELTA SMALL (Inside circle - compact format)
@@ -1122,7 +1172,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             if (glucoseStatus != null && deltaSmall != null) {
                 val deltaStr = profileUtil.fromMgdlToSignedStringInUnits(glucoseStatus.delta)
                 deltaSmall.text = "Δ $deltaStr"
-                deltaSmall.setTextColor(lastBgColor)
+                deltaSmall.setTextColor(displayBgColor)
             } else {
                 deltaSmall?.text = "--"
             }
@@ -1133,7 +1183,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             if (trendArrowView != null && trendArrow != null) {
                 trendArrowView.setImageResource(trendArrow.directionToIcon())
                 trendArrowView.visibility = android.view.View.VISIBLE
-                trendArrowView.setColorFilter(lastBgColor)
+                trendArrowView.setColorFilter(displayBgColor)
             } else if (trendArrowView != null) {
                 trendArrowView.visibility = android.view.View.INVISIBLE
             }
@@ -1144,7 +1194,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             deltaValue?.let { tv ->
                 if (glucoseStatus != null) {
                     tv.text = profileUtil.fromMgdlToSignedStringInUnits(glucoseStatus.delta)
-                    tv.setTextColor(lastBgColor)
+                    tv.setTextColor(displayBgColor)
                 } else {
                     tv.text = "--"
                 }
@@ -1155,9 +1205,10 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             // ───────────────────────────────────────────────────────────────────────
             activityText?.let { tv ->
                 // Get TBR percentage from current basal vs profile basal
-                val basalData = iobCobCalculator.getBasalData(profile, lastBg?.timestamp ?: dateUtil.now())
+                val basalAt = displayTs ?: lastBg?.timestamp ?: nowCircle
+                val basalData = iobCobCalculator.getBasalData(profile, basalAt)
                 val currentBasal = basalData.basal
-                val profileBasal = profile.getBasal(lastBg?.timestamp ?: dateUtil.now())
+                val profileBasal = profile.getBasal(basalAt)
                 val activity = if (profileBasal > 0) {
                     ((currentBasal / profileBasal) * 100).toInt()
                 } else 100

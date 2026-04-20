@@ -330,8 +330,7 @@ internal fun DashboardGraphComposeCard(
                         .then(if (expandGraphVertically) Modifier.fillMaxHeight() else Modifier)
                         .clip(RoundedCornerShape(graphCorner))
                         .then(
-                            if (!useVicoGraph &&
-                                !attachLegacyGraphBackend &&
+                            if (!attachLegacyGraphBackend &&
                                 composeState.graphCommands.onGraphPanFromDragFraction != null
                             ) {
                                 Modifier.pointerInput(
@@ -473,7 +472,8 @@ private fun dashboardGraphStatusRowModel(
     return GraphStatusPresenter.presentForVicoDashboard(
         rangeHours = composeState.graphUiState.rangeHours,
         hasBgReadings = bgReadings.isNotEmpty(),
-        viewportFollowingLive = composeState.vicoViewportFollowingLive,
+        viewportFollowingLive = composeState.vicoViewportFollowingLive &&
+            composeState.graphPanPastMs == 0L,
         lastRefreshEpochMs = renderInput.lastRefreshEpochMs,
         freshnessConfig = freshnessConfig,
         nowEpochMs = nowEpochMs,

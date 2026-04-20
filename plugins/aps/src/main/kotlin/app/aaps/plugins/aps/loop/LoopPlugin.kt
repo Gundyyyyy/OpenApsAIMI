@@ -415,6 +415,10 @@ class LoopPlugin @Inject constructor(
     }
 
     private suspend fun runningModePreCheckSuspend() {
+        // Config builder may not have a pump yet (cold start / fresh install) — avoid IllegalStateException from [ActivePlugin.activePumpInternal].
+        if (!runCatching { activePlugin.activePumpInternal }.isSuccess) {
+            return
+        }
         val runningMode = persistenceLayer.getRunningModeActiveAt(dateUtil.now())
         val closedLoopAllowed = constraintChecker.isClosedLoopAllowed()
         val loopInvocationAllowed = constraintChecker.isLoopInvocationAllowed()

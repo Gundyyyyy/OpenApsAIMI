@@ -847,10 +847,17 @@ internal class DashboardShellController(
         }
 
         val rangeMs = T.hours(overviewData.rangeToDisplay.toLong()).msecs()
-        val dataEarliest = min(
-            overviewData.fromTime,
-            overviewData.toTime - T.hours(Constants.GRAPH_TIME_RANGE_HOURS.toLong()).msecs(),
-        )
+        // Pan limit must use the oldest *data* (and app graph horizon), not overviewData.fromTime —
+        // fromTime is already the left edge of the current viewport, so min(fromTime, …) made maxPanPast ~0
+        // and the compose graph could not scroll into history.
+        val graphHorizonStartMs = overviewData.toTime - T.hours(Constants.GRAPH_TIME_RANGE_HOURS.toLong()).msecs()
+        val oldestBgMs = overviewData.bgReadingsArray.minOfOrNull { it.timestamp }
+        val dataEarliest =
+            if (oldestBgMs != null) {
+                min(oldestBgMs, graphHorizonStartMs)
+            } else {
+                graphHorizonStartMs
+            }
         val maxPanPast = (overviewData.toTime - dataEarliest - rangeMs).coerceAtLeast(0L)
         if (useComposeOnlyGraphPipeline && composeState != null) {
             composeState.clampGraphPanPastMs(maxPanPast)

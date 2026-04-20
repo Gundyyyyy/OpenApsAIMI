@@ -64,10 +64,15 @@ internal fun DashboardBgGraphVico(
     /** When false, the user has panned away from the live edge — do not auto-scroll on new BG. */
     viewportFollowingLive: Boolean,
     onViewportFollowingLiveChanged: (Boolean) -> Unit,
+    /**
+     * When true, horizontal history is driven by the dashboard shell ([graphRenderInput] window + pan), not Vico drag.
+     * Vico user scroll is disabled so horizontal drags reach the shell pan handler.
+     */
+    shellControlsHorizontalWindow: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberVicoScrollState(
-        scrollEnabled = true,
+        scrollEnabled = !shellControlsHorizontalWindow,
         initialScroll = Scroll.Absolute.End,
     )
     val zoomState = rememberVicoZoomState(
@@ -112,14 +117,16 @@ internal fun DashboardBgGraphVico(
         onViewportFollowingLiveChanged(true)
     }
 
-    LaunchedEffect(scrollState, viewportResetGeneration) {
-        snapshotFlow { scrollState.value }
-            .debounce(40)
-            .collect { scroll ->
-                maxScrollSeen.floatValue = max(maxScrollSeen.floatValue, scroll)
-                val atLiveEdge = scroll >= maxScrollSeen.floatValue - VICO_SCROLL_LIVE_EDGE_EPSILON_PX
-                onViewportFollowingLiveChanged(atLiveEdge)
-            }
+    if (!shellControlsHorizontalWindow) {
+        LaunchedEffect(scrollState, viewportResetGeneration) {
+            snapshotFlow { scrollState.value }
+                .debounce(40)
+                .collect { scroll ->
+                    maxScrollSeen.floatValue = max(maxScrollSeen.floatValue, scroll)
+                    val atLiveEdge = scroll >= maxScrollSeen.floatValue - VICO_SCROLL_LIVE_EDGE_EPSILON_PX
+                    onViewportFollowingLiveChanged(atLiveEdge)
+                }
+        }
     }
 
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()

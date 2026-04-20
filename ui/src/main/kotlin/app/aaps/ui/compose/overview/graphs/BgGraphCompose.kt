@@ -48,6 +48,7 @@ import com.patrykandpatrick.vico.compose.common.component.LineComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.TextComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
+import java.util.Locale
 
 /** Series identifiers */
 /** Basal on BG graph — deprecated, now shown as flipped overlay on IOB graph. Set to true to restore. */
@@ -670,7 +671,17 @@ fun BgGraphCompose(
     )
     val axisLabelColor = if (dashboardSoftTherapyVisuals) scheme.onSurfaceVariant.copy(alpha = 0.72f) else scheme.onSurface
     val gridGuideAlpha = if (dashboardSoftTherapyVisuals) 0.22f else 0.5f
-    val yAxisStep = if (dashboardSoftTherapyVisuals && lockStartAxisYFromZero) 9.0 else 1.0
+    // Dashboard soft BG axis: same tick spacing as Overview (48 mg/dL ≈ 2.67 mmol/L) — fewer labels, shorter chart feel.
+    val yAxisStep =
+        if (dashboardSoftTherapyVisuals && lockStartAxisYFromZero) {
+            if (generalUnits.lowercase(Locale.ROOT) == "mmol") {
+                48.0 / 18.0
+            } else {
+                48.0
+            }
+        } else {
+            1.0
+        }
     val decorations = remember(comfortCorridorDecoration, tbrDecoration, nowLine) {
         buildList {
             comfortCorridorDecoration?.let { add(it) }

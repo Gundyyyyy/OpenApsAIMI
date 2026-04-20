@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.overview.OverviewMenus
+import app.aaps.core.interfaces.overview.graph.OverviewDataCache
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.resources.ResourceHelper
@@ -51,4 +52,5 @@ data class DashboardShellDeps(
     val notificationUiBinder: NotificationUiBinder,
     val auditorStatusLiveData: AuditorStatusLiveData,
     val auditorNotificationManager: AuditorNotificationManager,
+    val overviewDataCache: Provider<OverviewDataCache>,
 )

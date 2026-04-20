@@ -812,7 +812,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                         }
 
                         RM.Mode.DISCONNECTED_PUMP -> {
-                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_disconnected)
+                            binding.infoLayout.apsMode.setImageResource(R.drawable.ic_loop_disconnected)
                             apsModeSetA11yLabel(app.aaps.core.ui.R.string.disconnected)
                             binding.infoLayout.apsModeText.text = dateUtil.age(minsToEndOfSuspend * 60000L, true, rh)
                             binding.infoLayout.apsModeText.visibility = View.VISIBLE
@@ -840,25 +840,25 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                         }
 
                         RM.Mode.CLOSED_LOOP_LGS   -> {
-                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_lgs)
+                            binding.infoLayout.apsMode.setImageResource(R.drawable.ic_loop_lgs)
                             apsModeSetA11yLabel(app.aaps.core.ui.R.string.uel_lgs_loop_mode)
                             binding.infoLayout.apsModeText.visibility = View.GONE
                         }
 
                         RM.Mode.CLOSED_LOOP       -> {
-                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.objects.R.drawable.ic_loop_closed)
+                            binding.infoLayout.apsMode.setImageResource(R.drawable.ic_loop_closed)
                             apsModeSetA11yLabel(app.aaps.core.ui.R.string.closedloop)
                             binding.infoLayout.apsModeText.visibility = View.GONE
                         }
 
                         RM.Mode.OPEN_LOOP         -> {
-                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_open)
+                            binding.infoLayout.apsMode.setImageResource(R.drawable.ic_loop_open)
                             apsModeSetA11yLabel(app.aaps.core.ui.R.string.openloop)
                             binding.infoLayout.apsModeText.visibility = View.GONE
                         }
 
                         RM.Mode.DISABLED_LOOP     -> {
-                            binding.infoLayout.apsMode.setImageResource(app.aaps.core.ui.R.drawable.ic_loop_disabled)
+                            binding.infoLayout.apsMode.setImageResource(R.drawable.ic_loop_disabled)
                             apsModeSetA11yLabel(R.string.disabled_loop)
                             binding.infoLayout.apsModeText.visibility = View.GONE
                         }
@@ -1290,7 +1290,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
         val pump = activePlugin.activePump
         val isPatchPump = pump.pumpDescription.isPatchPump
         binding.statusLightsLayout.apply {
-            cannulaOrPatch.setImageResource(if (isPatchPump) app.aaps.core.objects.R.drawable.ic_patch_pump_outline else R.drawable.ic_cp_age_cannula)
+            cannulaOrPatch.setImageResource(if (isPatchPump) R.drawable.ic_patch_pump_outline else R.drawable.ic_cp_age_cannula)
             cannulaOrPatch.contentDescription = rh.gs(if (isPatchPump) R.string.statuslights_patch_pump_age else R.string.statuslights_cannula_age)
             insulinAge.visibility = isPatchPump.not().toVisibility()
             batteryLayout.visibility = (!isPatchPump || pump.pumpDescription.useHardwareLink).toVisibility()
@@ -1526,23 +1526,23 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                 binding.infoLayout.sensitivityIcon.setImageResource(
                     lastAutosensRatio?.let {
                         when {
-                            it > 100.0 -> app.aaps.core.objects.R.drawable.ic_as_above
-                            it < 100.0 -> app.aaps.core.objects.R.drawable.ic_as_below
-                            else       -> app.aaps.core.objects.R.drawable.ic_swap_vert_black_48dp_green
+                            it > 100.0 -> R.drawable.ic_as_above
+                            it < 100.0 -> R.drawable.ic_as_below
+                            else       -> R.drawable.ic_swap_vert_black_48dp_green
                         }
                     }
-                        ?: app.aaps.core.objects.R.drawable.ic_swap_vert_black_48dp_green
+                        ?: R.drawable.ic_swap_vert_black_48dp_green
                 )
             } else {
                 binding.infoLayout.sensitivityIcon.setImageResource(
                     lastAutosensRatio?.let {
                         when {
-                            it > 100.0 -> app.aaps.core.objects.R.drawable.ic_x_as_above
-                            it < 100.0 -> app.aaps.core.objects.R.drawable.ic_x_as_below
-                            else       -> app.aaps.core.objects.R.drawable.ic_x_swap_vert
+                            it > 100.0 -> R.drawable.ic_x_as_above
+                            it < 100.0 -> R.drawable.ic_x_as_below
+                            else       -> R.drawable.ic_x_swap_vert
                         }
                     }
-                        ?: app.aaps.core.objects.R.drawable.ic_x_swap_vert
+                        ?: R.drawable.ic_x_swap_vert
                 )
             }
 

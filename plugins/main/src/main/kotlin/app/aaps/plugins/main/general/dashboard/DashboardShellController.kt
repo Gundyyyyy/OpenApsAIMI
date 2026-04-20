@@ -21,8 +21,10 @@ import app.aaps.core.graph.data.ScaledDataPoint
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.overview.graph.BolusType
 import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
 import app.aaps.core.interfaces.overview.graph.ChartTbrSegment
+import app.aaps.core.interfaces.overview.graph.GraphDataPoint
 import app.aaps.core.interfaces.overview.OverviewMenus.CharType
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.protection.ProtectionCheck
@@ -53,6 +55,7 @@ import app.aaps.plugins.main.general.dashboard.compose.DashboardHeroCommands
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.general.manual.UserManualActivity
+import app.aaps.plugins.main.general.overview.OverviewDataImpl
 import app.aaps.plugins.main.general.overview.graphData.GraphData
 import app.aaps.plugins.main.general.overview.graphData.viewportShouldFollowLiveRange
 import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
@@ -87,7 +90,9 @@ internal class DashboardShellController(
     private val rxBus get() = deps.rxBus
     private val aapsSchedulers get() = deps.aapsSchedulers
     private val fabricPrivacy get() = deps.fabricPrivacy
-    private val overviewData get() = deps.overviewData
+    private val overviewData: OverviewDataImpl
+        get() = deps.overviewData as? OverviewDataImpl
+            ?: error("DashboardShellController requires OverviewDataImpl")
     private val overviewMenus get() = deps.overviewMenus
     private val graphDataProvider: Provider<GraphData> get() = deps.graphDataProvider
     private val config: Config get() = deps.config
@@ -99,6 +104,7 @@ internal class DashboardShellController(
     private val notificationUiBinder get() = deps.notificationUiBinder
     private val auditorStatusLiveData get() = deps.auditorStatusLiveData
     private val auditorNotificationManager get() = deps.auditorNotificationManager
+    private val overviewDataCache get() = deps.overviewDataCache.get()
 
     private val disposables = CompositeDisposable()
     private var shellBinding: DashboardShellBinding? = null
@@ -840,9 +846,19 @@ internal class DashboardShellController(
         } else {
             visibleToEpoch
         }
-        val smbMarkers = extractSmbMarkers(visibleFromEpoch, visibleToEpoch)
-        val tbrMarkers = extractTbrChangeMarkerTimes(visibleFromEpoch, visibleToEpoch)
-        val tbrSegments = extractTbrSegments(visibleFromEpoch, visibleToEpoch)
+        val smbMarkers =
+            if (useComposeOnlyGraphPipeline) extractSmbMarkersFromCache(visibleFromEpoch, visibleToEpoch)
+            else extractSmbMarkers(visibleFromEpoch, visibleToEpoch)
+        val tbrMarkers =
+            when {
+                useComposeOnlyGraphPipeline -> extractTbrChangeMarkerTimesFromBasalSteps(visibleFromEpoch, visibleToEpoch)
+                else -> extractTbrChangeMarkerTimes(visibleFromEpoch, visibleToEpoch)
+            }
+        val tbrSegments =
+            when {
+                useComposeOnlyGraphPipeline -> extractTbrSegmentsFromBasalSteps(visibleFromEpoch, visibleToEpoch)
+                else -> extractTbrSegments(visibleFromEpoch, visibleToEpoch)
+            }
         val graphPanActive = useComposeOnlyGraphPipeline && panPastMs > 0L
         composeState?.updateGraphRenderInput(
             GraphRenderInputFactory.build(
@@ -864,6 +880,72 @@ internal class DashboardShellController(
             ),
         )
     }
+
+    /**
+     * Vico-only dashboard: legacy [overviewData.treatmentsSeries] is not fed by GraphView, but
+     * [OverviewDataCache.treatmentGraphFlow] is kept in sync from the DB.
+     */
+    private fun extractSmbMarkersFromCache(fromMs: Long, toMs: Long): List<ChartSmbMarker> = runCatching {
+        val boluses = overviewDataCache.treatmentGraphFlow.value.boluses
+        if (boluses.isEmpty()) return@runCatching emptyList()
+        val bolusStep = activePlugin.activePump.pumpDescription.bolusStep
+        val out = ArrayList<ChartSmbMarker>()
+        for (b in boluses) {
+            if (b.bolusType != BolusType.SMB) continue
+            val t = b.timestamp
+            if (t < fromMs || t > toMs) continue
+            val label = decimalFormatter.toPumpSupportedBolusWithUnits(b.amount, bolusStep)
+            out.add(ChartSmbMarker(timestampEpochMs = t, amountLabel = label))
+        }
+        out
+    }.getOrElse { emptyList() }
+
+    private fun basalActualStepPointsUpTo(toMs: Long): List<GraphDataPoint> {
+        val actual = overviewDataCache.basalGraphFlow.value.actualBasal
+        if (actual.isEmpty()) return emptyList()
+        return actual.filter { it.timestamp <= toMs }.sortedBy { it.timestamp }
+    }
+
+    private fun extractTbrChangeMarkerTimesFromBasalSteps(fromMs: Long, toMs: Long): List<Long> = runCatching {
+        val pts = basalActualStepPointsUpTo(toMs)
+        if (pts.size < 2) return@runCatching emptyList()
+        val eps = 1e-6
+        val raw = ArrayList<Long>()
+        for (i in 1 until pts.size) {
+            if (abs(pts[i].value - pts[i - 1].value) > eps) {
+                val t = pts[i].timestamp
+                if (t in fromMs..toMs) raw.add(t)
+            }
+        }
+        decimateMarkerTimes(raw, minGapMs = 5 * 60_000L, maxMarkers = 36)
+    }.getOrElse { emptyList() }
+
+    private fun extractTbrSegmentsFromBasalSteps(fromMs: Long, toMs: Long): List<ChartTbrSegment> = runCatching {
+        val pts = basalActualStepPointsUpTo(toMs)
+        if (pts.size < 2) return@runCatching emptyList()
+        val runs = ArrayList<Triple<Long, Long, Double>>()
+        for (i in 0 until pts.size - 1) {
+            runs.add(Triple(pts[i].timestamp, pts[i + 1].timestamp, pts[i].value))
+        }
+        val maxMag = runs.maxOf { abs(it.third) }.coerceAtLeast(1e-6)
+        val out = ArrayList<ChartTbrSegment>()
+        for ((s, e, y) in runs) {
+            val duration = e - s
+            if (duration < 30_000L) continue
+            val overlapStart = max(s, fromMs)
+            val overlapEnd = min(e, toMs)
+            if (overlapEnd <= overlapStart) continue
+            val intensity = (abs(y) / maxMag).toFloat().coerceIn(0.1f, 1f)
+            out.add(
+                ChartTbrSegment(
+                    startEpochMs = overlapStart,
+                    endEpochMs = overlapEnd,
+                    intensity01 = intensity,
+                ),
+            )
+        }
+        out
+    }.getOrElse { emptyList() }
 
     private fun extractSmbMarkers(fromMs: Long, toMs: Long): List<ChartSmbMarker> = runCatching {
         val series =

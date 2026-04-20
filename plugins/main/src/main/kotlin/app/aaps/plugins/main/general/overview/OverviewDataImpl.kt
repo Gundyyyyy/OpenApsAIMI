@@ -25,11 +25,11 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.objects.R
 import app.aaps.core.objects.extensions.convertedToPercent
 import app.aaps.core.objects.extensions.isInProgress
 import app.aaps.core.objects.extensions.toStringFull
 import app.aaps.core.objects.extensions.toStringShort
+import app.aaps.plugins.main.R
 import com.jjoe64.graphview.series.DataPoint
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.DateTimeUnit

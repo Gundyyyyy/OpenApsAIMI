@@ -56,16 +56,14 @@
                     android:layout_height="match_parent" />
             </FrameLayout>
 
-            <!-- Context Badge (on ring) -->
-            <ImageView
+            <!-- Context Badge (on ring); icon = Compose [IcPluginObjectives] -->
+            <androidx.compose.ui.platform.ComposeView
                 android:id="@+id/aimi_context_indicator"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
                 android:contentDescription="@string/aimi_context"
                 android:elevation="20dp"
                 android:visibility="gone"
-                app:srcCompat="@drawable/ic_graduation"
-                app:tint="?android:attr/textColorPrimary"
                 app:layout_constraintTop_toTopOf="@id/glucose_ring_container"
                 app:layout_constraintStart_toStartOf="@id/glucose_ring_container"
                 android:layout_marginStart="8dp"
@@ -337,12 +335,11 @@
                     android:gravity="center_vertical"
                     android:layout_marginBottom="4dp">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_steps"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_dashboard_shoe"
-                        app:tint="@color/dashboard_on_surface_muted" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/steps_text"
@@ -362,12 +359,11 @@
                     android:gravity="center_vertical"
                     android:layout_marginBottom="4dp">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_reservoir"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_cp_age_insulin"
-                        app:tint="@color/dashboard_on_surface" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/reservoir_chip"
@@ -386,12 +382,11 @@
                     android:gravity="center_vertical"
                     android:layout_marginBottom="4dp">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_cob"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_cp_bolus_carbs"
-                        app:tint="@color/dashboard_metric_attention" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/cob_text"
@@ -410,12 +405,11 @@
                     android:gravity="center_vertical"
                     android:layout_marginBottom="4dp">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_cv"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_dashboard_wave"
-                        app:tint="@color/dashboard_on_surface" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/cv_text"
@@ -434,12 +428,11 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_battery"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_cp_age_battery"
-                        app:tint="@color/dashboard_on_surface" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/pump_battery_text"
@@ -480,12 +473,11 @@
                     android:gravity="center_vertical"
                     android:layout_marginBottom="4dp">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_hr"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_cp_heart_rate"
-                        app:tint="@color/dashboard_on_surface_muted" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/hr_text"
@@ -505,12 +497,11 @@
                     android:gravity="center_vertical"
                     android:layout_marginBottom="4dp">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_last_reading"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_dashboard_droplet"
-                        app:tint="@color/dashboard_metric_info" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/last_sensor_value_text"
@@ -532,13 +523,11 @@
                         android:visibility="gone"
                         android:contentDescription="@string/adaptive_smoothing_quality_badge_a11y">
 
-                        <ImageView
-                            android:id="@+id/adaptive_smoothing_quality_icon"
+                        <androidx.compose.ui.platform.ComposeView
+                            android:id="@+id/metric_icon_adaptive_smoothing"
                             android:layout_width="14dp"
                             android:layout_height="14dp"
-                            android:layout_gravity="center"
-                            app:srcCompat="@drawable/ic_dashboard_wave"
-                            app:tint="@color/dashboard_on_surface_muted" />
+                            android:layout_gravity="center" />
                     </FrameLayout>
                 </LinearLayout>
 
@@ -550,12 +539,11 @@
                     android:gravity="center_vertical"
                     android:layout_marginBottom="4dp">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_tbr"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_sensor_reading"
-                        app:tint="@color/dashboard_metric_warning" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/tbr_rate_text"
@@ -573,12 +561,11 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_basal"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_cp_basal"
-                        app:tint="@color/dashboard_on_surface" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/basal_text"
@@ -597,12 +584,11 @@
                     android:gravity="center_vertical"
                     android:layout_marginTop="3dp">
 
-                    <ImageView
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/metric_icon_activity"
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginEnd="6dp"
-                        app:srcCompat="@drawable/ic_cp_basal"
-                        app:tint="@color/dashboard_on_surface" />
+                        android:layout_marginEnd="6dp" />
 
                     <TextView
                         android:id="@+id/activity_text"

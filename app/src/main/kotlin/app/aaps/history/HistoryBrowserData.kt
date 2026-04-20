@@ -18,12 +18,11 @@ import app.aaps.core.interfaces.workflow.CalculationSignalsEmitter
 import app.aaps.core.interfaces.workflow.CalculationWorkflow
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.workflow.CalculationSignalsImpl
-import app.aaps.plugins.main.general.overview.OverviewDataImpl
+import app.aaps.implementation.overview.OverviewDataImpl
 import app.aaps.plugins.main.iob.iobCobCalculator.IobCobCalculatorPlugin
 import app.aaps.ui.compose.history.HistoryScope
 import app.aaps.ui.compose.overview.OverviewDataCacheFactory
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 
 @Singleton
@@ -45,8 +44,7 @@ class HistoryBrowserData @Inject constructor(
 ) : HistoryScope {
 
     // We don't want to use injected singletons but own instance working on top of different data
-    override val overviewData: OverviewData =
-        OverviewDataImpl(rh, dateUtil, preferences, activePlugin, profileFunction, persistenceLayer, processedTbrEbData)
+    override val overviewData: OverviewData = OverviewDataImpl()
     override val signals: CalculationSignalsEmitter = CalculationSignalsImpl()
 
     // Lazy lookup breaks the cache ↔ iobCobCalculator construction cycle.
@@ -59,8 +57,8 @@ class HistoryBrowserData @Inject constructor(
         IobCobCalculatorPlugin(
             aapsLogger, aapsSchedulers, rxBus, preferences, rh, profileFunction, activePlugin,
             fabricPrivacy, dateUtil, persistenceLayer, overviewData, calculationWorkflow, decimalFormatter, processedTbrEbData,
-            signals, Provider { cache }
-        )
+            signals
+        ) { cache }
 
     override fun onDestroy() {
     }

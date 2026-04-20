@@ -5,6 +5,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.lifecycle.lifecycleScope
+import app.aaps.core.interfaces.automation.AutomationIconData
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
@@ -16,6 +17,11 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.activities.TranslatedDaggerAppCompatActivity
+import app.aaps.core.ui.compose.icons.IcLoopClosed
+import app.aaps.core.ui.compose.icons.IcLoopDisabled
+import app.aaps.core.ui.compose.icons.IcLoopDisconnected
+import app.aaps.core.ui.compose.icons.IcLoopLgs
+import app.aaps.core.ui.compose.icons.IcLoopOpen
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.plugins.main.R
 import app.aaps.plugins.main.databinding.ActivityLoopStateBinding
@@ -64,8 +70,17 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
             binding.loopActionsContainer.removeAllViews()
             val spacing = resources.getDimensionPixelSize(R.dimen.dashboard_chip_spacing)
 
-            fun addButton(title: String, iconRes: Int, onClick: () -> Unit) {
-                val icon = AppCompatResources.getDrawable(this@LoopStateActivity, iconRes)
+            suspend fun addButton(
+                title: String,
+                iconRes: Int? = null,
+                composeIcon: AutomationIconData? = null,
+                onClick: () -> Unit
+            ) {
+                val icon = when {
+                    composeIcon != null -> rasterizeAutomationIconForViews(this@LoopStateActivity, composeIcon)
+                    iconRes != null -> AppCompatResources.getDrawable(this@LoopStateActivity, iconRes)
+                    else -> null
+                }
                 val button = MaterialButton(this@LoopStateActivity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                     text = title
                     iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
@@ -95,22 +110,34 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
             val profile = withContext(Dispatchers.Default) { profileFunction.getProfile() } ?: return@launch
 
             if (allowedModes.contains(RM.Mode.CLOSED_LOOP)) {
-            addButton(resourceHelper.gs(app.aaps.core.ui.R.string.closedloop), app.aaps.core.objects.R.drawable.ic_loop_closed) {
+            addButton(
+                title = resourceHelper.gs(app.aaps.core.ui.R.string.closedloop),
+                composeIcon = AutomationIconData(IcLoopClosed)
+            ) {
                 loop.handleRunningModeChange(newRM = RM.Mode.CLOSED_LOOP, action = Action.CLOSED_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
             }
         }
         if (allowedModes.contains(RM.Mode.CLOSED_LOOP_LGS)) {
-            addButton(resourceHelper.gs(app.aaps.core.ui.R.string.lowglucosesuspend), app.aaps.core.ui.R.drawable.ic_loop_lgs) {
+            addButton(
+                title = resourceHelper.gs(app.aaps.core.ui.R.string.lowglucosesuspend),
+                composeIcon = AutomationIconData(IcLoopLgs)
+            ) {
                 loop.handleRunningModeChange(newRM = RM.Mode.CLOSED_LOOP_LGS, action = Action.LGS_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
             }
         }
         if (allowedModes.contains(RM.Mode.OPEN_LOOP)) {
-            addButton(resourceHelper.gs(app.aaps.core.ui.R.string.openloop), app.aaps.core.ui.R.drawable.ic_loop_open) {
+            addButton(
+                title = resourceHelper.gs(app.aaps.core.ui.R.string.openloop),
+                composeIcon = AutomationIconData(IcLoopOpen)
+            ) {
                 loop.handleRunningModeChange(newRM = RM.Mode.OPEN_LOOP, action = Action.OPEN_LOOP_MODE, source = Sources.LoopDialog, profile = profile)
             }
         }
         if (allowedModes.contains(RM.Mode.DISABLED_LOOP)) {
-            addButton(resourceHelper.gs(app.aaps.core.ui.R.string.disableloop), app.aaps.core.ui.R.drawable.ic_loop_disabled) {
+            addButton(
+                title = resourceHelper.gs(app.aaps.core.ui.R.string.disableloop),
+                composeIcon = AutomationIconData(IcLoopDisabled)
+            ) {
                 loop.handleRunningModeChange(newRM = RM.Mode.DISABLED_LOOP, durationInMinutes = Int.MAX_VALUE, action = Action.LOOP_DISABLED, source = Sources.LoopDialog, profile = profile)
             }
         }
@@ -138,23 +165,38 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
         }
         if (allowedModes.contains(RM.Mode.DISCONNECTED_PUMP) && config.APS) {
              if (pumpDescription.tempDurationStep15mAllowed) {
-                addButton(resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor15m), app.aaps.core.ui.R.drawable.ic_loop_disconnected) {
+                addButton(
+                    title = resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor15m),
+                    composeIcon = AutomationIconData(IcLoopDisconnected)
+                ) {
                     loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 15, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
                 }
              }
              if (pumpDescription.tempDurationStep30mAllowed) {
-                addButton(resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor30m), app.aaps.core.ui.R.drawable.ic_loop_disconnected) {
+                addButton(
+                    title = resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor30m),
+                    composeIcon = AutomationIconData(IcLoopDisconnected)
+                ) {
                     loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 30, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
                 }
              }
-            addButton(resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor1h), app.aaps.core.ui.R.drawable.ic_loop_disconnected) {
+            addButton(
+                title = resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor1h),
+                composeIcon = AutomationIconData(IcLoopDisconnected)
+            ) {
                 loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 60, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
                 preferences.put(BooleanNonKey.ObjectivesDisconnectUsed, true)
             }
-            addButton(resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor2h), app.aaps.core.ui.R.drawable.ic_loop_disconnected) {
+            addButton(
+                title = resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor2h),
+                composeIcon = AutomationIconData(IcLoopDisconnected)
+            ) {
                 loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 120, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
             }
-            addButton(resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor3h), app.aaps.core.ui.R.drawable.ic_loop_disconnected) {
+            addButton(
+                title = resourceHelper.gs(app.aaps.plugins.main.R.string.disconnectpumpfor3h),
+                composeIcon = AutomationIconData(IcLoopDisconnected)
+            ) {
                 loop.handleRunningModeChange(newRM = RM.Mode.DISCONNECTED_PUMP, durationInMinutes = 180, action = Action.DISCONNECT, source = Sources.LoopDialog, profile = profile)
             }
         }

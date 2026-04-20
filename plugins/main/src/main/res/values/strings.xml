@@ -28,6 +28,9 @@
     <string name="a11y_clone_profile">clone current profile</string>
 
     <!-- Dashboard -->
+    <string name="graph_menu_divider_header">Graph</string>
+    <string name="statuslights_cannula_age">cannula age</string>
+    <string name="statuslights_patch_pump_age">patch pump age</string>
     <string name="dashboard_nav_home">Home</string>
     <string name="dashboard_nav_history">History</string>
     <string name="dashboard_nav_bolus">Bolus/Carbs</string>
@@ -78,6 +81,8 @@
     <string name="dashboard_mode_sport">Sport</string>
     <string name="dashboard_mode_sleep">Sleep</string>
     <string name="dashboard_user_actions_empty">No automation actions available</string>
+    <string name="run_question">Run %1$s?</string>
+    <string name="set_basal_question">Accept new temp basal:</string>
     <string name="dashboard_iob_label">IOB</string>
     <string name="dashboard_cob_label">COB</string>
     <string name="dashboard_loop_label">Loop</string>
@@ -108,8 +113,6 @@
     <string name="insulin_label">Insulin</string>
     <string name="pb_label">Pump battery</string>
     <string name="cannula">Cannula</string>
-    <string name="statuslights_cannula_age">cannula age</string>
-    <string name="statuslights_patch_pump_age">patch pump age</string>
     <string name="patch_pump">Patch pump</string>
 
     <!-- Overview -->
@@ -131,6 +134,7 @@
     <string name="graph_refresh_now">Updated just now</string>
     <string name="graph_refresh_minutes_ago">Updated %1$d min ago</string>
     <string name="a11y_graph">graph</string>
+    <string name="chart_menu">Chart menu</string>
     <string name="a11y_graph_scale">select graph scale</string>
     <string name="a11y_graph_scale_6h">graph scale 6 hours</string>
     <string name="a11y_graph_scale_9h">graph scale 9 hours</string>
@@ -138,11 +142,9 @@
     <string name="a11y_graph_scale_18h">graph scale 18 hours</string>
     <string name="a11y_graph_scale_24h">graph scale 24 hours</string>
     <string name="a11y_insulin_label">insulin</string>
-    <string name="chart_menu">Chart menu</string>
     <string name="a11y_bg_quality">blood glucose quality</string>
     <string name="a11y_blood_glucose">blood glucose</string>
     <string name="a11y_bg_outdated">outdated</string>
-    <string name="set_basal_question">Accept new temp basal:</string>
 
     <!-- overview moved to core:ui module -->
     <string name="overview_shortname">HOME</string>
@@ -165,7 +167,6 @@
     <string name="not_available_full">Not available</string>
     <string name="smscommunicator_pump_disconnected">Pump disconnected</string>
     <string name="data_status">BG data status</string>
-    <string name="run_question">Run %s?</string>
 
     <!--    OverviewMenu-->
     <string name="overview_show_predictions">Predictions</string>
@@ -184,9 +185,6 @@
     <string name="prediction_shortname">PRED</string>
     <string name="basal_shortname">BAS</string>
     <string name="treatments_shortname">TREAT</string>
-    <string name="graph_scale">Graph scale</string>
-    <string name="graph_menu_divider_header">Graph</string>
-    <string name="temp_basal_overview_short_name">T:</string>
 
     <string name="cannula_usage">usage:</string>
 
@@ -199,6 +197,10 @@
     <string name="old_data">OLD DATA</string>
     <string name="overview_show_steps">Steps</string>
     <string name="simple_mode_enabled">Simple mode enabled</string>
+    <string name="classic_description">Original skin</string>
+    <string name="lowres_description">Low Resolution skin</string>
+    <string name="buttonson_description">Buttons are always displayed on bottom of screen</string>
+    <string name="largedisplay_description">Large display</string>
     <string name="minimal_skin_description">New skin dashboard</string>
 
     <string name="suspendloopfor1h">Suspend loop for 1h</string>

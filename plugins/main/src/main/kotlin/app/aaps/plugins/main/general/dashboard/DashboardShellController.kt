@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.BS
+import app.aaps.core.data.model.TB
 import app.aaps.core.data.time.T
 import app.aaps.core.graph.data.BolusDataPoint
 import app.aaps.core.graph.data.DataPointWithLabelInterface
@@ -21,11 +22,15 @@ import app.aaps.core.graph.data.ScaledDataPoint
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.overview.graph.BolusType
 import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
 import app.aaps.core.interfaces.overview.graph.ChartTbrSegment
+import app.aaps.core.interfaces.overview.graph.GraphDataPoint
+import app.aaps.core.interfaces.overview.graph.TimeRange
 import app.aaps.core.interfaces.overview.OverviewMenus.CharType
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.protection.ProtectionCheck
+import app.aaps.core.interfaces.protection.ProtectionResult
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
@@ -42,7 +47,6 @@ import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.ui.UIRunnable
 import app.aaps.plugins.aps.openAPSAIMI.advisor.AimiProfileAdvisorActivity
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorNotificationManager
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusIndicator
@@ -53,6 +57,7 @@ import app.aaps.plugins.main.general.dashboard.compose.DashboardHeroCommands
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.dashboard.viewmodel.OverviewViewModel
 import app.aaps.plugins.main.general.manual.UserManualActivity
+import app.aaps.plugins.main.general.overview.OverviewDataImpl
 import app.aaps.plugins.main.general.overview.graphData.GraphData
 import app.aaps.plugins.main.general.overview.graphData.viewportShouldFollowLiveRange
 import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
@@ -60,9 +65,11 @@ import com.jjoe64.graphview.series.LineGraphSeries
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -87,7 +94,9 @@ internal class DashboardShellController(
     private val rxBus get() = deps.rxBus
     private val aapsSchedulers get() = deps.aapsSchedulers
     private val fabricPrivacy get() = deps.fabricPrivacy
-    private val overviewData get() = deps.overviewData
+    private val overviewData: OverviewDataImpl
+        get() = deps.overviewData as? OverviewDataImpl
+            ?: error("DashboardShellController requires OverviewDataImpl")
     private val overviewMenus get() = deps.overviewMenus
     private val graphDataProvider: Provider<GraphData> get() = deps.graphDataProvider
     private val config: Config get() = deps.config
@@ -99,6 +108,8 @@ internal class DashboardShellController(
     private val notificationUiBinder get() = deps.notificationUiBinder
     private val auditorStatusLiveData get() = deps.auditorStatusLiveData
     private val auditorNotificationManager get() = deps.auditorNotificationManager
+    private val overviewDataCache get() = deps.overviewDataCache.get()
+    private val persistenceLayer get() = deps.persistenceLayer
 
     private val disposables = CompositeDisposable()
     private var shellBinding: DashboardShellBinding? = null
@@ -109,6 +120,14 @@ internal class DashboardShellController(
     private var lastGraphFormatRangeHours: Int? = null
     private var lastGraphBgLagMs: Long? = null
     private var graphRefreshJob: Job? = null
+    private var overviewCacheMarkerJob: Job? = null
+    private var markerDataRetryJob: Job? = null
+    private var markerDataRetryAttempts = 0
+    private var dbMarkerFallbackJob: Job? = null
+    private var dbMarkerFallbackRange: Pair<Long, Long>? = null
+    private var dbFallbackSmbMarkers: List<ChartSmbMarker> = emptyList()
+    private var dbFallbackTbrMarkers: List<Long> = emptyList()
+    private var dbFallbackTbrSegments: List<ChartTbrSegment> = emptyList()
     private var periodicOverviewRefreshJob: Job? = null
     private var embeddedLayoutSettleRefreshJob: Job? = null
     private var isHypoRiskDialogShowing = false
@@ -404,6 +423,9 @@ internal class DashboardShellController(
         graphViewportLayoutListener = null
         graphRefreshJob?.cancel()
         graphRefreshJob = null
+        markerDataRetryJob?.cancel()
+        markerDataRetryJob = null
+        markerDataRetryAttempts = 0
         auditorIndicator?.stopAnimations()
         auditorIndicator = null
         host.embeddedComposeState?.adjustmentCardState = null
@@ -464,6 +486,7 @@ internal class DashboardShellController(
     private fun runDashboardUiAttachedSide() {
         if (shellBinding == null || !config.appInitialized || !host.isBindingAttached()) return
         startDashboardPeriodicRefresh()
+        subscribeOverviewCacheMarkerStreams()
         rxBus.send(EventRefreshOverview("$eventSourcePrefix.dataPipeline", now = false))
         activePlugin.activeOverview.overviewBus.send(EventUpdateOverviewIobCob("$eventSourcePrefix.dataPipeline"))
         if (host.embeddedInComposeMainShell()) {
@@ -479,6 +502,34 @@ internal class DashboardShellController(
         periodicOverviewRefreshJob = null
         embeddedLayoutSettleRefreshJob?.cancel()
         embeddedLayoutSettleRefreshJob = null
+        overviewCacheMarkerJob?.cancel()
+        overviewCacheMarkerJob = null
+    }
+
+    /**
+     * Overview fills [OverviewDataCache] treatment/basal flows after IOB calc (progress bar); the dashboard
+     * must redraw when those arrive — Rx refresh alone is easy to miss on cold start.
+     */
+    private fun subscribeOverviewCacheMarkerStreams() {
+        overviewCacheMarkerJob?.cancel()
+        if (shouldAttachLegacyGraphBackend()) return
+        overviewCacheMarkerJob = host.liveDataOwner.lifecycleScope.launch {
+            launch {
+                overviewDataCache.treatmentGraphFlow.collect {
+                    scheduleGraphRefresh()
+                }
+            }
+            launch {
+                overviewDataCache.basalGraphFlow.collect {
+                    scheduleGraphRefresh()
+                }
+            }
+            launch {
+                overviewDataCache.calcProgressFlow.collect {
+                    scheduleGraphRefresh()
+                }
+            }
+        }
     }
 
     private fun startDashboardPeriodicRefresh() {
@@ -587,6 +638,18 @@ internal class DashboardShellController(
         }
     }
 
+    private fun scheduleMarkerDataRetry() {
+        if (markerDataRetryAttempts >= MARKER_DATA_RETRY_MAX_ATTEMPTS) return
+        markerDataRetryJob?.cancel()
+        markerDataRetryJob = host.liveDataOwner.lifecycleScope.launch {
+            val delayMs = MARKER_DATA_RETRY_DELAY_MS * (markerDataRetryAttempts + 1)
+            delay(delayMs)
+            if (shellBinding == null || !host.isBindingAttached()) return@launch
+            markerDataRetryAttempts += 1
+            updateGraph()
+        }
+    }
+
     private fun setupAuditorIndicator() {
         val binding = shellBinding ?: return
         try {
@@ -620,9 +683,9 @@ internal class DashboardShellController(
 
     private fun openBolus(): Boolean {
         host.activity?.let { activity ->
-            protectionCheck.queryProtection(activity, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                uiInteraction.openInsulinScreen(activity)
-            })
+            protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                if (result == ProtectionResult.GRANTED) uiInteraction.openInsulinScreen(activity)
+            }
         }
         return true
     }
@@ -634,9 +697,9 @@ internal class DashboardShellController(
 
     private fun openLoopDialog() {
         host.activity?.let { activity ->
-            protectionCheck.queryProtection(activity, ProtectionCheck.Protection.BOLUS, UIRunnable {
-                if (host.isBindingAttached()) uiInteraction.openRunningModeScreen(activity)
-            })
+            protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                if (result == ProtectionResult.GRANTED && host.isBindingAttached()) uiInteraction.openRunningModeScreen(activity)
+            }
         }
     }
 
@@ -783,10 +846,17 @@ internal class DashboardShellController(
         }
 
         val rangeMs = T.hours(overviewData.rangeToDisplay.toLong()).msecs()
-        val dataEarliest = min(
-            overviewData.fromTime,
-            overviewData.toTime - T.hours(Constants.GRAPH_TIME_RANGE_HOURS.toLong()).msecs(),
-        )
+        // Pan limit must use the oldest *data* (and app graph horizon), not overviewData.fromTime —
+        // fromTime is already the left edge of the current viewport, so min(fromTime, …) made maxPanPast ~0
+        // and the compose graph could not scroll into history.
+        val graphHorizonStartMs = overviewData.toTime - T.hours(Constants.GRAPH_TIME_RANGE_HOURS.toLong()).msecs()
+        val oldestBgMs = overviewData.bgReadingsArray.minOfOrNull { it.timestamp }
+        val dataEarliest =
+            if (oldestBgMs != null) {
+                min(oldestBgMs, graphHorizonStartMs)
+            } else {
+                graphHorizonStartMs
+            }
         val maxPanPast = (overviewData.toTime - dataEarliest - rangeMs).coerceAtLeast(0L)
         if (useComposeOnlyGraphPipeline && composeState != null) {
             composeState.clampGraphPanPastMs(maxPanPast)
@@ -806,6 +876,24 @@ internal class DashboardShellController(
         val predictionFutureHorizonMs = T.hours(3).msecs()
         val predictionDisplayToEpoch = visibleToEpoch + predictionFutureHorizonMs
         val predictionQueryTo = max(overviewData.endTime, predictionDisplayToEpoch)
+        val requestedCacheRange =
+            if (useComposeOnlyGraphPipeline) {
+                val warmupMarginMs = max(rangeMs, T.hours(6).msecs())
+                TimeRange(
+                    fromTime = visibleFromEpoch - warmupMarginMs,
+                    toTime = visibleToEpoch,
+                    endTime = predictionQueryTo,
+                )
+            } else {
+                null
+            }
+        if (useComposeOnlyGraphPipeline && requestedCacheRange != null) {
+            syncOverviewCacheRange(
+                fromMs = requestedCacheRange.fromTime,
+                toMs = requestedCacheRange.toTime,
+                endMs = requestedCacheRange.endTime,
+            )
+        }
 
         val composePoints = overviewData.bgReadingsArray
             .asSequence()
@@ -840,9 +928,54 @@ internal class DashboardShellController(
         } else {
             visibleToEpoch
         }
-        val smbMarkers = extractSmbMarkers(visibleFromEpoch, visibleToEpoch)
-        val tbrMarkers = extractTbrChangeMarkerTimes(visibleFromEpoch, visibleToEpoch)
-        val tbrSegments = extractTbrSegments(visibleFromEpoch, visibleToEpoch)
+        // Compose dashboard: always read SMB/TBR from the same singleton [OverviewDataCache] flows as Overview.
+        // (Previously gated on cache TimeRange alignment with the shell; that often failed and skipped cache reads.)
+        var smbMarkers = emptyList<ChartSmbMarker>()
+        var tbrMarkers = emptyList<Long>()
+        var tbrSegments = emptyList<ChartTbrSegment>()
+        if (useComposeOnlyGraphPipeline) {
+            smbMarkers = extractSmbMarkersFromCache(visibleFromEpoch, visibleToEpoch)
+            tbrMarkers = extractTbrChangeMarkerTimesFromBasalSteps(visibleFromEpoch, visibleToEpoch)
+            tbrSegments = extractTbrSegmentsFromBasalSteps(visibleFromEpoch, visibleToEpoch)
+            val needSmb = smbMarkers.isEmpty()
+            val needTbr = tbrMarkers.isEmpty() && tbrSegments.isEmpty()
+            if (needSmb || needTbr) {
+                val fallbackRange = dbMarkerFallbackRange
+                if (fallbackRange != null &&
+                    fallbackRange.first == visibleFromEpoch &&
+                    fallbackRange.second == visibleToEpoch
+                ) {
+                    if (needSmb && dbFallbackSmbMarkers.isNotEmpty()) {
+                        smbMarkers = dbFallbackSmbMarkers
+                    }
+                    if (needTbr &&
+                        (dbFallbackTbrMarkers.isNotEmpty() || dbFallbackTbrSegments.isNotEmpty())
+                    ) {
+                        tbrMarkers = dbFallbackTbrMarkers
+                        tbrSegments = dbFallbackTbrSegments
+                    }
+                } else {
+                    requestDbMarkerFallback(visibleFromEpoch, visibleToEpoch)
+                }
+            }
+        } else {
+            smbMarkers = extractSmbMarkers(visibleFromEpoch, visibleToEpoch)
+            tbrMarkers = extractTbrChangeMarkerTimes(visibleFromEpoch, visibleToEpoch)
+            tbrSegments = extractTbrSegments(visibleFromEpoch, visibleToEpoch)
+        }
+        val basalStepCount = overviewDataCache.basalGraphFlow.value.actualBasal.size
+        aapsLogger.debug(
+            LTag.CORE,
+            "Dashboard strip markers smb=${smbMarkers.size} tbrSeg=${tbrSegments.size} tbrMark=${tbrMarkers.size} composeOnly=$useComposeOnlyGraphPipeline basalPts=$basalStepCount",
+        )
+        val markersFullyEmpty = smbMarkers.isEmpty() && tbrMarkers.isEmpty() && tbrSegments.isEmpty()
+        if (useComposeOnlyGraphPipeline && markersFullyEmpty) {
+            scheduleMarkerDataRetry()
+        } else {
+            markerDataRetryAttempts = 0
+            markerDataRetryJob?.cancel()
+            markerDataRetryJob = null
+        }
         val graphPanActive = useComposeOnlyGraphPipeline && panPastMs > 0L
         composeState?.updateGraphRenderInput(
             GraphRenderInputFactory.build(
@@ -863,6 +996,181 @@ internal class DashboardShellController(
                 tbrSegments = tbrSegments,
             ),
         )
+    }
+
+    /**
+     * Vico-only dashboard: legacy [overviewData.treatmentsSeries] is not fed by GraphView, but
+     * [OverviewDataCache.treatmentGraphFlow] is kept in sync from the DB.
+     */
+    private fun extractSmbMarkersFromCache(fromMs: Long, toMs: Long): List<ChartSmbMarker> = runCatching {
+        val boluses = overviewDataCache.treatmentGraphFlow.value.boluses
+        if (boluses.isEmpty()) return@runCatching emptyList()
+        val bolusStep = activePlugin.activePump.pumpDescription.bolusStep
+        val smbOnly = ArrayList<ChartSmbMarker>()
+        for (b in boluses) {
+            if (b.bolusType != BolusType.SMB) continue
+            val t = b.timestamp
+            if (t < fromMs || t > toMs) continue
+            val label = decimalFormatter.toPumpSupportedBolusWithUnits(b.amount, bolusStep)
+            smbOnly.add(ChartSmbMarker(timestampEpochMs = t, amountLabel = label))
+        }
+        if (smbOnly.isNotEmpty()) return@runCatching smbOnly
+        // Some pumps/sync paths may persist SMB without explicit SMB type; keep visibility instead of blank strip.
+        val fallback = ArrayList<ChartSmbMarker>()
+        for (b in boluses) {
+            val t = b.timestamp
+            if (t < fromMs || t > toMs) continue
+            if (!b.isValid || b.amount <= 0.0) continue
+            val label = decimalFormatter.toPumpSupportedBolusWithUnits(b.amount, bolusStep)
+            fallback.add(ChartSmbMarker(timestampEpochMs = t, amountLabel = label))
+        }
+        fallback
+    }.getOrElse { emptyList() }
+
+    private fun basalActualStepPointsUpTo(toMs: Long): List<GraphDataPoint> {
+        val actual = overviewDataCache.basalGraphFlow.value.actualBasal
+        if (actual.isEmpty()) return emptyList()
+        return actual.filter { it.timestamp <= toMs }.sortedBy { it.timestamp }
+    }
+
+    private fun syncOverviewCacheRange(fromMs: Long, toMs: Long, endMs: Long) {
+        val current = overviewDataCache.timeRangeFlow.value
+        val needsUpdate =
+            current == null ||
+                abs(current.fromTime - fromMs) > 60_000L ||
+                abs(current.toTime - toMs) > 60_000L ||
+                abs(current.endTime - endMs) > 60_000L
+        if (!needsUpdate) return
+        overviewDataCache.updateTimeRange(
+            TimeRange(
+                fromTime = fromMs,
+                toTime = toMs,
+                endTime = endMs,
+            ),
+        )
+    }
+
+    private fun extractTbrChangeMarkerTimesFromBasalSteps(fromMs: Long, toMs: Long): List<Long> = runCatching {
+        val pts = basalActualStepPointsUpTo(toMs)
+        if (pts.size < 2) return@runCatching emptyList()
+        val eps = 1e-6
+        val raw = ArrayList<Long>()
+        for (i in 1 until pts.size) {
+            if (abs(pts[i].value - pts[i - 1].value) > eps) {
+                val t = pts[i].timestamp
+                if (t in fromMs..toMs) raw.add(t)
+            }
+        }
+        decimateMarkerTimes(raw, minGapMs = 5 * 60_000L, maxMarkers = 36)
+    }.getOrElse { emptyList() }
+
+    private fun extractTbrSegmentsFromBasalSteps(fromMs: Long, toMs: Long): List<ChartTbrSegment> = runCatching {
+        val pts = basalActualStepPointsUpTo(toMs)
+        if (pts.size < 2) return@runCatching emptyList()
+        val runs = ArrayList<Triple<Long, Long, Double>>()
+        for (i in 0 until pts.size - 1) {
+            runs.add(Triple(pts[i].timestamp, pts[i + 1].timestamp, pts[i].value))
+        }
+        val maxMag = runs.maxOf { abs(it.third) }.coerceAtLeast(1e-6)
+        val out = ArrayList<ChartTbrSegment>()
+        for ((s, e, y) in runs) {
+            val duration = e - s
+            if (duration < 30_000L) continue
+            val overlapStart = max(s, fromMs)
+            val overlapEnd = min(e, toMs)
+            if (overlapEnd <= overlapStart) continue
+            val intensity = (abs(y) / maxMag).toFloat().coerceIn(0.1f, 1f)
+            out.add(
+                ChartTbrSegment(
+                    startEpochMs = overlapStart,
+                    endEpochMs = overlapEnd,
+                    intensity01 = intensity,
+                ),
+            )
+        }
+        out
+    }.getOrElse { emptyList() }
+
+    private fun requestDbMarkerFallback(fromMs: Long, toMs: Long) {
+        if (dbMarkerFallbackRange?.first == fromMs && dbMarkerFallbackRange?.second == toMs && dbMarkerFallbackJob?.isActive == true) return
+        dbMarkerFallbackJob?.cancel()
+        dbMarkerFallbackJob = host.liveDataOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val bolusStep = activePlugin.activePump.pumpDescription.bolusStep
+            val dbFromMs = fromMs - T.hours(6).msecs()
+            val boluses = runCatching {
+                persistenceLayer.getBolusesFromTimeToTime(dbFromMs, toMs, true)
+            }.getOrElse { emptyList() }
+            val validBoluses = boluses.filter { it.isValid && it.amount > 0.0 }
+            val smbExplicit = validBoluses
+                .filter { it.type == BS.Type.SMB }
+                .map {
+                    ChartSmbMarker(
+                        timestampEpochMs = it.timestamp,
+                        amountLabel = decimalFormatter.toPumpSupportedBolusWithUnits(it.amount, bolusStep),
+                    )
+                }
+            val smbMarkers = if (smbExplicit.isNotEmpty()) smbExplicit else {
+                validBoluses.map {
+                    ChartSmbMarker(
+                        timestampEpochMs = it.timestamp,
+                        amountLabel = decimalFormatter.toPumpSupportedBolusWithUnits(it.amount, bolusStep),
+                    )
+                }
+            }
+            val tbrStarting = runCatching {
+                persistenceLayer.getTemporaryBasalsStartingFromTimeToTime(dbFromMs, toMs, true)
+            }.getOrElse { emptyList() }
+            val tbrActiveAtStart = runCatching {
+                persistenceLayer.getTemporaryBasalActiveAt(fromMs)
+            }.getOrNull()
+            val tempBasals = buildList {
+                addAll(tbrStarting)
+                if (tbrActiveAtStart != null) add(tbrActiveAtStart)
+            }
+            val validTempBasals = tempBasals
+                .asSequence()
+                .filter { it.isValid }
+                .filter { it.end > fromMs && it.timestamp < toMs }
+                .sortedBy { it.timestamp }
+                .distinctBy { Triple(it.timestamp, it.duration, it.rate) }
+                .toList()
+            val tbrSegments = dbSegmentsFromTemporaryBasals(validTempBasals, fromMs, toMs)
+            val tbrMarkers = tbrSegments.map { it.startEpochMs }
+            withContext(Dispatchers.Main) {
+                if (shellBinding == null || !host.isBindingAttached()) return@withContext
+                dbMarkerFallbackRange = fromMs to toMs
+                dbFallbackSmbMarkers = smbMarkers
+                dbFallbackTbrMarkers = tbrMarkers
+                dbFallbackTbrSegments = tbrSegments
+                if (smbMarkers.isNotEmpty() || tbrMarkers.isNotEmpty() || tbrSegments.isNotEmpty()) {
+                    updateGraph()
+                }
+            }
+        }
+    }
+
+    private fun dbSegmentsFromTemporaryBasals(
+        basals: List<TB>,
+        fromMs: Long,
+        toMs: Long,
+    ): List<ChartTbrSegment> {
+        if (basals.isEmpty()) return emptyList()
+        val maxMagnitude = basals.maxOfOrNull { abs(it.rate) }?.coerceAtLeast(1e-6) ?: 1e-6
+        val out = ArrayList<ChartTbrSegment>()
+        for (tb in basals) {
+            val start = max(tb.timestamp, fromMs)
+            val end = min(tb.end, toMs)
+            if (end <= start) continue
+            val intensity = (abs(tb.rate) / maxMagnitude).toFloat().coerceIn(0.1f, 1f)
+            out.add(
+                ChartTbrSegment(
+                    startEpochMs = start,
+                    endEpochMs = end,
+                    intensity01 = intensity,
+                ),
+            )
+        }
+        return out
     }
 
     private fun extractSmbMarkers(fromMs: Long, toMs: Long): List<ChartSmbMarker> = runCatching {
@@ -1048,6 +1356,8 @@ internal class DashboardShellController(
         private const val STALE_BG_LAG_MS = 10 * 60 * 1000L
         private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
         private const val GRAPH_REFRESH_DEBOUNCE_MS = 120L
+        private const val MARKER_DATA_RETRY_DELAY_MS = 700L
+        private const val MARKER_DATA_RETRY_MAX_ATTEMPTS = 8
         private const val DASHBOARD_PERIODIC_REFRESH_MS = 60 * 1000L
         private const val EMBEDDED_LAYOUT_SETTLE_REFRESH_MS = 2_000L
     }

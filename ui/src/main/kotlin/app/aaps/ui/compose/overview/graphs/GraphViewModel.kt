@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
@@ -17,6 +18,7 @@ import app.aaps.core.interfaces.overview.graph.BgInfoData
 import app.aaps.core.interfaces.overview.graph.GraphConfig
 import app.aaps.core.interfaces.overview.graph.GraphConfigRepository
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
+import app.aaps.core.interfaces.overview.graph.SeriesType
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
@@ -30,7 +32,9 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.extensions.displayText
 import app.aaps.core.objects.extensions.round
 import app.aaps.core.ui.R
-import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -44,7 +48,6 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import java.util.Locale
-import javax.inject.Inject
 
 /**
  * ViewModel for Overview graphs (Compose/Vico version).
@@ -114,10 +117,9 @@ data class VicoChartLook(
     val chartBackdropKey: String,
 )
 
-@HiltViewModel
 @Stable
-class GraphViewModel @Inject constructor(
-    cache: OverviewDataCache,
+class GraphViewModel @AssistedInject constructor(
+    @Assisted cache: OverviewDataCache,
     private val graphConfigRepository: GraphConfigRepository,
     private val aapsLogger: AAPSLogger,
     private val preferences: Preferences,
@@ -135,6 +137,12 @@ class GraphViewModel @Inject constructor(
     private val activePlugin: ActivePlugin
 ) : ViewModel() {
 
+    @AssistedFactory
+    interface Factory {
+
+        fun create(cache: OverviewDataCache): GraphViewModel
+    }
+
     // Chart config - updates when high/low mark preferences change
     private val _chartConfigFlow = MutableStateFlow(
         ChartConfig(
@@ -143,6 +151,9 @@ class GraphViewModel @Inject constructor(
         )
     )
     val chartConfigFlow: StateFlow<ChartConfig> = _chartConfigFlow.asStateFlow()
+
+    /** Drives BG Y-axis label recomposition when the user switches mg/dl ↔ mmol in General. */
+    val generalUnits: StateFlow<String> = preferences.observe(StringKey.GeneralUnits)
 
     private val _vicoChartLook = MutableStateFlow(
         VicoChartLook(
@@ -177,6 +188,19 @@ class GraphViewModel @Inject constructor(
     val graphConfigFlow: StateFlow<GraphConfig> = graphConfigRepository.graphConfigFlow
 
     fun updateGraphConfig(config: GraphConfig) = graphConfigRepository.update(config)
+
+    /**
+     * Formats a BG chart Y value. [mgdlY] is always in mg/dL (internal chart coordinates);
+     * output follows [ProfileFunction.getUnits] (General → Units).
+     */
+    fun formatBgVerticalAxisValue(mgdlY: Double): String {
+        val u = profileFunction.getUnits()
+        val v = profileUtil.fromMgdlToUnits(mgdlY, u)
+        return when (u) {
+            GlucoseUnit.MMOL -> decimalFormatter.to1Decimal(v)
+            GlucoseUnit.MGDL -> decimalFormatter.to0Decimal(v)
+        }
+    }
 
     // Individual series flows - each can trigger independent recomposition
     val bgReadingsFlow: StateFlow<List<BgDataPoint>> = cache.bgReadingsFlow
@@ -360,24 +384,29 @@ class GraphViewModel @Inject constructor(
     }
 
     // Derived time range from actual data (recalculates as series arrive)
-    // Includes prediction timestamps so the x-axis extends into the future
+    // When PREDICTIONS overlay is enabled, extends into the future to fit prediction points;
+    // otherwise clamps to toTime so the x-axis doesn't reserve empty future space.
     val derivedTimeRange: StateFlow<Pair<Long, Long>?> = combine(
         cache.bgReadingsFlow,
         cache.bucketedDataFlow,
         cache.predictionsFlow,
-        cache.timeRangeFlow
-    ) { bgReadings, bucketedData, predictions, cacheTimeRange ->
-        // Combine all timestamps from all series including predictions
-        val allTimestamps = (bgReadings + bucketedData + predictions).map { it.timestamp }
+        cache.timeRangeFlow,
+        graphConfigFlow
+    ) { bgReadings, bucketedData, predictions, cacheTimeRange, graphConfig ->
+        val showPredictions = SeriesType.PREDICTIONS in graphConfig.bgOverlays
+        val effectivePredictions = if (showPredictions) predictions else emptyList()
+        val allTimestamps = (bgReadings + bucketedData + effectivePredictions).map { it.timestamp }
 
         if (allTimestamps.isEmpty()) {
-            // Fall back to cache time range if no data yet (use endTime for predictions)
-            cacheTimeRange?.let { Pair(it.fromTime, it.endTime) }
+            cacheTimeRange?.let {
+                val upper = if (showPredictions) it.endTime else it.toTime
+                Pair(it.fromTime, upper)
+            }
         } else {
             val minTime = allTimestamps.minOrNull() ?: return@combine null
             val maxTime = allTimestamps.maxOrNull() ?: return@combine null
-            // Also consider endTime from cache (may extend beyond prediction points)
-            val effectiveMax = if (cacheTimeRange != null) maxOf(maxTime, cacheTimeRange.endTime) else maxTime
+            val cacheUpper = cacheTimeRange?.let { if (showPredictions) it.endTime else it.toTime }
+            val effectiveMax = if (cacheUpper != null) maxOf(maxTime, cacheUpper) else maxTime
             Pair(minTime, effectiveMax)
         }
     }.stateIn(

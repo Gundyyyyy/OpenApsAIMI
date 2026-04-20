@@ -9,8 +9,10 @@ import app.aaps.core.interfaces.iob.GlucoseStatusProvider
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.overview.LastBgData
+import app.aaps.core.interfaces.overview.Overview
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.overview.OverviewMenus
+import app.aaps.core.interfaces.overview.graph.OverviewDataCache
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
@@ -39,6 +41,7 @@ import app.aaps.plugins.main.general.overview.OverviewDataImpl
 import app.aaps.plugins.main.general.overview.OverviewEntryFragment
 import app.aaps.plugins.main.general.overview.OverviewFragment
 import app.aaps.plugins.main.general.overview.OverviewMenusImpl
+import app.aaps.plugins.main.general.overview.OverviewPlugin
 import app.aaps.plugins.main.general.overview.graphData.GraphData
 import app.aaps.plugins.main.general.overview.notifications.NotificationUiBinder
 import app.aaps.plugins.main.general.overview.notifications.receivers.DismissNotificationReceiver
@@ -151,6 +154,8 @@ abstract class OverviewModule {
             notificationUiBinder: NotificationUiBinder,
             auditorStatusLiveData: AuditorStatusLiveData,
             auditorNotificationManager: AuditorNotificationManager,
+            overviewDataCache: Provider<OverviewDataCache>,
+            persistenceLayer: PersistenceLayer,
         ): DashboardShellDeps = DashboardShellDeps(
             overviewViewModelFactory = overviewViewModelFactory,
             resourceHelper = resourceHelper,
@@ -174,6 +179,8 @@ abstract class OverviewModule {
             notificationUiBinder = notificationUiBinder,
             auditorStatusLiveData = auditorStatusLiveData,
             auditorNotificationManager = auditorNotificationManager,
+            overviewDataCache = overviewDataCache,
+            persistenceLayer = persistenceLayer,
         )
     }
 
@@ -183,5 +190,6 @@ abstract class OverviewModule {
 
         @Binds fun bindOverviewMenus(overviewMenusImpl: OverviewMenusImpl): OverviewMenus
         @Binds fun bindOverviewData(overviewData: OverviewDataImpl): OverviewData
+        @Binds fun bindOverview(overviewPlugin: OverviewPlugin): Overview
     }
 }

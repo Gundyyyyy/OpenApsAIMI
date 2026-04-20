@@ -88,23 +88,6 @@
             android:resource="@xml/automotive_app_desc" />
 
         <activity
-            android:name="app.aaps.MainActivity"
-            android:exported="false"
-            android:theme="@style/AppTheme.NoActionBar" />
-        <activity
-            android:name="app.aaps.activities.HistoryBrowseActivity"
-            android:exported="false"
-            android:theme="@style/AppTheme" />
-        <activity
-            android:name="app.aaps.activities.DashboardPreviewActivity"
-            android:exported="false"
-            android:theme="@style/AppTheme" />
-        <activity
-            android:name="app.aaps.activities.ComparatorActivity"
-            android:label="@string/comparator_title"
-            android:parentActivityName="app.aaps.MainActivity"
-            android:theme="@style/AppTheme" />
-        <activity
             android:name="app.aaps.ComposeMainActivity"
             android:exported="true"
             android:theme="@style/AppTheme.NoActionBar">
@@ -115,6 +98,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- AIMI / tooling: classic activities (Dagger Android), parent = Compose shell -->
+        <activity
+            android:name="app.aaps.activities.DashboardPreviewActivity"
+            android:exported="false"
+            android:parentActivityName="app.aaps.ComposeMainActivity"
+            android:theme="@style/AppTheme" />
+        <activity
+            android:name="app.aaps.activities.ComparatorActivity"
+            android:exported="false"
+            android:label="@string/comparator_title"
+            android:parentActivityName="app.aaps.ComposeMainActivity"
+            android:theme="@style/AppTheme" />
         <!-- Receive new BG readings from other local apps -->
         <receiver
             android:name="app.aaps.receivers.DataReceiver"

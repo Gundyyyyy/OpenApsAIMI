@@ -422,9 +422,18 @@ private fun CompactMetricRow(
                 modifier = Modifier.weight(1f),
             )
         } else {
-            MetricCell(stringResource(R.string.dashboard_compact_label_steps), state.stepsText ?: "—")
-            MetricCell(stringResource(R.string.dashboard_compact_label_iob), state.iobText.trim().ifBlank { "—" })
-            MetricCell(stringResource(R.string.dashboard_compact_label_hr), state.hrText ?: "—")
+            MetricCell(
+                stringResource(R.string.dashboard_compact_label_steps),
+                state.stepsText ?: "—",
+            )
+            MetricCell(
+                stringResource(R.string.dashboard_compact_label_iob),
+                state.iobText.trim().ifBlank { "—" },
+            )
+            MetricCell(
+                stringResource(R.string.dashboard_compact_label_hr),
+                state.hrText ?: "—",
+            )
             MetricCell(
                 stringResource(R.string.dashboard_compact_label_tbr),
                 state.tbrRateCompactText ?: state.tbrRateText ?: "—",
@@ -470,7 +479,19 @@ private fun MetricCell(label: String, value: String) {
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.semantics { contentDescription = "$label $value" },
     ) {
-        Text(text = value, style = MaterialTheme.typography.labelLarge)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -483,7 +504,8 @@ private fun ExtendedMetricsBlock(state: StatusCardState, modifier: Modifier = Mo
         Text(
             "${stringResource(app.aaps.core.ui.R.string.cob)}: ${state.cobText.ifBlank { "0g" }} · " +
                 "${stringResource(R.string.pump_battery)}: ${(state.pumpBatteryText ?: "").ifBlank { "—" }} · " +
-                "${stringResource(R.string.reservoir_short)}: ${(state.reservoirText ?: "").ifBlank { "—" }}",
+                "${stringResource(R.string.reservoir_short)}: ${(state.reservoirText ?: "").ifBlank { "—" }} · " +
+                "${stringResource(R.string.infusion_age)}: ${(state.infusionAgeText ?: "").ifBlank { "—" }}",
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

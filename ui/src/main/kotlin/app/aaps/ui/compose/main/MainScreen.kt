@@ -11,10 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -31,6 +28,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -96,7 +95,6 @@ fun MainScreen(
     onUserManualClick: () -> Unit = {},
     onNavigate: (NavigationRequest) -> Unit,
     onDrawerClosed: () -> Unit,
-    onSwitchToClassicUi: () -> Unit,
     onAboutDialogDismiss: () -> Unit,
     onMaintenanceSheetDismiss: () -> Unit,
     onDirectoryClick: () -> Unit,
@@ -114,8 +112,12 @@ fun MainScreen(
     pumpSetupPlugin: PluginBase? = null,
     // BG source shortcut
     bgSetupPlugin: PluginBase? = null,
-    bgQualityBadgeIconRes: Int = 0,
+    bgQualityBadgeIcon: ImageVector? = null,
+    bgQualityBadgeTint: Color = Color.Unspecified,
     bgQualityBadgeDescription: String? = null,
+    // Objectives progress
+    objectivesSetupPlugin: PluginBase? = null,
+    objectivesProgressText: String? = null,
     // Permissions
     permissionsMissing: Boolean = false,
     onPermissionsClick: () -> Unit = {},
@@ -347,8 +349,11 @@ fun MainScreen(
                                 automationCount = automationViewModel.uiState.collectAsStateWithLifecycle().value.items.size,
                                 pumpSetupPlugin = pumpSetupPlugin,
                                 bgSetupPlugin = bgSetupPlugin,
-                                bgQualityBadgeIconRes = bgQualityBadgeIconRes,
+                                bgQualityBadgeIcon = bgQualityBadgeIcon,
+                                bgQualityBadgeTint = bgQualityBadgeTint,
                                 bgQualityBadgeDescription = bgQualityBadgeDescription,
+                                objectivesSetupPlugin = objectivesSetupPlugin,
+                                objectivesProgressText = objectivesProgressText,
                                 onNavigate = onNavigate,
                                 permissionsMissing = permissionsMissing,
                                 onPermissionsClick = onPermissionsClick,
@@ -376,25 +381,8 @@ fun MainScreen(
                             )
                         }
 
-                        // FABs
+                        // FABs (classic View UI switch removed upstream; Compose is the only shell)
                         if (showChrome) {
-                            val fabBottomPadding = scaffoldPadding.calculateBottomPadding() +
-                                with(density) { bottomBarHeightPx.toDp() } +
-                                if (hasToolbar) 64.dp else 16.dp
-                            SwitchUiFab(
-                                onClick = onSwitchToClassicUi,
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(bottom = fabBottomPadding, end = 16.dp)
-                                    .then(
-                                        if (isDashboardEmbedded) {
-                                            // Sit lower so the swap FAB clears the dashboard graph TBR lane.
-                                            Modifier.offset(y = 40.dp)
-                                        } else {
-                                            Modifier
-                                        },
-                                    ),
-                            )
                             if (isDashboardEmbedded) {
                                 val fabBottomOffset = if (hasToolbar && showChrome) 56.dp else 0.dp
                                 PumpActivityFab(
@@ -528,19 +516,3 @@ fun MainScreen(
 
 private val PREVIEW_MODE_MIN_HEIGHT: Dp = 500.dp
 private const val AUTO_HIDE_DELAY_MS = 3000L
-
-@Composable
-private fun SwitchUiFab(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    AapsFab(
-        onClick = onClick,
-        modifier = modifier
-    ) {
-        Icon(
-            imageVector = Icons.Filled.SwapHoriz,
-            contentDescription = "Switch to classic UI"
-        )
-    }
-}

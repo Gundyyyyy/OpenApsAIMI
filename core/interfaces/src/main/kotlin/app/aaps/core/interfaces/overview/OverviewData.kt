@@ -16,22 +16,20 @@ interface OverviewData {
 
     fun reset()
     fun initRange()
+
     /*
      * PUMP STATUS
      */
-
     var pumpStatus: String
 
     /*
      * CALC PROGRESS
      */
-
     var calcProgressPct: Int
 
     /*
      * TEMPORARY BASAL
      */
-
     fun temporaryBasalText(): String
     fun temporaryBasalDialogText(): String
     @DrawableRes fun temporaryBasalIcon(): Int
@@ -39,14 +37,13 @@ interface OverviewData {
 
     /*
      * EXTENDED BOLUS
-    */
+     */
     fun extendedBolusText(): String
     fun extendedBolusDialogText(): String
 
     /*
      * Graphs
      */
-
     var bgReadingsArray: List<GV>
     var maxBgValue: Double
     var bucketedGraphSeries: SeriesData
@@ -95,7 +92,8 @@ interface OverviewData {
     val devScale: Scale
     var deviationsSeries: SeriesData
 
-    var maxRatioValueFound: Double                    //even if sens data equals 0 for all the period, minimum scale is between 95% and 105%
+    // Even if sens data equals 0 for all the period, minimum scale is between 95% and 105%.
+    var maxRatioValueFound: Double
     var minRatioValueFound: Double
     val ratioScale: Scale
     var ratioSeries: SeriesData
@@ -111,9 +109,9 @@ interface OverviewData {
     val dsMinScale: Scale
     var dsMaxSeries: SeriesData
     var dsMinSeries: SeriesData
+
     var heartRateScale: Scale
     var heartRateGraphSeries: SeriesData
     var stepsForScale: Scale
     var stepsCountGraphSeries: SeriesData
-
 }

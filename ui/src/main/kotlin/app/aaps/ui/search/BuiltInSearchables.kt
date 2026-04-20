@@ -9,12 +9,14 @@ import androidx.compose.material.icons.outlined.Palette
 import app.aaps.core.interfaces.insulin.Insulin
 import app.aaps.core.interfaces.insulin.InsulinManager
 import app.aaps.core.interfaces.resources.ResourceHelper
+import app.aaps.core.interfaces.skin.SkinDescriptionProvider
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.withChangeGuard
+import app.aaps.core.keys.interfaces.withEntries
 import app.aaps.core.ui.compose.icons.IcBolus
 import app.aaps.core.ui.compose.icons.IcCalculator
 import app.aaps.core.ui.compose.icons.IcCarbs
@@ -40,7 +42,8 @@ import javax.inject.Singleton
 class BuiltInSearchables @Inject constructor(
     private val rh: ResourceHelper,
     private val insulinManager: InsulinManager,
-    private val insulin: Insulin
+    private val insulin: Insulin,
+    private val skinDescriptionProvider: SkinDescriptionProvider
 ) : SearchableProvider {
 
     private fun hasNonU100Insulin(): Boolean =
@@ -76,6 +79,11 @@ class BuiltInSearchables @Inject constructor(
         key = "appearance",
         titleResId = app.aaps.core.ui.R.string.appearance,
         items = listOf(
+            StringKey.GeneralSkin.withEntries(
+                skinDescriptionProvider.skinDescriptions.associate { (className, labelResId) ->
+                    className to rh.gs(labelResId)
+                }
+            ),
 
             // Range settings subscreen
             PreferenceSubScreenDef(

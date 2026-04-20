@@ -25,11 +25,11 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.objects.R
 import app.aaps.core.objects.extensions.convertedToPercent
 import app.aaps.core.objects.extensions.isInProgress
 import app.aaps.core.objects.extensions.toStringFull
 import app.aaps.core.objects.extensions.toStringShort
+import app.aaps.plugins.main.R
 import com.jjoe64.graphview.series.DataPoint
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.DateTimeUnit
@@ -142,7 +142,7 @@ class OverviewDataImpl @Inject constructor(
         runBlocking { profileFunction.getProfile() }?.let { profile ->
             var temporaryBasal = processedTbrEbData.getTempBasalIncludingConvertedExtended(dateUtil.now())
             if (temporaryBasal?.isInProgress == false) temporaryBasal = null
-            temporaryBasal?.let { rh.gs(app.aaps.plugins.main.R.string.temp_basal_overview_short_name) + " " + it.toStringShort(rh) }
+            temporaryBasal?.let { rh.gs(app.aaps.core.ui.R.string.temp_basal_overview_short_name) + " " + it.toStringShort(rh) }
                 ?: rh.gs(app.aaps.core.ui.R.string.pump_base_basal_rate, profile.getBasal())
         } ?: rh.gs(app.aaps.core.ui.R.string.value_unavailable_short)
 

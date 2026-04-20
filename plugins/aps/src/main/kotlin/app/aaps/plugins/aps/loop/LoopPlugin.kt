@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import app.aaps.core.data.configuration.Constants
@@ -92,8 +93,10 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -152,6 +155,7 @@ class LoopPlugin @Inject constructor(
 ), Loop, PluginConstraints {
 
     private val disposable = CompositeDisposable()
+    private val runningModeSnapshot = AtomicReference<RM?>(null)
     override var lastBgTriggeredRun: Long = 0
     private var carbsSuggestionsSuspendedUntil: Long = 0
     private var prevCarbsreq = 0
@@ -171,6 +175,15 @@ class LoopPlugin @Inject constructor(
         createNotificationChannel()
         super.onStart()
         handler = Handler(HandlerThread(this::class.simpleName + "Handler").also { it.start() }.looper)
+        appScope.launch { refreshRunningModeSnapshotAfterPreCheck() }
+        persistenceLayer.observeChanges(RM::class.java)
+            .debounce(100L)
+            .onEach {
+                appScope.launch {
+                    runningModeSnapshot.set(persistenceLayer.getRunningModeActiveAt(dateUtil.now()))
+                }
+            }
+            .launchIn(appScope)
         // TempTarget changes
         persistenceLayer.observeChanges(TT::class.java)
             // Skip db change of ending previous TT
@@ -261,8 +274,17 @@ class LoopPlugin @Inject constructor(
     override val runningModeRecord: RM
         get() {
             runningModePreCheck()
-            return runBlocking { persistenceLayer.getRunningModeActiveAt(dateUtil.now()) }
+            return runningModeSnapshot.get()
+                ?: RM(timestamp = 0, mode = RM.DEFAULT_MODE, duration = 0)
         }
+
+    private fun isMainThread(): Boolean =
+        Looper.getMainLooper().thread == Thread.currentThread()
+
+    private suspend fun refreshRunningModeSnapshotAfterPreCheck() {
+        runningModePreCheckSuspend()
+        runningModeSnapshot.set(persistenceLayer.getRunningModeActiveAt(dateUtil.now()))
+    }
 
     override fun allowedNextModes(): List<RM.Mode> {
         if (runBlocking { profileFunction.isProfileValid("allowedNextModes") }.not()) return emptyList()
@@ -385,14 +407,26 @@ class LoopPlugin @Inject constructor(
      */
     @VisibleForTesting
     fun runningModePreCheck() {
-        val runningMode = runBlocking { persistenceLayer.getRunningModeActiveAt(dateUtil.now()) }
+        if (isMainThread()) {
+            appScope.launch { refreshRunningModeSnapshotAfterPreCheck() }
+            return
+        }
+        runBlocking { refreshRunningModeSnapshotAfterPreCheck() }
+    }
+
+    private suspend fun runningModePreCheckSuspend() {
+        // Config builder may not have a pump yet (cold start / fresh install) — avoid IllegalStateException from [ActivePlugin.activePumpInternal].
+        if (!runCatching { activePlugin.activePumpInternal }.isSuccess) {
+            return
+        }
+        val runningMode = persistenceLayer.getRunningModeActiveAt(dateUtil.now())
         val closedLoopAllowed = constraintChecker.isClosedLoopAllowed()
         val loopInvocationAllowed = constraintChecker.isLoopInvocationAllowed()
         val lgsModeForced = constraintChecker.isLgsForced()
 
         // Suspended pump found but suspended running mode not set
         if (activePlugin.activePump.isSuspended() && runningMode.mode != RM.Mode.SUSPENDED_BY_PUMP) {
-            suspendLoop(
+            suspendLoopSuspend(
                 mode = RM.Mode.SUSPENDED_BY_PUMP,
                 autoForced = true,
                 reasons = rh.gs(app.aaps.core.ui.R.string.pumpsuspended),
@@ -400,6 +434,7 @@ class LoopPlugin @Inject constructor(
                 action = Action.SUSPEND,
                 source = Sources.Loop
             )
+            completeSuspendLoopSideEffects(autoForced = true)
             rxBus.send(EventRefreshOverview("runningModePreCheck"))
             return
         }
@@ -407,16 +442,14 @@ class LoopPlugin @Inject constructor(
         if (!activePlugin.activePump.isSuspended() && runningMode.mode == RM.Mode.SUSPENDED_BY_PUMP) {
             runningMode.duration = dateUtil.now() - runningMode.timestamp
             @SuppressLint("CheckResult")
-            runBlocking {
-                persistenceLayer.insertOrUpdateRunningMode(
-                    runningMode = runningMode,
-                    action = Action.PUMP_RUNNING,
-                    source = Sources.Loop,
-                    listValues = listOf(ValueWithUnit.SimpleString(rh.gs(app.aaps.core.ui.R.string.pump_running)))
-                )
-            }
+            persistenceLayer.insertOrUpdateRunningMode(
+                runningMode = runningMode,
+                action = Action.PUMP_RUNNING,
+                source = Sources.Loop,
+                listValues = listOf(ValueWithUnit.SimpleString(rh.gs(app.aaps.core.ui.R.string.pump_running)))
+            )
             // re-run to process other conditions
-            runningModePreCheck()
+            runningModePreCheckSuspend()
             return
         }
 
@@ -446,20 +479,18 @@ class LoopPlugin @Inject constructor(
         // Perform change if needed
         if (reasons != null) {
             @SuppressLint("CheckResult")
-            runBlocking {
-                persistenceLayer.insertOrUpdateRunningMode(
-                    runningMode = RM(
-                        timestamp = dateUtil.now(),
-                        mode = newMode,
-                        reasons = reasons,
-                        autoForced = true,
-                        duration = Long.MAX_VALUE
-                    ),
-                    action = action,
-                    source = Sources.Loop,
-                    listValues = listOf(ValueWithUnit.SimpleString(reasons))
-                )
-            }
+            persistenceLayer.insertOrUpdateRunningMode(
+                runningMode = RM(
+                    timestamp = dateUtil.now(),
+                    mode = newMode,
+                    reasons = reasons,
+                    autoForced = true,
+                    duration = Long.MAX_VALUE
+                ),
+                action = action,
+                source = Sources.Loop,
+                listValues = listOf(ValueWithUnit.SimpleString(reasons))
+            )
             rxBus.send(EventRefreshOverview("runningModePreCheck"))
         }
 
@@ -474,14 +505,12 @@ class LoopPlugin @Inject constructor(
             // End now
             runningMode.duration = dateUtil.now() - runningMode.timestamp
             @SuppressLint("CheckResult")
-            runBlocking {
-                persistenceLayer.insertOrUpdateRunningMode(
-                    runningMode = runningMode,
-                    action = Action.LOOP_CHANGE,
-                    source = Sources.Loop,
-                    listValues = listOf(ValueWithUnit.SimpleString(rh.gs(app.aaps.core.ui.R.string.mode_reverted)))
-                )
-            }
+            persistenceLayer.insertOrUpdateRunningMode(
+                runningMode = runningMode,
+                action = Action.LOOP_CHANGE,
+                source = Sources.Loop,
+                listValues = listOf(ValueWithUnit.SimpleString(rh.gs(app.aaps.core.ui.R.string.mode_reverted)))
+            )
             rxBus.send(EventRefreshOverview("runningModePreCheck"))
         }
     }
@@ -629,15 +658,15 @@ class LoopPlugin @Inject constructor(
                                 val intentAction5m = Intent(context, CarbSuggestionReceiver::class.java)
                                 intentAction5m.putExtra("ignoreDuration", 5)
                                 val pendingIntent5m = PendingIntent.getBroadcast(context, 1, intentAction5m, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                                val actionIgnore5m = NotificationCompat.Action(app.aaps.core.objects.R.drawable.ic_notif_aaps, rh.gs(R.string.ignore5m, "Ignore 5m"), pendingIntent5m)
+                                val actionIgnore5m = NotificationCompat.Action(app.aaps.core.ui.R.drawable.ic_notif_aaps, rh.gs(R.string.ignore5m, "Ignore 5m"), pendingIntent5m)
                                 val intentAction15m = Intent(context, CarbSuggestionReceiver::class.java)
                                 intentAction15m.putExtra("ignoreDuration", 15)
                                 val pendingIntent15m = PendingIntent.getBroadcast(context, 2, intentAction15m, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                                val actionIgnore15m = NotificationCompat.Action(app.aaps.core.objects.R.drawable.ic_notif_aaps, rh.gs(R.string.ignore15m, "Ignore 15m"), pendingIntent15m)
+                                val actionIgnore15m = NotificationCompat.Action(app.aaps.core.ui.R.drawable.ic_notif_aaps, rh.gs(R.string.ignore15m, "Ignore 15m"), pendingIntent15m)
                                 val intentAction30m = Intent(context, CarbSuggestionReceiver::class.java)
                                 intentAction30m.putExtra("ignoreDuration", 30)
                                 val pendingIntent30m = PendingIntent.getBroadcast(context, 3, intentAction30m, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                                val actionIgnore30m = NotificationCompat.Action(app.aaps.core.objects.R.drawable.ic_notif_aaps, rh.gs(R.string.ignore30m, "Ignore 30m"), pendingIntent30m)
+                                val actionIgnore30m = NotificationCompat.Action(app.aaps.core.ui.R.drawable.ic_notif_aaps, rh.gs(R.string.ignore30m, "Ignore 30m"), pendingIntent30m)
                                 val builder = NotificationCompat.Builder(context, CHANNEL_ID)
                                 builder.setSmallIcon(app.aaps.core.ui.R.drawable.notif_icon)
                                     .setContentTitle(rh.gs(R.string.carbs_suggestion))
@@ -1049,21 +1078,28 @@ class LoopPlugin @Inject constructor(
         rxBus.send(EventRefreshOverview("goToZeroTemp"))
     }
 
-    /**
-     * Suspend loop
-     */
-    fun suspendLoop(mode: RM.Mode, autoForced: Boolean, reasons: String?, durationInMinutes: Int, action: Action, source: Sources, note: String? = null, listValues: List<ValueWithUnit> = emptyList()) {
+    private suspend fun suspendLoopSuspend(
+        mode: RM.Mode,
+        autoForced: Boolean,
+        reasons: String?,
+        durationInMinutes: Int,
+        action: Action,
+        source: Sources,
+        note: String? = null,
+        listValues: List<ValueWithUnit> = emptyList()
+    ) {
         assert(mode == RM.Mode.SUSPENDED_BY_PUMP || mode == RM.Mode.SUSPENDED_BY_USER)
         @SuppressLint("CheckResult")
-        runBlocking {
-            persistenceLayer.insertOrUpdateRunningMode(
-                runningMode = RM(timestamp = dateUtil.now(), duration = T.mins(durationInMinutes.toLong()).msecs(), mode = mode, autoForced = autoForced, reasons = reasons),
-                action = action,
-                source = source,
-                note = note,
-                listValues = listValues
-            )
-        }
+        persistenceLayer.insertOrUpdateRunningMode(
+            runningMode = RM(timestamp = dateUtil.now(), duration = T.mins(durationInMinutes.toLong()).msecs(), mode = mode, autoForced = autoForced, reasons = reasons),
+            action = action,
+            source = source,
+            note = note,
+            listValues = listValues
+        )
+    }
+
+    private fun completeSuspendLoopSideEffects(autoForced: Boolean) {
         if (config.APS)
             commandQueue.cancelTempBasal(enforceNew = false, autoForced = autoForced, callback = object : Callback() {
                 override fun run() {
@@ -1074,6 +1110,16 @@ class LoopPlugin @Inject constructor(
             })
         // SUSPENDED_BY_USER / SUSPENDED_BY_PUMP: same gap as goToZeroTemp — refresh overview + hybrid dashboard immediately.
         rxBus.send(EventRefreshOverview("suspendLoop"))
+    }
+
+    /**
+     * Suspend loop
+     */
+    fun suspendLoop(mode: RM.Mode, autoForced: Boolean, reasons: String?, durationInMinutes: Int, action: Action, source: Sources, note: String? = null, listValues: List<ValueWithUnit> = emptyList()) {
+        runBlocking {
+            suspendLoopSuspend(mode, autoForced, reasons, durationInMinutes, action, source, note, listValues)
+        }
+        completeSuspendLoopSideEffects(autoForced)
     }
 
     var task: Runnable? = null

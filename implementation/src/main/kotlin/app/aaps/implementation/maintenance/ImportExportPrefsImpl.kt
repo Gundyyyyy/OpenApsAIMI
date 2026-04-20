@@ -1,13 +1,8 @@
 package app.aaps.implementation.maintenance
 
-import android.Manifest
-import android.bluetooth.BluetoothManager
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
 import android.provider.Settings
 import androidx.annotation.StringRes
-import androidx.core.app.ActivityCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
@@ -60,6 +55,7 @@ import app.aaps.core.objects.workflow.LoggingWorker
 import app.aaps.core.ui.toast.ToastUtils
 import app.aaps.core.utils.receivers.DataWorkerStorage
 import app.aaps.implementation.R
+import app.aaps.implementation.maintenance.ExportPrefKeys
 import app.aaps.implementation.maintenance.cloud.CloudConstants
 import app.aaps.implementation.maintenance.cloud.CloudStorageManager
 import app.aaps.implementation.maintenance.data.PrefFileNotFoundError
@@ -125,70 +121,70 @@ class ImportExportPrefsImpl @Inject constructor(
             isCloudActive = isCloudActive,
             isCloudError = hasCloudError,
             hasCloudCredentials = cloudStorageManager.hasAnyCloudCredentials(),
-            settingsLocal = sp.getBoolean(ExportPrefKeys.PREF_SETTINGS_LOCAL_ENABLED, true),
-            settingsCloud = sp.getBoolean(ExportPrefKeys.PREF_SETTINGS_CLOUD_ENABLED, false),
-            logEmail = sp.getBoolean(ExportPrefKeys.PREF_LOG_EMAIL_ENABLED, true),
-            logCloud = sp.getBoolean(ExportPrefKeys.PREF_LOG_CLOUD_ENABLED, false),
-            csvLocal = sp.getBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true),
-            csvCloud = sp.getBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, false),
+            settingsLocal = preferences.get(BooleanNonKey.ExportSettingsLocalEnabled),
+            settingsCloud = preferences.get(BooleanNonKey.ExportSettingsCloudEnabled),
+            logEmail = preferences.get(BooleanNonKey.ExportLogEmailEnabled),
+            logCloud = preferences.get(BooleanNonKey.ExportLogCloudEnabled),
+            csvLocal = preferences.get(BooleanNonKey.ExportCsvLocalEnabled),
+            csvCloud = preferences.get(BooleanNonKey.ExportCsvCloudEnabled),
             aimiCloud = sp.getBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, false),
             cloudDisplayName = provider?.displayName
         )
     }
 
     override fun setSettingsLocalEnabled(enabled: Boolean) {
-        sp.putBoolean(ExportPrefKeys.PREF_SETTINGS_LOCAL_ENABLED, enabled)
+        preferences.put(BooleanNonKey.ExportSettingsLocalEnabled, enabled)
         // Ensure at least one destination is selected
-        if (!enabled && !sp.getBoolean(ExportPrefKeys.PREF_SETTINGS_CLOUD_ENABLED, false)) {
-            sp.putBoolean(ExportPrefKeys.PREF_SETTINGS_CLOUD_ENABLED, true)
+        if (!enabled && !preferences.get(BooleanNonKey.ExportSettingsCloudEnabled)) {
+            preferences.put(BooleanNonKey.ExportSettingsCloudEnabled, true)
         }
-        sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
+        preferences.put(BooleanNonKey.ExportAllCloudEnabled, false)
     }
 
     override fun setSettingsCloudEnabled(enabled: Boolean) {
-        sp.putBoolean(ExportPrefKeys.PREF_SETTINGS_CLOUD_ENABLED, enabled)
+        preferences.put(BooleanNonKey.ExportSettingsCloudEnabled, enabled)
         // Ensure at least one destination is selected
-        if (!enabled && !sp.getBoolean(ExportPrefKeys.PREF_SETTINGS_LOCAL_ENABLED, true)) {
-            sp.putBoolean(ExportPrefKeys.PREF_SETTINGS_LOCAL_ENABLED, true)
+        if (!enabled && !preferences.get(BooleanNonKey.ExportSettingsLocalEnabled)) {
+            preferences.put(BooleanNonKey.ExportSettingsLocalEnabled, true)
         }
-        sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
+        preferences.put(BooleanNonKey.ExportAllCloudEnabled, false)
     }
 
     override fun setLogEmailEnabled(enabled: Boolean) {
-        sp.putBoolean(ExportPrefKeys.PREF_LOG_EMAIL_ENABLED, enabled)
-        if (!enabled && !sp.getBoolean(ExportPrefKeys.PREF_LOG_CLOUD_ENABLED, false)) {
-            sp.putBoolean(ExportPrefKeys.PREF_LOG_CLOUD_ENABLED, true)
+        preferences.put(BooleanNonKey.ExportLogEmailEnabled, enabled)
+        if (!enabled && !preferences.get(BooleanNonKey.ExportLogCloudEnabled)) {
+            preferences.put(BooleanNonKey.ExportLogCloudEnabled, true)
         }
-        sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
+        preferences.put(BooleanNonKey.ExportAllCloudEnabled, false)
     }
 
     override fun setLogCloudEnabled(enabled: Boolean) {
-        sp.putBoolean(ExportPrefKeys.PREF_LOG_CLOUD_ENABLED, enabled)
-        if (!enabled && !sp.getBoolean(ExportPrefKeys.PREF_LOG_EMAIL_ENABLED, true)) {
-            sp.putBoolean(ExportPrefKeys.PREF_LOG_EMAIL_ENABLED, true)
+        preferences.put(BooleanNonKey.ExportLogCloudEnabled, enabled)
+        if (!enabled && !preferences.get(BooleanNonKey.ExportLogEmailEnabled)) {
+            preferences.put(BooleanNonKey.ExportLogEmailEnabled, true)
         }
-        sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
+        preferences.put(BooleanNonKey.ExportAllCloudEnabled, false)
     }
 
     override fun setCsvLocalEnabled(enabled: Boolean) {
-        sp.putBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, enabled)
-        if (!enabled && !sp.getBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, false)) {
-            sp.putBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, true)
+        preferences.put(BooleanNonKey.ExportCsvLocalEnabled, enabled)
+        if (!enabled && !preferences.get(BooleanNonKey.ExportCsvCloudEnabled)) {
+            preferences.put(BooleanNonKey.ExportCsvCloudEnabled, true)
         }
-        sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
+        preferences.put(BooleanNonKey.ExportAllCloudEnabled, false)
     }
 
     override fun setCsvCloudEnabled(enabled: Boolean) {
-        sp.putBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, enabled)
-        if (!enabled && !sp.getBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true)) {
-            sp.putBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true)
+        preferences.put(BooleanNonKey.ExportCsvCloudEnabled, enabled)
+        if (!enabled && !preferences.get(BooleanNonKey.ExportCsvLocalEnabled)) {
+            preferences.put(BooleanNonKey.ExportCsvLocalEnabled, true)
         }
-        sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
+        preferences.put(BooleanNonKey.ExportAllCloudEnabled, false)
     }
 
     override fun setAimiCloudEnabled(enabled: Boolean) {
         sp.putBoolean(ExportPrefKeys.PREF_AIMI_CLOUD_ENABLED, enabled)
-        sp.putBoolean(ExportPrefKeys.PREF_ALL_CLOUD_ENABLED, false)
+        preferences.put(BooleanNonKey.ExportAllCloudEnabled, false)
     }
 
     override fun prepareExport(): ExportPreparation? {
@@ -363,13 +359,6 @@ class ImportExportPrefsImpl @Inject constructor(
     private fun detectUserName(context: Context): String {
         // based on https://medium.com/@pribble88/how-to-get-an-android-device-nickname-4b4700b3068c
         val n1 = Settings.System.getString(context.contentResolver, "bluetooth_name")
-        val n3 = try {
-            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager?)?.adapter?.name
-            } else null
-        } catch (_: Exception) {
-            null
-        }
         val n4 = Settings.System.getString(context.contentResolver, "device_name")
         val n5 = Settings.Secure.getString(context.contentResolver, "lock_screen_owner_info")
         val n6 = Settings.Global.getString(context.contentResolver, "device_name")
@@ -379,7 +368,7 @@ class ImportExportPrefsImpl @Inject constructor(
         val defaultPatientName = rh.gs(app.aaps.core.ui.R.string.patient_name_default)
 
         // name we detect from OS
-        val systemName = n1 ?: n3 ?: n4 ?: n5 ?: n6 ?: defaultPatientName
+        val systemName = n1 ?: n4 ?: n5 ?: n6 ?: defaultPatientName
         return if (patientName.isNotEmpty() && patientName != defaultPatientName) patientName else systemName
     }
 
@@ -477,8 +466,8 @@ class ImportExportPrefsImpl @Inject constructor(
 
     private fun exportSharedPreferencesLegacy(activity: FragmentActivity) {
         // Check export destination preference for user settings
-        val localEnabled = sp.getBoolean(ExportPrefKeys.PREF_SETTINGS_LOCAL_ENABLED, true)
-        val cloudEnabled = sp.getBoolean(ExportPrefKeys.PREF_SETTINGS_CLOUD_ENABLED, false)
+        val localEnabled = preferences.get(BooleanNonKey.ExportSettingsLocalEnabled)
+        val cloudEnabled = preferences.get(BooleanNonKey.ExportSettingsCloudEnabled)
         val isCloudActive = cloudStorageManager.isCloudStorageActive()
 
         // Determine export destinations
@@ -715,8 +704,8 @@ class ImportExportPrefsImpl @Inject constructor(
 
     override fun exportSharedPreferencesNonInteractive(context: Context, password: String): Boolean {
         // Check export destination preferences (same logic as manual export)
-        val localEnabled = sp.getBoolean(ExportPrefKeys.PREF_SETTINGS_LOCAL_ENABLED, true)
-        val cloudEnabled = sp.getBoolean(ExportPrefKeys.PREF_SETTINGS_CLOUD_ENABLED, false)
+        val localEnabled = preferences.get(BooleanNonKey.ExportSettingsLocalEnabled)
+        val cloudEnabled = preferences.get(BooleanNonKey.ExportSettingsCloudEnabled)
         val isCloudActive = cloudStorageManager.isCloudStorageActive()
 
         val exportToCloud = cloudEnabled && isCloudActive
@@ -955,8 +944,8 @@ class ImportExportPrefsImpl @Inject constructor(
         val entries = persistenceLayer.getUserEntryFilteredDataFromTime(MidnightTime.calc() - T.days(90).msecs())
         aapsLogger.info(LTag.CORE, "${CloudConstants.LOG_PREFIX} CSV_EXPORT entries count=${entries.size}")
 
-        val csvLocal = sp.getBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true)
-        val csvCloud = sp.getBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, false)
+        val csvLocal = preferences.get(BooleanNonKey.ExportCsvLocalEnabled)
+        val csvCloud = preferences.get(BooleanNonKey.ExportCsvCloudEnabled)
         val isCloudActive = cloudStorageManager.isCloudStorageActive()
         val cloudEnabled = csvCloud && isCloudActive
 
@@ -1023,7 +1012,7 @@ class ImportExportPrefsImpl @Inject constructor(
         @Inject lateinit var storage: Storage
         @Inject lateinit var persistenceLayer: PersistenceLayer
         @Inject lateinit var cloudStorageManager: CloudStorageManager
-        @Inject lateinit var sp: SP
+        @Inject lateinit var preferences: Preferences
 
         override suspend fun doWorkAndLog(): Result {
             aapsLogger.info(LTag.CORE, "${CloudConstants.LOG_PREFIX} CSV_EXPORT doWorkAndLog started")
@@ -1032,8 +1021,8 @@ class ImportExportPrefsImpl @Inject constructor(
 
             aapsLogger.info(LTag.CORE, "${CloudConstants.LOG_PREFIX} CSV_EXPORT entries count=${entries.size}")
 
-            val csvLocal = sp.getBoolean(ExportPrefKeys.PREF_CSV_LOCAL_ENABLED, true)
-            val csvCloud = sp.getBoolean(ExportPrefKeys.PREF_CSV_CLOUD_ENABLED, false)
+            val csvLocal = preferences.get(BooleanNonKey.ExportCsvLocalEnabled)
+            val csvCloud = preferences.get(BooleanNonKey.ExportCsvCloudEnabled)
             val isCloudActive = cloudStorageManager.isCloudStorageActive()
             val cloudEnabled = csvCloud && isCloudActive
 

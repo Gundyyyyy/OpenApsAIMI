@@ -10,12 +10,26 @@ import android.view.View
 import android.view.accessibility.AccessibilityManager
 import android.widget.FrameLayout
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DirectionsWalk
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.WaterDrop
+import androidx.compose.material.icons.outlined.Waves
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
@@ -26,9 +40,14 @@ import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalPreferences
 import app.aaps.core.ui.compose.dashboard.GlucoseHeroRing
 import app.aaps.core.ui.compose.dashboard.GlucoseHeroUiState
+import app.aaps.core.ui.compose.icons.IcCarbs
+import app.aaps.core.ui.compose.icons.IcPluginObjectives
+import app.aaps.core.ui.compose.icons.IcPumpBattery
+import app.aaps.core.ui.compose.icons.IcPumpCartridge
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.views.GlucoseRingColorComputer
 import app.aaps.plugins.main.databinding.ComponentCircleTopStatusHybridBinding
+import app.aaps.plugins.main.general.dashboard.compose.DashboardMetricIcon
 import app.aaps.plugins.main.general.dashboard.compose.DashboardQuickActionsBar
 import app.aaps.plugins.main.general.dashboard.viewmodel.StatusCardState
 import java.util.Locale
@@ -76,6 +95,9 @@ class CircleTopDashboardView @JvmOverloads constructor(
 
     private val actionListenerState = mutableStateOf<CircleTopActionListener?>(null)
 
+    /** Tint for adaptive smoothing badge wave icon (updated from [updateWithState]). */
+    private val adaptiveSmoothingIconTintState = mutableStateOf(Color.Gray)
+
     private var dashboardPreferences: Preferences? = null
 
     private var suppressDashboardMetricsModeCallback: Boolean = false
@@ -117,7 +139,75 @@ class CircleTopDashboardView @JvmOverloads constructor(
                 }
             }
         }
+        attachDashboardMetricComposeIcons(preferences)
         installDashboardMetricsModeToggle()
+    }
+
+    private fun attachDashboardMetricComposeIcons(preferences: Preferences) {
+        fun dashboardColor(resId: Int): Color = Color(ContextCompat.getColor(context, resId))
+
+        fun bindMetricIcon(
+            view: ComposeView,
+            tint: Color,
+            sizeDp: Dp = 18.dp,
+            icon: ImageVector,
+        ) {
+            view.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            view.setContent {
+                CompositionLocalProvider(LocalPreferences provides preferences) {
+                    AapsTheme {
+                        DashboardMetricIcon(imageVector = icon, tint = tint, size = sizeDp)
+                    }
+                }
+            }
+        }
+
+        val muted = dashboardColor(app.aaps.plugins.main.R.color.dashboard_on_surface_muted)
+        val onSurface = dashboardColor(app.aaps.plugins.main.R.color.dashboard_on_surface)
+        val attention = dashboardColor(app.aaps.plugins.main.R.color.dashboard_metric_attention)
+        val info = dashboardColor(app.aaps.plugins.main.R.color.dashboard_metric_info)
+        val warning = dashboardColor(app.aaps.plugins.main.R.color.dashboard_metric_warning)
+
+        binding.aimiContextIndicator.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        binding.aimiContextIndicator.setContent {
+            CompositionLocalProvider(LocalPreferences provides preferences) {
+                AapsTheme {
+                    Icon(
+                        imageVector = IcPluginObjectives,
+                        contentDescription = null,
+                        modifier = Modifier.size(28.dp),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+
+        bindMetricIcon(binding.metricIconSteps, muted, 18.dp, Icons.Outlined.DirectionsWalk)
+        bindMetricIcon(binding.metricIconReservoir, onSurface, 18.dp, IcPumpCartridge)
+        bindMetricIcon(binding.metricIconCob, attention, 18.dp, IcCarbs)
+        bindMetricIcon(binding.metricIconCv, onSurface, 18.dp, Icons.Outlined.Waves)
+        bindMetricIcon(binding.metricIconBattery, onSurface, 18.dp, IcPumpBattery)
+        bindMetricIcon(binding.metricIconHr, muted, 18.dp, Icons.Outlined.Favorite)
+        bindMetricIcon(binding.metricIconLastReading, info, 18.dp, Icons.Outlined.WaterDrop)
+        bindMetricIcon(binding.metricIconTbr, warning, 18.dp, Icons.Outlined.ErrorOutline)
+        bindMetricIcon(binding.metricIconBasal, onSurface, 18.dp, Icons.Outlined.Tune)
+        bindMetricIcon(binding.metricIconActivity, onSurface, 18.dp, Icons.Outlined.Tune)
+
+        adaptiveSmoothingIconTintState.value = muted
+        binding.metricIconAdaptiveSmoothing.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        binding.metricIconAdaptiveSmoothing.setContent {
+            CompositionLocalProvider(LocalPreferences provides preferences) {
+                AapsTheme {
+                    val tint by adaptiveSmoothingIconTintState
+                    Icon(
+                        imageVector = Icons.Outlined.Waves,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = tint,
+                    )
+                }
+            }
+        }
     }
 
     /**
@@ -343,9 +433,7 @@ class CircleTopDashboardView @JvmOverloads constructor(
                         app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier.BAD ->
                             app.aaps.plugins.main.R.color.dashboard_chip_border_warning
                     }
-                    binding.adaptiveSmoothingQualityIcon.setColorFilter(
-                        context.getColor(tintRes)
-                    )
+                    adaptiveSmoothingIconTintState.value = Color(context.getColor(tintRes))
 
                     binding.adaptiveSmoothingQualityBadge.contentDescription = state.adaptiveSmoothingQualityBadgeText
                     binding.adaptiveSmoothingQualityBadge.setOnClickListener {

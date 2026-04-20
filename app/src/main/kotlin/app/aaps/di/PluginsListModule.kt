@@ -76,14 +76,14 @@ abstract class PluginsListModule {
     @Binds
     @AllConfigs
     @IntoMap
-    @IntKey(5)
-    abstract fun bindOverviewPlugin(plugin: OverviewPlugin): PluginBase
+    @IntKey(10)
+    abstract fun bindIobCobCalculatorPlugin(plugin: IobCobCalculatorPlugin): PluginBase
 
     @Binds
     @AllConfigs
     @IntoMap
-    @IntKey(10)
-    abstract fun bindIobCobCalculatorPlugin(plugin: IobCobCalculatorPlugin): PluginBase
+    @IntKey(20)
+    abstract fun bindOverviewPlugin(plugin: OverviewPlugin): PluginBase
 
     @Binds
     @AllConfigs

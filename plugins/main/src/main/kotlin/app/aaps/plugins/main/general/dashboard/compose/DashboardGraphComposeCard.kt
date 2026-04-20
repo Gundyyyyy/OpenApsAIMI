@@ -44,8 +44,15 @@ import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.toast.ToastUtils
 import app.aaps.plugins.main.R
 import app.aaps.plugins.main.general.dashboard.DashboardEmbeddedComposeState
+import app.aaps.ui.compose.overview.graphs.DEFAULT_GRAPH_ZOOM_MINUTES
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
+import app.aaps.ui.compose.overview.graphs.SecondaryGraphCompose
+import app.aaps.ui.compose.overview.graphs.TreatmentBeltGraphCompose
 import app.aaps.ui.compose.overview.graphs.bgReadingTintColor
+import com.patrykandpatrick.vico.compose.cartesian.Scroll
+import com.patrykandpatrick.vico.compose.cartesian.Zoom
+import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
+import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -153,23 +160,6 @@ internal fun DashboardGraphComposeCard(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = stringResource(R.string.prediction_shortname),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    if (useVicoGraph && SeriesType.ACTIVITY in graphConfig.bgOverlays) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .width(14.dp)
-                                    .height(3.dp)
-                                    .clip(CircleShape)
-                                    .background(AapsTheme.elementColors.activity.copy(alpha = 0.85f)),
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = stringResource(R.string.graph_legend_activity),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -382,20 +372,96 @@ internal fun DashboardGraphComposeCard(
                             Modifier
                         }
                     if (useVicoGraph) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(if (expandGraphVertically) Modifier.weight(1f) else Modifier.height(graphMinHeight))
-                                .then(smbTapModifier),
+                        val vmDerived by graphViewModel.derivedTimeRange.collectAsStateWithLifecycle()
+                        val effectiveTimeRange = remember(
+                            vmDerived,
+                            renderInput.fromTimeEpochMs,
+                            renderInput.toTimeEpochMs,
                         ) {
-                            DashboardBgGraphVico(
-                                graphViewModel = graphViewModel,
-                                graphRenderInput = renderInput,
-                                viewportResetGeneration = composeState.vicoViewportResetGeneration,
-                                viewportFollowingLive = composeState.vicoViewportFollowingLive,
-                                onViewportFollowingLiveChanged = composeState::setVicoViewportFollowingLive,
-                                modifier = Modifier.fillMaxSize(),
+                            val f = renderInput.fromTimeEpochMs
+                            val t = renderInput.toTimeEpochMs
+                            if (f > 0L && t > f) f to t else vmDerived
+                        }
+                        val shellControlsHorizontalWindow = true
+                        val scrollState = rememberVicoScrollState(
+                            scrollEnabled = !shellControlsHorizontalWindow,
+                            initialScroll = Scroll.Absolute.End,
+                        )
+                        val zoomState = rememberVicoZoomState(
+                            zoomEnabled = true,
+                            initialZoom = Zoom.x(DEFAULT_GRAPH_ZOOM_MINUTES),
+                        )
+                        // Dashboard: never show activity (strip / BG / IOB overlay) — keep the card readable.
+                        val bgOverlaysForEffects = remember(graphConfig.bgOverlays) {
+                            buildList {
+                                addAll(graphConfig.bgOverlays.filter { it != SeriesType.ACTIVITY })
+                                if (SeriesType.PREDICTIONS !in this) {
+                                    add(SeriesType.PREDICTIONS)
+                                }
+                            }
+                        }
+                        DashboardVicoSharedViewportEffects(
+                            graphViewModel = graphViewModel,
+                            scrollState = scrollState,
+                            zoomState = zoomState,
+                            derivedTimeRange = effectiveTimeRange,
+                            viewportResetGeneration = composeState.vicoViewportResetGeneration,
+                            viewportFollowingLive = composeState.vicoViewportFollowingLive &&
+                                composeState.graphPanPastMs == 0L,
+                            onViewportFollowingLiveChanged = composeState::setVicoViewportFollowingLive,
+                            shellControlsHorizontalWindow = shellControlsHorizontalWindow,
+                            bgOverlays = bgOverlaysForEffects,
+                        )
+                        val nowTs by graphViewModel.nowTimestamp.collectAsStateWithLifecycle()
+                        // Fixed BG height like Overview ([GraphsSection] uses graphConfig.bgHeight) — never weight(1f)
+                        // here, or the Vico host fills all space between belt and IOB and looks like an empty "second graph".
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            // Same stack order / overlap as [app.aaps.ui.compose.overview.graphs.GraphsSection]
+                            TreatmentBeltGraphCompose(
+                                viewModel = graphViewModel,
+                                scrollState = scrollState,
+                                zoomState = zoomState,
+                                derivedTimeRange = effectiveTimeRange,
+                                nowTimestamp = nowTs,
+                                modifier = Modifier.fillMaxWidth(),
                             )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .offset(y = (-16).dp)
+                                    .height(graphConfig.bgHeight.dp)
+                                    .then(smbTapModifier),
+                            ) {
+                                DashboardBgGraphVico(
+                                    graphViewModel = graphViewModel,
+                                    graphRenderInput = renderInput,
+                                    scrollState = scrollState,
+                                    zoomState = zoomState,
+                                    derivedTimeRange = effectiveTimeRange,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .offset(y = (-8).dp),
+                            ) {
+                                SecondaryGraphCompose(
+                                    viewModel = graphViewModel,
+                                    seriesTypes = listOf(SeriesType.IOB),
+                                    scrollState = scrollState,
+                                    zoomState = zoomState,
+                                    derivedTimeRange = effectiveTimeRange,
+                                    nowTimestamp = nowTs,
+                                    activityOverlay = false,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(graphConfig.iobHeight.dp),
+                                )
+                            }
                         }
                     } else {
                         DashboardGraphComposeRenderer(

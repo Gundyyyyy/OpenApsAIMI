@@ -123,7 +123,6 @@ internal class DashboardShellController(
     private var overviewCacheMarkerJob: Job? = null
     private var markerDataRetryJob: Job? = null
     private var markerDataRetryAttempts = 0
-    private var pendingCacheRangeForMarkers: TimeRange? = null
     private var dbMarkerFallbackJob: Job? = null
     private var dbMarkerFallbackRange: Pair<Long, Long>? = null
     private var dbFallbackSmbMarkers: List<ChartSmbMarker> = emptyList()
@@ -929,32 +928,29 @@ internal class DashboardShellController(
         } else {
             visibleToEpoch
         }
-        val cacheReq = requestedCacheRange
-        val rangeAligned =
-            !useComposeOnlyGraphPipeline || cacheReq == null || isOverviewCacheRangeAligned(cacheReq)
-        val basalReadyForTbr =
-            cacheReq != null && rangeAligned && isBasalReadyForTbrMarkers(cacheReq)
+        // Compose dashboard: always read SMB/TBR from the same singleton [OverviewDataCache] flows as Overview.
+        // (Previously gated on cache TimeRange alignment with the shell; that often failed and skipped cache reads.)
         var smbMarkers = emptyList<ChartSmbMarker>()
         var tbrMarkers = emptyList<Long>()
         var tbrSegments = emptyList<ChartTbrSegment>()
         if (useComposeOnlyGraphPipeline) {
-            if (rangeAligned) {
-                smbMarkers = extractSmbMarkersFromCache(visibleFromEpoch, visibleToEpoch)
-            }
-            if (basalReadyForTbr) {
-                tbrMarkers = extractTbrChangeMarkerTimesFromBasalSteps(visibleFromEpoch, visibleToEpoch)
-                tbrSegments = extractTbrSegmentsFromBasalSteps(visibleFromEpoch, visibleToEpoch)
-            }
-            if (!rangeAligned || !basalReadyForTbr) {
+            smbMarkers = extractSmbMarkersFromCache(visibleFromEpoch, visibleToEpoch)
+            tbrMarkers = extractTbrChangeMarkerTimesFromBasalSteps(visibleFromEpoch, visibleToEpoch)
+            tbrSegments = extractTbrSegmentsFromBasalSteps(visibleFromEpoch, visibleToEpoch)
+            val needSmb = smbMarkers.isEmpty()
+            val needTbr = tbrMarkers.isEmpty() && tbrSegments.isEmpty()
+            if (needSmb || needTbr) {
                 val fallbackRange = dbMarkerFallbackRange
                 if (fallbackRange != null &&
                     fallbackRange.first == visibleFromEpoch &&
                     fallbackRange.second == visibleToEpoch
                 ) {
-                    if (!rangeAligned || smbMarkers.isEmpty()) {
+                    if (needSmb && dbFallbackSmbMarkers.isNotEmpty()) {
                         smbMarkers = dbFallbackSmbMarkers
                     }
-                    if (!rangeAligned || !basalReadyForTbr || (tbrMarkers.isEmpty() && tbrSegments.isEmpty())) {
+                    if (needTbr &&
+                        (dbFallbackTbrMarkers.isNotEmpty() || dbFallbackTbrSegments.isNotEmpty())
+                    ) {
                         tbrMarkers = dbFallbackTbrMarkers
                         tbrSegments = dbFallbackTbrSegments
                     }
@@ -967,34 +963,13 @@ internal class DashboardShellController(
             tbrMarkers = extractTbrChangeMarkerTimes(visibleFromEpoch, visibleToEpoch)
             tbrSegments = extractTbrSegments(visibleFromEpoch, visibleToEpoch)
         }
-        val smbEmpty = smbMarkers.isEmpty()
-        val tbrEmpty = tbrMarkers.isEmpty() && tbrSegments.isEmpty()
-        if (useComposeOnlyGraphPipeline && rangeAligned && (smbEmpty || tbrEmpty)) {
-            val fallbackRange = dbMarkerFallbackRange
-            if (fallbackRange != null &&
-                fallbackRange.first == visibleFromEpoch &&
-                fallbackRange.second == visibleToEpoch &&
-                (dbFallbackSmbMarkers.isNotEmpty() || dbFallbackTbrMarkers.isNotEmpty() || dbFallbackTbrSegments.isNotEmpty())
-            ) {
-                if (smbEmpty && dbFallbackSmbMarkers.isNotEmpty()) {
-                    smbMarkers = dbFallbackSmbMarkers
-                }
-                if (tbrEmpty && (dbFallbackTbrMarkers.isNotEmpty() || dbFallbackTbrSegments.isNotEmpty())) {
-                    tbrMarkers = dbFallbackTbrMarkers
-                    tbrSegments = dbFallbackTbrSegments
-                }
-            } else {
-                requestDbMarkerFallback(visibleFromEpoch, visibleToEpoch)
-            }
-        }
+        val basalStepCount = overviewDataCache.basalGraphFlow.value.actualBasal.size
         aapsLogger.debug(
             LTag.CORE,
-            "Dashboard strip markers smb=${smbMarkers.size} tbrSeg=${tbrSegments.size} tbrMark=${tbrMarkers.size} composeOnly=$useComposeOnlyGraphPipeline rangeAligned=$rangeAligned basalReady=$basalReadyForTbr",
+            "Dashboard strip markers smb=${smbMarkers.size} tbrSeg=${tbrSegments.size} tbrMark=${tbrMarkers.size} composeOnly=$useComposeOnlyGraphPipeline basalPts=$basalStepCount",
         )
         val markersFullyEmpty = smbMarkers.isEmpty() && tbrMarkers.isEmpty() && tbrSegments.isEmpty()
-        val awaitingBasalForTbr =
-            rangeAligned && smbMarkers.isNotEmpty() && tbrMarkers.isEmpty() && tbrSegments.isEmpty() && !basalReadyForTbr
-        if (useComposeOnlyGraphPipeline && (!rangeAligned || markersFullyEmpty || awaitingBasalForTbr)) {
+        if (useComposeOnlyGraphPipeline && markersFullyEmpty) {
             scheduleMarkerDataRetry()
         } else {
             markerDataRetryAttempts = 0
@@ -1066,11 +1041,6 @@ internal class DashboardShellController(
                 abs(current.toTime - toMs) > 60_000L ||
                 abs(current.endTime - endMs) > 60_000L
         if (!needsUpdate) return
-        pendingCacheRangeForMarkers = TimeRange(
-            fromTime = fromMs,
-            toTime = toMs,
-            endTime = endMs,
-        )
         overviewDataCache.updateTimeRange(
             TimeRange(
                 fromTime = fromMs,
@@ -1078,27 +1048,6 @@ internal class DashboardShellController(
                 endTime = endMs,
             ),
         )
-    }
-
-    private fun isOverviewCacheRangeAligned(requested: TimeRange): Boolean {
-        val current = overviewDataCache.timeRangeFlow.value ?: return false
-        return abs(current.fromTime - requested.fromTime) <= 60_000L &&
-            abs(current.toTime - requested.toTime) <= 60_000L &&
-            abs(current.endTime - requested.endTime) <= 60_000L
-    }
-
-    /**
-     * TBR stripes are derived from [BasalGraphData.actualBasal] steps. Use [TimeRange.toTime] (visible end),
-     * not [TimeRange.endTime] (prediction horizon).
-     */
-    private fun isBasalReadyForTbrMarkers(requested: TimeRange): Boolean {
-        val basal = overviewDataCache.basalGraphFlow.value.actualBasal
-        val lastBasalTimestamp = basal.lastOrNull()?.timestamp ?: return false
-        val ready = lastBasalTimestamp >= requested.toTime - 60_000L
-        if (ready && pendingCacheRangeForMarkers != null) {
-            pendingCacheRangeForMarkers = null
-        }
-        return ready
     }
 
     private fun extractTbrChangeMarkerTimesFromBasalSteps(fromMs: Long, toMs: Long): List<Long> = runCatching {

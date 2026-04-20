@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.BS
+import app.aaps.core.data.model.TB
 import app.aaps.core.data.time.T
 import app.aaps.core.graph.data.BolusDataPoint
 import app.aaps.core.graph.data.DataPointWithLabelInterface
@@ -25,6 +26,7 @@ import app.aaps.core.interfaces.overview.graph.BolusType
 import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
 import app.aaps.core.interfaces.overview.graph.ChartTbrSegment
 import app.aaps.core.interfaces.overview.graph.GraphDataPoint
+import app.aaps.core.interfaces.overview.graph.TimeRange
 import app.aaps.core.interfaces.overview.OverviewMenus.CharType
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.protection.ProtectionCheck
@@ -63,9 +65,11 @@ import com.jjoe64.graphview.series.LineGraphSeries
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -105,6 +109,7 @@ internal class DashboardShellController(
     private val auditorStatusLiveData get() = deps.auditorStatusLiveData
     private val auditorNotificationManager get() = deps.auditorNotificationManager
     private val overviewDataCache get() = deps.overviewDataCache.get()
+    private val persistenceLayer get() = deps.persistenceLayer
 
     private val disposables = CompositeDisposable()
     private var shellBinding: DashboardShellBinding? = null
@@ -115,6 +120,14 @@ internal class DashboardShellController(
     private var lastGraphFormatRangeHours: Int? = null
     private var lastGraphBgLagMs: Long? = null
     private var graphRefreshJob: Job? = null
+    private var markerDataRetryJob: Job? = null
+    private var markerDataRetryAttempts = 0
+    private var pendingCacheRangeForMarkers: TimeRange? = null
+    private var dbMarkerFallbackJob: Job? = null
+    private var dbMarkerFallbackRange: Pair<Long, Long>? = null
+    private var dbFallbackSmbMarkers: List<ChartSmbMarker> = emptyList()
+    private var dbFallbackTbrMarkers: List<Long> = emptyList()
+    private var dbFallbackTbrSegments: List<ChartTbrSegment> = emptyList()
     private var periodicOverviewRefreshJob: Job? = null
     private var embeddedLayoutSettleRefreshJob: Job? = null
     private var isHypoRiskDialogShowing = false
@@ -410,6 +423,9 @@ internal class DashboardShellController(
         graphViewportLayoutListener = null
         graphRefreshJob?.cancel()
         graphRefreshJob = null
+        markerDataRetryJob?.cancel()
+        markerDataRetryJob = null
+        markerDataRetryAttempts = 0
         auditorIndicator?.stopAnimations()
         auditorIndicator = null
         host.embeddedComposeState?.adjustmentCardState = null
@@ -590,6 +606,18 @@ internal class DashboardShellController(
             if (shellBinding != null && host.isBindingAttached()) {
                 updateGraph()
             }
+        }
+    }
+
+    private fun scheduleMarkerDataRetry() {
+        if (markerDataRetryAttempts >= MARKER_DATA_RETRY_MAX_ATTEMPTS) return
+        markerDataRetryJob?.cancel()
+        markerDataRetryJob = host.liveDataOwner.lifecycleScope.launch {
+            val delayMs = MARKER_DATA_RETRY_DELAY_MS * (markerDataRetryAttempts + 1)
+            delay(delayMs)
+            if (shellBinding == null || !host.isBindingAttached()) return@launch
+            markerDataRetryAttempts += 1
+            updateGraph()
         }
     }
 
@@ -812,6 +840,24 @@ internal class DashboardShellController(
         val predictionFutureHorizonMs = T.hours(3).msecs()
         val predictionDisplayToEpoch = visibleToEpoch + predictionFutureHorizonMs
         val predictionQueryTo = max(overviewData.endTime, predictionDisplayToEpoch)
+        val requestedCacheRange =
+            if (useComposeOnlyGraphPipeline) {
+                val warmupMarginMs = max(rangeMs, T.hours(6).msecs())
+                TimeRange(
+                    fromTime = visibleFromEpoch - warmupMarginMs,
+                    toTime = visibleToEpoch,
+                    endTime = predictionQueryTo,
+                )
+            } else {
+                null
+            }
+        if (useComposeOnlyGraphPipeline && requestedCacheRange != null) {
+            syncOverviewCacheRange(
+                fromMs = requestedCacheRange.fromTime,
+                toMs = requestedCacheRange.toTime,
+                endMs = requestedCacheRange.endTime,
+            )
+        }
 
         val composePoints = overviewData.bgReadingsArray
             .asSequence()
@@ -846,19 +892,65 @@ internal class DashboardShellController(
         } else {
             visibleToEpoch
         }
-        val smbMarkers =
-            if (useComposeOnlyGraphPipeline) extractSmbMarkersFromCache(visibleFromEpoch, visibleToEpoch)
-            else extractSmbMarkers(visibleFromEpoch, visibleToEpoch)
-        val tbrMarkers =
-            when {
-                useComposeOnlyGraphPipeline -> extractTbrChangeMarkerTimesFromBasalSteps(visibleFromEpoch, visibleToEpoch)
-                else -> extractTbrChangeMarkerTimes(visibleFromEpoch, visibleToEpoch)
+        val cacheReadyForMarkers =
+            !useComposeOnlyGraphPipeline || requestedCacheRange == null || isMarkerCacheReady(requestedCacheRange)
+        var smbMarkers = emptyList<ChartSmbMarker>()
+        var tbrMarkers = emptyList<Long>()
+        var tbrSegments = emptyList<ChartTbrSegment>()
+        if (useComposeOnlyGraphPipeline) {
+            if (cacheReadyForMarkers) {
+                smbMarkers = extractSmbMarkersFromCache(visibleFromEpoch, visibleToEpoch)
+                tbrMarkers = extractTbrChangeMarkerTimesFromBasalSteps(visibleFromEpoch, visibleToEpoch)
+                tbrSegments = extractTbrSegmentsFromBasalSteps(visibleFromEpoch, visibleToEpoch)
+            } else {
+                val fallbackRange = dbMarkerFallbackRange
+                if (fallbackRange != null &&
+                    fallbackRange.first == visibleFromEpoch &&
+                    fallbackRange.second == visibleToEpoch
+                ) {
+                    smbMarkers = dbFallbackSmbMarkers
+                    tbrMarkers = dbFallbackTbrMarkers
+                    tbrSegments = dbFallbackTbrSegments
+                } else {
+                    requestDbMarkerFallback(visibleFromEpoch, visibleToEpoch)
+                }
             }
-        val tbrSegments =
-            when {
-                useComposeOnlyGraphPipeline -> extractTbrSegmentsFromBasalSteps(visibleFromEpoch, visibleToEpoch)
-                else -> extractTbrSegments(visibleFromEpoch, visibleToEpoch)
+        } else {
+            smbMarkers = extractSmbMarkers(visibleFromEpoch, visibleToEpoch)
+            tbrMarkers = extractTbrChangeMarkerTimes(visibleFromEpoch, visibleToEpoch)
+            tbrSegments = extractTbrSegments(visibleFromEpoch, visibleToEpoch)
+        }
+        val smbEmpty = smbMarkers.isEmpty()
+        val tbrEmpty = tbrMarkers.isEmpty() && tbrSegments.isEmpty()
+        if (useComposeOnlyGraphPipeline && cacheReadyForMarkers && (smbEmpty || tbrEmpty)) {
+            val fallbackRange = dbMarkerFallbackRange
+            if (fallbackRange != null &&
+                fallbackRange.first == visibleFromEpoch &&
+                fallbackRange.second == visibleToEpoch &&
+                (dbFallbackSmbMarkers.isNotEmpty() || dbFallbackTbrMarkers.isNotEmpty() || dbFallbackTbrSegments.isNotEmpty())
+            ) {
+                if (smbEmpty && dbFallbackSmbMarkers.isNotEmpty()) {
+                    smbMarkers = dbFallbackSmbMarkers
+                }
+                if (tbrEmpty && (dbFallbackTbrMarkers.isNotEmpty() || dbFallbackTbrSegments.isNotEmpty())) {
+                    tbrMarkers = dbFallbackTbrMarkers
+                    tbrSegments = dbFallbackTbrSegments
+                }
+            } else {
+                requestDbMarkerFallback(visibleFromEpoch, visibleToEpoch)
             }
+        }
+        aapsLogger.debug(
+            LTag.CORE,
+            "Dashboard strip markers smb=${smbMarkers.size} tbrSeg=${tbrSegments.size} tbrMark=${tbrMarkers.size} composeOnly=$useComposeOnlyGraphPipeline",
+        )
+        if (useComposeOnlyGraphPipeline && (!cacheReadyForMarkers || (smbMarkers.isEmpty() && tbrMarkers.isEmpty() && tbrSegments.isEmpty()))) {
+            scheduleMarkerDataRetry()
+        } else {
+            markerDataRetryAttempts = 0
+            markerDataRetryJob?.cancel()
+            markerDataRetryJob = null
+        }
         val graphPanActive = useComposeOnlyGraphPipeline && panPastMs > 0L
         composeState?.updateGraphRenderInput(
             GraphRenderInputFactory.build(
@@ -889,21 +981,69 @@ internal class DashboardShellController(
         val boluses = overviewDataCache.treatmentGraphFlow.value.boluses
         if (boluses.isEmpty()) return@runCatching emptyList()
         val bolusStep = activePlugin.activePump.pumpDescription.bolusStep
-        val out = ArrayList<ChartSmbMarker>()
+        val smbOnly = ArrayList<ChartSmbMarker>()
         for (b in boluses) {
             if (b.bolusType != BolusType.SMB) continue
             val t = b.timestamp
             if (t < fromMs || t > toMs) continue
             val label = decimalFormatter.toPumpSupportedBolusWithUnits(b.amount, bolusStep)
-            out.add(ChartSmbMarker(timestampEpochMs = t, amountLabel = label))
+            smbOnly.add(ChartSmbMarker(timestampEpochMs = t, amountLabel = label))
         }
-        out
+        if (smbOnly.isNotEmpty()) return@runCatching smbOnly
+        // Some pumps/sync paths may persist SMB without explicit SMB type; keep visibility instead of blank strip.
+        val fallback = ArrayList<ChartSmbMarker>()
+        for (b in boluses) {
+            val t = b.timestamp
+            if (t < fromMs || t > toMs) continue
+            if (!b.isValid || b.amount <= 0.0) continue
+            val label = decimalFormatter.toPumpSupportedBolusWithUnits(b.amount, bolusStep)
+            fallback.add(ChartSmbMarker(timestampEpochMs = t, amountLabel = label))
+        }
+        fallback
     }.getOrElse { emptyList() }
 
     private fun basalActualStepPointsUpTo(toMs: Long): List<GraphDataPoint> {
         val actual = overviewDataCache.basalGraphFlow.value.actualBasal
         if (actual.isEmpty()) return emptyList()
         return actual.filter { it.timestamp <= toMs }.sortedBy { it.timestamp }
+    }
+
+    private fun syncOverviewCacheRange(fromMs: Long, toMs: Long, endMs: Long) {
+        val current = overviewDataCache.timeRangeFlow.value
+        val needsUpdate =
+            current == null ||
+                abs(current.fromTime - fromMs) > 60_000L ||
+                abs(current.toTime - toMs) > 60_000L ||
+                abs(current.endTime - endMs) > 60_000L
+        if (!needsUpdate) return
+        pendingCacheRangeForMarkers = TimeRange(
+            fromTime = fromMs,
+            toTime = toMs,
+            endTime = endMs,
+        )
+        overviewDataCache.updateTimeRange(
+            TimeRange(
+                fromTime = fromMs,
+                toTime = toMs,
+                endTime = endMs,
+            ),
+        )
+    }
+
+    private fun isMarkerCacheReady(requested: TimeRange): Boolean {
+        val current = overviewDataCache.timeRangeFlow.value ?: return false
+        val rangeAligned =
+            abs(current.fromTime - requested.fromTime) <= 60_000L &&
+                abs(current.toTime - requested.toTime) <= 60_000L &&
+                abs(current.endTime - requested.endTime) <= 60_000L
+        if (!rangeAligned) return false
+        val basal = overviewDataCache.basalGraphFlow.value.actualBasal
+        val lastBasalTimestamp = basal.lastOrNull()?.timestamp ?: return false
+        val ready = lastBasalTimestamp >= requested.endTime - 60_000L
+        if (ready && pendingCacheRangeForMarkers != null) {
+            pendingCacheRangeForMarkers = null
+        }
+        return ready
     }
 
     private fun extractTbrChangeMarkerTimesFromBasalSteps(fromMs: Long, toMs: Long): List<Long> = runCatching {
@@ -946,6 +1086,88 @@ internal class DashboardShellController(
         }
         out
     }.getOrElse { emptyList() }
+
+    private fun requestDbMarkerFallback(fromMs: Long, toMs: Long) {
+        if (dbMarkerFallbackRange?.first == fromMs && dbMarkerFallbackRange?.second == toMs && dbMarkerFallbackJob?.isActive == true) return
+        dbMarkerFallbackJob?.cancel()
+        dbMarkerFallbackJob = host.liveDataOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val bolusStep = activePlugin.activePump.pumpDescription.bolusStep
+            val dbFromMs = fromMs - T.hours(6).msecs()
+            val boluses = runCatching {
+                persistenceLayer.getBolusesFromTimeToTime(dbFromMs, toMs, true)
+            }.getOrElse { emptyList() }
+            val validBoluses = boluses.filter { it.isValid && it.amount > 0.0 }
+            val smbExplicit = validBoluses
+                .filter { it.type == BS.Type.SMB }
+                .map {
+                    ChartSmbMarker(
+                        timestampEpochMs = it.timestamp,
+                        amountLabel = decimalFormatter.toPumpSupportedBolusWithUnits(it.amount, bolusStep),
+                    )
+                }
+            val smbMarkers = if (smbExplicit.isNotEmpty()) smbExplicit else {
+                validBoluses.map {
+                    ChartSmbMarker(
+                        timestampEpochMs = it.timestamp,
+                        amountLabel = decimalFormatter.toPumpSupportedBolusWithUnits(it.amount, bolusStep),
+                    )
+                }
+            }
+            val tbrStarting = runCatching {
+                persistenceLayer.getTemporaryBasalsStartingFromTimeToTime(dbFromMs, toMs, true)
+            }.getOrElse { emptyList() }
+            val tbrActiveAtStart = runCatching {
+                persistenceLayer.getTemporaryBasalActiveAt(fromMs)
+            }.getOrNull()
+            val tempBasals = buildList {
+                addAll(tbrStarting)
+                if (tbrActiveAtStart != null) add(tbrActiveAtStart)
+            }
+            val validTempBasals = tempBasals
+                .asSequence()
+                .filter { it.isValid }
+                .filter { it.end > fromMs && it.timestamp < toMs }
+                .sortedBy { it.timestamp }
+                .distinctBy { Triple(it.timestamp, it.duration, it.rate) }
+                .toList()
+            val tbrSegments = dbSegmentsFromTemporaryBasals(validTempBasals, fromMs, toMs)
+            val tbrMarkers = tbrSegments.map { it.startEpochMs }
+            withContext(Dispatchers.Main) {
+                if (shellBinding == null || !host.isBindingAttached()) return@withContext
+                dbMarkerFallbackRange = fromMs to toMs
+                dbFallbackSmbMarkers = smbMarkers
+                dbFallbackTbrMarkers = tbrMarkers
+                dbFallbackTbrSegments = tbrSegments
+                if (smbMarkers.isNotEmpty() || tbrMarkers.isNotEmpty() || tbrSegments.isNotEmpty()) {
+                    updateGraph()
+                }
+            }
+        }
+    }
+
+    private fun dbSegmentsFromTemporaryBasals(
+        basals: List<TB>,
+        fromMs: Long,
+        toMs: Long,
+    ): List<ChartTbrSegment> {
+        if (basals.isEmpty()) return emptyList()
+        val maxMagnitude = basals.maxOfOrNull { abs(it.rate) }?.coerceAtLeast(1e-6) ?: 1e-6
+        val out = ArrayList<ChartTbrSegment>()
+        for (tb in basals) {
+            val start = max(tb.timestamp, fromMs)
+            val end = min(tb.end, toMs)
+            if (end <= start) continue
+            val intensity = (abs(tb.rate) / maxMagnitude).toFloat().coerceIn(0.1f, 1f)
+            out.add(
+                ChartTbrSegment(
+                    startEpochMs = start,
+                    endEpochMs = end,
+                    intensity01 = intensity,
+                ),
+            )
+        }
+        return out
+    }
 
     private fun extractSmbMarkers(fromMs: Long, toMs: Long): List<ChartSmbMarker> = runCatching {
         val series =
@@ -1130,6 +1352,8 @@ internal class DashboardShellController(
         private const val STALE_BG_LAG_MS = 10 * 60 * 1000L
         private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
         private const val GRAPH_REFRESH_DEBOUNCE_MS = 120L
+        private const val MARKER_DATA_RETRY_DELAY_MS = 700L
+        private const val MARKER_DATA_RETRY_MAX_ATTEMPTS = 8
         private const val DASHBOARD_PERIODIC_REFRESH_MS = 60 * 1000L
         private const val EMBEDDED_LAYOUT_SETTLE_REFRESH_MS = 2_000L
     }

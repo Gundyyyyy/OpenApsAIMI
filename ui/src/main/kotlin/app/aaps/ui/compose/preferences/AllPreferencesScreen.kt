@@ -119,15 +119,18 @@ fun AllPreferencesScreen(
         // 7. Pump plugin
         getPreferenceContentIfEnabled(activePlugin.activePumpInternal as PluginBase)?.let { add(it) }
 
-        // 8. SYNC type plugins
+        // 8. Overview plugin (Compose-applicable settings)
+        getPreferenceContentIfEnabled(activePlugin.activeOverview as PluginBase)?.let { add(it) }
+
+        // 9. SYNC type plugins
         activePlugin.getSpecificPluginsList(PluginType.SYNC).forEach { plugin ->
             getPreferenceContentIfEnabled(plugin)?.let { add(it) }
         }
 
-        // 11. Automation plugin (found via interface)
+        // 10. Automation plugin (found via interface)
         getPreferenceContentIfEnabled(automationPlugin)?.let { add(it) }
 
-        // 12. Autotune plugin (found via interface)
+        // 11. Autotune plugin (found via interface)
         getPreferenceContentIfEnabled(autotunePlugin)?.let { add(it) }
     }
 

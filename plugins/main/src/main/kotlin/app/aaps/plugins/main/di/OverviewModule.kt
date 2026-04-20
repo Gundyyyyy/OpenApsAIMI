@@ -155,6 +155,7 @@ abstract class OverviewModule {
             auditorStatusLiveData: AuditorStatusLiveData,
             auditorNotificationManager: AuditorNotificationManager,
             overviewDataCache: Provider<OverviewDataCache>,
+            persistenceLayer: PersistenceLayer,
         ): DashboardShellDeps = DashboardShellDeps(
             overviewViewModelFactory = overviewViewModelFactory,
             resourceHelper = resourceHelper,
@@ -179,6 +180,7 @@ abstract class OverviewModule {
             auditorStatusLiveData = auditorStatusLiveData,
             auditorNotificationManager = auditorNotificationManager,
             overviewDataCache = overviewDataCache,
+            persistenceLayer = persistenceLayer,
         )
     }
 

@@ -1,7 +1,11 @@
 package app.aaps.plugins.main.di
 
 import app.aaps.core.interfaces.skin.SkinDescriptionProvider
+import app.aaps.plugins.main.skins.SkinButtonsOn
+import app.aaps.plugins.main.skins.SkinClassic
 import app.aaps.plugins.main.skins.SkinInterface
+import app.aaps.plugins.main.skins.SkinLargeDisplay
+import app.aaps.plugins.main.skins.SkinLowRes
 import app.aaps.plugins.main.skins.SkinMinimal
 import app.aaps.plugins.main.skins.SkinProvider
 import app.aaps.plugins.main.skins.SkinProviderImpl
@@ -15,8 +19,8 @@ import dagger.multibindings.IntoMap
 import javax.inject.Qualifier
 
 /**
- * AIMI/OpenAps: single dashboard-oriented skin ([SkinMinimal]) after upstream removed multi-skin wiring.
- * Keeps [SkinProvider] for Compose home routing and skin list preferences.
+ * Overview skins for graph heights and legacy [OverviewFragmentBinding] layout tweaks.
+ * [SkinMinimal] (key 0) keeps dashboard-oriented Compose home as the default.
  */
 @Module(includes = [SkinsModule.Bindings::class])
 @InstallIn(SingletonComponent::class)
@@ -37,6 +41,30 @@ open class SkinsModule {
     @IntoMap
     @IntKey(0)
     fun bindsSkinMinimal(skinMinimal: SkinMinimal): SkinInterface = skinMinimal
+
+    @Provides
+    @Skin
+    @IntoMap
+    @IntKey(10)
+    fun bindsSkinClassic(skinClassic: SkinClassic): SkinInterface = skinClassic
+
+    @Provides
+    @Skin
+    @IntoMap
+    @IntKey(20)
+    fun bindsSkinButtonsOn(skinButtonsOn: SkinButtonsOn): SkinInterface = skinButtonsOn
+
+    @Provides
+    @Skin
+    @IntoMap
+    @IntKey(30)
+    fun bindsSkinLargeDisplay(skinLargeDisplay: SkinLargeDisplay): SkinInterface = skinLargeDisplay
+
+    @Provides
+    @Skin
+    @IntoMap
+    @IntKey(40)
+    fun bindsSkinLowRes(skinLowRes: SkinLowRes): SkinInterface = skinLowRes
 
     @Qualifier
     annotation class Skin

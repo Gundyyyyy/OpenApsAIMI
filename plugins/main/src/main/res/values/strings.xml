@@ -197,6 +197,10 @@
     <string name="old_data">OLD DATA</string>
     <string name="overview_show_steps">Steps</string>
     <string name="simple_mode_enabled">Simple mode enabled</string>
+    <string name="classic_description">Original skin</string>
+    <string name="lowres_description">Low Resolution skin</string>
+    <string name="buttonson_description">Buttons are always displayed on bottom of screen</string>
+    <string name="largedisplay_description">Large display</string>
     <string name="minimal_skin_description">New skin dashboard</string>
 
     <string name="suspendloopfor1h">Suspend loop for 1h</string>

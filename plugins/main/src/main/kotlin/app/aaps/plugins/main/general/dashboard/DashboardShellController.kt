@@ -1039,7 +1039,9 @@ internal class DashboardShellController(
         if (!rangeAligned) return false
         val basal = overviewDataCache.basalGraphFlow.value.actualBasal
         val lastBasalTimestamp = basal.lastOrNull()?.timestamp ?: return false
-        val ready = lastBasalTimestamp >= requested.endTime - 60_000L
+        // [TimeRange.endTime] extends into the prediction horizon; actual basal steps do not.
+        // Gate readiness on [toTime] (visible / data window end) so SMB/TBR extraction can run.
+        val ready = lastBasalTimestamp >= requested.toTime - 60_000L
         if (ready && pendingCacheRangeForMarkers != null) {
             pendingCacheRangeForMarkers = null
         }

@@ -320,7 +320,10 @@ internal fun DashboardGraphComposeCard(
                         .then(if (expandGraphVertically) Modifier.fillMaxHeight() else Modifier)
                         .clip(RoundedCornerShape(graphCorner))
                         .then(
+                            // Canvas dashboard only: shell shifts the window. Vico stack uses shared scroll/zoom
+                            // like Overview — a parent pan here never wins over chart hit targets, so it broke history.
                             if (!attachLegacyGraphBackend &&
+                                !useVicoGraph &&
                                 composeState.graphCommands.onGraphPanFromDragFraction != null
                             ) {
                                 Modifier.pointerInput(
@@ -340,17 +343,40 @@ internal fun DashboardGraphComposeCard(
                             },
                         ),
                 ) {
+                    val vmDerived by graphViewModel.derivedTimeRange.collectAsStateWithLifecycle()
+                    val effectiveShellRange = remember(
+                        vmDerived,
+                        renderInput.fromTimeEpochMs,
+                        renderInput.toTimeEpochMs,
+                    ) {
+                        val f = renderInput.fromTimeEpochMs
+                        val t = renderInput.toTimeEpochMs
+                        if (f > 0L && t > f) f to t else vmDerived
+                    }
+                    val chartTimeRange = vmDerived ?: effectiveShellRange
                     val smbTapModifier =
                         if (!attachLegacyGraphBackend && renderInput.smbMarkers.isNotEmpty()) {
                             val chartStartPxForSmbHit = if (useVicoGraph) vicoSmbChartStartPx else 0f
+                            val smbChartFromTo =
+                                if (useVicoGraph &&
+                                    chartTimeRange != null &&
+                                    chartTimeRange.first > 0L &&
+                                    chartTimeRange.second > chartTimeRange.first
+                                ) {
+                                    chartTimeRange.first to chartTimeRange.second
+                                } else {
+                                    null
+                                }
                             Modifier.pointerInput(
                                 renderInput.smbMarkers,
                                 renderInput.fromTimeEpochMs,
                                 renderInput.toTimeEpochMs,
+                                smbChartFromTo,
                                 renderInput.points,
                                 renderInput.predictionPoints,
                                 smbHitPx,
                                 chartStartPxForSmbHit,
+                                useVicoGraph,
                             ) {
                                 detectTapGestures { offset ->
                                     val marker = findNearestSmbByX(
@@ -359,6 +385,7 @@ internal fun DashboardGraphComposeCard(
                                         hitPx = smbHitPx,
                                         input = renderInput,
                                         chartPlotStartPx = chartStartPxForSmbHit,
+                                        chartTimeOverride = smbChartFromTo,
                                     )
                                     if (marker != null) {
                                         ToastUtils.infoToast(
@@ -372,17 +399,8 @@ internal fun DashboardGraphComposeCard(
                             Modifier
                         }
                     if (useVicoGraph) {
-                        val vmDerived by graphViewModel.derivedTimeRange.collectAsStateWithLifecycle()
-                        val effectiveTimeRange = remember(
-                            vmDerived,
-                            renderInput.fromTimeEpochMs,
-                            renderInput.toTimeEpochMs,
-                        ) {
-                            val f = renderInput.fromTimeEpochMs
-                            val t = renderInput.toTimeEpochMs
-                            if (f > 0L && t > f) f to t else vmDerived
-                        }
-                        val shellControlsHorizontalWindow = true
+                        // Same X span as Overview (cache flows); horizontal scroll enabled (see shellControls…).
+                        val shellControlsHorizontalWindow = false
                         val scrollState = rememberVicoScrollState(
                             scrollEnabled = !shellControlsHorizontalWindow,
                             initialScroll = Scroll.Absolute.End,
@@ -404,10 +422,9 @@ internal fun DashboardGraphComposeCard(
                             graphViewModel = graphViewModel,
                             scrollState = scrollState,
                             zoomState = zoomState,
-                            derivedTimeRange = effectiveTimeRange,
+                            derivedTimeRange = chartTimeRange,
                             viewportResetGeneration = composeState.vicoViewportResetGeneration,
-                            viewportFollowingLive = composeState.vicoViewportFollowingLive &&
-                                composeState.graphPanPastMs == 0L,
+                            viewportFollowingLive = composeState.vicoViewportFollowingLive,
                             onViewportFollowingLiveChanged = composeState::setVicoViewportFollowingLive,
                             shellControlsHorizontalWindow = shellControlsHorizontalWindow,
                             bgOverlays = bgOverlaysForEffects,
@@ -423,7 +440,7 @@ internal fun DashboardGraphComposeCard(
                                 viewModel = graphViewModel,
                                 scrollState = scrollState,
                                 zoomState = zoomState,
-                                derivedTimeRange = effectiveTimeRange,
+                                derivedTimeRange = chartTimeRange,
                                 nowTimestamp = nowTs,
                                 modifier = Modifier.fillMaxWidth(),
                             )
@@ -439,7 +456,7 @@ internal fun DashboardGraphComposeCard(
                                     graphRenderInput = renderInput,
                                     scrollState = scrollState,
                                     zoomState = zoomState,
-                                    derivedTimeRange = effectiveTimeRange,
+                                    derivedTimeRange = chartTimeRange,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -454,7 +471,7 @@ internal fun DashboardGraphComposeCard(
                                     seriesTypes = listOf(SeriesType.IOB),
                                     scrollState = scrollState,
                                     zoomState = zoomState,
-                                    derivedTimeRange = effectiveTimeRange,
+                                    derivedTimeRange = chartTimeRange,
                                     nowTimestamp = nowTs,
                                     activityOverlay = false,
                                     modifier = Modifier
@@ -565,6 +582,8 @@ private fun findNearestSmbByX(
     hitPx: Float,
     input: DashboardEmbeddedComposeState.GraphRenderInput,
     chartPlotStartPx: Float = 0f,
+    /** When set (Vico + cache range), matches SMB hit-test to the chart X window, not the shell render window. */
+    chartTimeOverride: Pair<Long, Long>? = null,
 ): ChartSmbMarker? {
     if (input.smbMarkers.isEmpty() || widthPx <= 1f) return null
     val reservedFabInset = min(72f, widthPx * 0.16f)
@@ -573,8 +592,12 @@ private fun findNearestSmbByX(
     val plotWidth = (plotRight - plotLeft).coerceAtLeast(1f)
     val basePoints = if (input.points.isNotEmpty()) input.points else input.predictionPoints
     if (basePoints.isEmpty()) return null
-    val minX = input.fromTimeEpochMs.takeIf { it > 0L } ?: basePoints.minOf { it.timestampEpochMs }
-    val maxX = input.toTimeEpochMs.takeIf { it > minX } ?: basePoints.maxOf { it.timestampEpochMs }
+    val minX = chartTimeOverride?.first?.takeIf { it > 0L }
+        ?: input.fromTimeEpochMs.takeIf { it > 0L }
+        ?: basePoints.minOf { it.timestampEpochMs }
+    val maxX = chartTimeOverride?.second?.takeIf { it > minX }
+        ?: input.toTimeEpochMs.takeIf { it > minX }
+        ?: basePoints.maxOf { it.timestampEpochMs }
     val xRange = max(1L, maxX - minX).toFloat()
     fun toCanvasX(epochMs: Long): Float =
         plotLeft + (((epochMs - minX) / xRange) * plotWidth)

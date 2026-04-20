@@ -88,8 +88,6 @@ internal fun DashboardGraphComposeCard(
     val context = LocalContext.current
     val density = LocalDensity.current
     val smbHitPx = remember(density) { with(density) { 36.dp.toPx() } }
-    /** Same horizontal inset as Vico start axis min width for SMB hit-testing. */
-    val vicoSmbChartStartPx = remember(density) { with(density) { 30.dp.toPx() } }
     val scheme = MaterialTheme.colorScheme
     val originalBgValue = AapsTheme.generalColors.originalBgValue
     /** Matches [BgGraphCompose] on dashboard: original BG palette + optional reading tint, soft alpha. */
@@ -355,28 +353,14 @@ internal fun DashboardGraphComposeCard(
                     }
                     val chartTimeRange = vmDerived ?: effectiveShellRange
                     val smbTapModifier =
-                        if (!attachLegacyGraphBackend && renderInput.smbMarkers.isNotEmpty()) {
-                            val chartStartPxForSmbHit = if (useVicoGraph) vicoSmbChartStartPx else 0f
-                            val smbChartFromTo =
-                                if (useVicoGraph &&
-                                    chartTimeRange != null &&
-                                    chartTimeRange.first > 0L &&
-                                    chartTimeRange.second > chartTimeRange.first
-                                ) {
-                                    chartTimeRange.first to chartTimeRange.second
-                                } else {
-                                    null
-                                }
+                        if (!attachLegacyGraphBackend && !useVicoGraph && renderInput.smbMarkers.isNotEmpty()) {
                             Modifier.pointerInput(
                                 renderInput.smbMarkers,
                                 renderInput.fromTimeEpochMs,
                                 renderInput.toTimeEpochMs,
-                                smbChartFromTo,
                                 renderInput.points,
                                 renderInput.predictionPoints,
                                 smbHitPx,
-                                chartStartPxForSmbHit,
-                                useVicoGraph,
                             ) {
                                 detectTapGestures { offset ->
                                     val marker = findNearestSmbByX(
@@ -384,8 +368,8 @@ internal fun DashboardGraphComposeCard(
                                         widthPx = size.width.toFloat(),
                                         hitPx = smbHitPx,
                                         input = renderInput,
-                                        chartPlotStartPx = chartStartPxForSmbHit,
-                                        chartTimeOverride = smbChartFromTo,
+                                        chartPlotStartPx = 0f,
+                                        chartTimeOverride = null,
                                     )
                                     if (marker != null) {
                                         ToastUtils.infoToast(
@@ -448,8 +432,7 @@ internal fun DashboardGraphComposeCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .offset(y = (-16).dp)
-                                    .height(graphConfig.bgHeight.dp)
-                                    .then(smbTapModifier),
+                                    .height(graphConfig.bgHeight.dp),
                             ) {
                                 DashboardBgGraphVico(
                                     graphViewModel = graphViewModel,
@@ -591,13 +574,17 @@ private fun findNearestSmbByX(
     val plotLeft = chartPlotStartPx
     val plotWidth = (plotRight - plotLeft).coerceAtLeast(1f)
     val basePoints = if (input.points.isNotEmpty()) input.points else input.predictionPoints
-    if (basePoints.isEmpty()) return null
     val minX = chartTimeOverride?.first?.takeIf { it > 0L }
         ?: input.fromTimeEpochMs.takeIf { it > 0L }
-        ?: basePoints.minOf { it.timestampEpochMs }
+        ?: basePoints.minOfOrNull { it.timestampEpochMs }
+        ?: input.smbMarkers.minOfOrNull { it.timestampEpochMs }
+        ?: return null
     val maxX = chartTimeOverride?.second?.takeIf { it > minX }
         ?: input.toTimeEpochMs.takeIf { it > minX }
-        ?: basePoints.maxOf { it.timestampEpochMs }
+        ?: basePoints.maxOfOrNull { it.timestampEpochMs }
+        ?: input.smbMarkers.maxOfOrNull { it.timestampEpochMs }
+        ?: return null
+    if (maxX <= minX) return null
     val xRange = max(1L, maxX - minX).toFloat()
     fun toCanvasX(epochMs: Long): Float =
         plotLeft + (((epochMs - minX) / xRange) * plotWidth)

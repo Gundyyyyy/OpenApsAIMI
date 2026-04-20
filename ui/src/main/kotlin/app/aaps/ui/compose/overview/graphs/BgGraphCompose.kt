@@ -43,12 +43,17 @@ import com.patrykandpatrick.vico.compose.cartesian.data.lineSeries
 import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
+import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarker
+import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarkerController
+import com.patrykandpatrick.vico.compose.cartesian.marker.Interaction
+import com.patrykandpatrick.vico.compose.cartesian.marker.LineCartesianLayerMarkerTarget
 import com.patrykandpatrick.vico.compose.common.Fill
 import com.patrykandpatrick.vico.compose.common.component.LineComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.TextComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import java.util.Locale
+import kotlin.math.abs
 
 /** Series identifiers */
 /** Basal on BG graph — deprecated, now shown as flipped overlay on IOB graph. Set to true to restore. */
@@ -112,6 +117,11 @@ fun BgGraphCompose(
      * below this chart (own Y scale) instead of being scaled into mg/dL space.
      */
     dashboardSplitActivityToStrip: Boolean = false,
+    /**
+     * Dashboard-only: called when the user taps an SMB triangle on this chart.
+     * Uses Vico marker hit-testing (scroll/zoom aware). Overview leaves this null.
+     */
+    onDashboardSmbMarkerTap: ((ChartSmbMarker) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // Collect flows independently - each triggers recomposition only when it changes
@@ -690,6 +700,24 @@ fun BgGraphCompose(
         }
     }
 
+    val defaultMarkerController = CartesianMarkerController.rememberShowOnPress()
+    val dashboardSmbTapController =
+        remember(
+            onDashboardSmbMarkerTap,
+            dashboardSmbMarkers,
+            minTimestamp,
+            dashboardSplitActivityToStrip,
+        ) {
+            val cb = onDashboardSmbMarkerTap ?: return@remember null
+            if (dashboardSplitActivityToStrip || dashboardSmbMarkers.isEmpty()) return@remember null
+            DashboardSmbTapMarkerController(
+                smbs = dashboardSmbMarkers,
+                minTimestamp = minTimestamp,
+                onSmbTap = cb,
+            )
+        }
+    val dashboardSmbTapMarker = remember { object : CartesianMarker {} }
+
     // =========================================================================
     // Range providers — hoisted out of rememberCartesianChart so keys are re-evaluated on recomposition
     // =========================================================================
@@ -759,6 +787,8 @@ fun BgGraphCompose(
                 guideline = LineComponent(fill = Fill(scheme.outlineVariant.copy(alpha = gridGuideAlpha)))
             ),
             decorations = decorations,
+            marker = if (dashboardSmbTapController != null) dashboardSmbTapMarker else null,
+            markerController = dashboardSmbTapController ?: defaultMarkerController,
             getXStep = { 1.0 }
         ),
         modelProducer = modelProducer,
@@ -786,4 +816,50 @@ private fun interpolateBgForDashboardMarker(
         return a.value + t * (b.value - a.value)
     }
     return sortedAsc.last().value
+}
+
+/**
+ * Shows nothing; enables Vico's tap pipeline so we can match [LineCartesianLayerMarkerTarget]s for the
+ * dashboard SMB series without duplicating scroll/zoom → model-X math.
+ */
+private class DashboardSmbTapMarkerController(
+    private val smbs: List<ChartSmbMarker>,
+    private val minTimestamp: Long,
+    private val onSmbTap: (ChartSmbMarker) -> Unit,
+) : CartesianMarkerController {
+
+    override val acceptsLongPress: Boolean get() = false
+
+    override fun shouldAcceptInteraction(
+        interaction: Interaction,
+        targets: List<CartesianMarker.Target>,
+    ): Boolean {
+        if (interaction !is Interaction.Tap || targets.isEmpty()) return true
+        val tapX = interaction.point.x
+        var bestSmb: ChartSmbMarker? = null
+        var bestDist = Float.POSITIVE_INFINITY
+        for (t in targets) {
+            if (t !is LineCartesianLayerMarkerTarget) continue
+            val smb = smbs.firstOrNull { smb ->
+                abs(timestampToX(smb.timestampEpochMs, minTimestamp) - t.x) < MODEL_X_MATCH_EPS
+            } ?: continue
+            val d = abs(t.canvasX - tapX)
+            if (d <= SMB_TAP_MAX_CANVAS_X_DIST_PX && d < bestDist) {
+                bestDist = d
+                bestSmb = smb
+            }
+        }
+        if (bestSmb != null) {
+            onSmbTap(bestSmb)
+            return false
+        }
+        return true
+    }
+
+    override fun shouldShowMarker(interaction: Interaction, targets: List<CartesianMarker.Target>): Boolean = false
+
+    private companion object {
+        private const val MODEL_X_MATCH_EPS = 0.02
+        private const val SMB_TAP_MAX_CANVAS_X_DIST_PX = 56f
+    }
 }

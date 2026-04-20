@@ -6,8 +6,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.interfaces.overview.graph.SeriesType
+import app.aaps.core.ui.toast.ToastUtils
+import app.aaps.plugins.main.R
 import app.aaps.plugins.main.general.dashboard.DashboardEmbeddedComposeState
 import app.aaps.ui.compose.overview.graphs.BgGraphCompose
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
@@ -32,6 +35,7 @@ internal fun DashboardBgGraphVico(
     derivedTimeRange: Pair<Long, Long>?,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val nowTimestamp by graphViewModel.nowTimestamp.collectAsStateWithLifecycle()
     val savedConfig by graphViewModel.graphConfigFlow.collectAsStateWithLifecycle()
     val bgOverlays = remember(savedConfig.bgOverlays) {
@@ -58,6 +62,15 @@ internal fun DashboardBgGraphVico(
             lockStartAxisYFromZero = true,
             dashboardSoftTherapyVisuals = true,
             dashboardSplitActivityToStrip = false,
+            onDashboardSmbMarkerTap =
+                if (graphRenderInput.smbMarkers.isNotEmpty()) { marker ->
+                    ToastUtils.infoToast(
+                        context,
+                        context.getString(R.string.dashboard_graph_smb_toast, marker.amountLabel),
+                    )
+                } else {
+                    null
+                },
             modifier = Modifier.fillMaxSize(),
         )
     }

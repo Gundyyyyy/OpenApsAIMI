@@ -3,6 +3,7 @@ package app.aaps.ui.di
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.overview.graph.GraphConfigRepository
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
+import app.aaps.core.interfaces.widget.WidgetUpdater
 import app.aaps.core.interfaces.workflow.CalculationSignals
 import app.aaps.core.ui.search.SearchableProvider
 import app.aaps.ui.activities.ErrorActivity
@@ -12,8 +13,11 @@ import app.aaps.ui.compose.overview.graphs.GraphConfigRepositoryImpl
 import app.aaps.ui.search.BuiltInSearchables
 import app.aaps.ui.search.DialogSearchables
 import app.aaps.ui.services.AlarmSoundService
+import app.aaps.ui.widget.BgGraphWidget
+import app.aaps.ui.widget.CompactBgWidget
 import app.aaps.ui.widget.Widget
 import app.aaps.ui.widget.WidgetConfigureActivity
+import app.aaps.ui.widget.WidgetUpdaterImpl
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -35,6 +39,8 @@ abstract class UiModule {
 
         @Binds fun bindGraphConfigRepository(impl: GraphConfigRepositoryImpl): GraphConfigRepository
 
+        @Binds fun bindWidgetUpdater(impl: WidgetUpdaterImpl): WidgetUpdater
+
         @Binds @IntoSet fun bindBuiltInSearchables(impl: BuiltInSearchables): SearchableProvider
         @Binds @IntoSet fun bindDialogSearchables(impl: DialogSearchables): SearchableProvider
     }
@@ -54,6 +60,8 @@ abstract class UiModule {
     @ContributesAndroidInjector abstract fun contributesAlarmSoundService(): AlarmSoundService
 
     @ContributesAndroidInjector abstract fun contributesWidget(): Widget
+    @ContributesAndroidInjector abstract fun contributesBgGraphWidget(): BgGraphWidget
+    @ContributesAndroidInjector abstract fun contributesCompactBgWidget(): CompactBgWidget
     @ContributesAndroidInjector abstract fun contributesWidgetConfigureActivity(): WidgetConfigureActivity
 
     @ContributesAndroidInjector abstract fun contributeErrorActivity(): ErrorActivity

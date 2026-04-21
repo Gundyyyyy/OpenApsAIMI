@@ -45,10 +45,11 @@ import kotlinx.coroutines.delay
  */
 fun LazyListScope.addPreferenceContent(
     content: Any,
+    onShowMessage: (String) -> Unit,
     sectionState: PreferenceSectionState? = null
 ) {
     when (content) {
-        is PreferenceSubScreenDef -> addPreferenceSubScreenDef(content, sectionState)
+        is PreferenceSubScreenDef -> addPreferenceSubScreenDef(content, onShowMessage, sectionState)
     }
 }
 
@@ -62,6 +63,7 @@ fun LazyListScope.addPreferenceContent(
  */
 fun LazyListScope.addPreferenceSubScreenDef(
     def: PreferenceSubScreenDef,
+    onShowMessage: (String) -> Unit,
     sectionState: PreferenceSectionState? = null
 ) {
     val sectionKey = "${def.key}_main"
@@ -80,6 +82,7 @@ fun LazyListScope.addPreferenceSubScreenDef(
                 items = def.items,
                 pathPrefix = def.key,
                 treeDepth = 0,
+                onShowMessage = onShowMessage,
                 sectionState = sectionState,
                 visibilityContext = visibilityContext
             )
@@ -143,6 +146,7 @@ private fun RenderPreferenceItems(
     items: List<PreferenceItem>,
     pathPrefix: String,
     treeDepth: Int,
+    onShowMessage: (String) -> Unit,
     sectionState: PreferenceSectionState?,
     visibilityContext: PreferenceVisibilityContext?
 ) {
@@ -155,6 +159,7 @@ private fun RenderPreferenceItems(
                     HighlightablePreference(preferenceKey = item.key) {
                         AdaptivePreferenceItem(
                             key = item,
+                            onShowMessage = onShowMessage,
                             visibilityContext = visibilityContext
                         )
                     }
@@ -199,6 +204,7 @@ private fun RenderPreferenceItems(
                                     items = item.items,
                                     pathPrefix = subPath,
                                     treeDepth = treeDepth + 1,
+                                    onShowMessage = onShowMessage,
                                     sectionState = sectionState,
                                     visibilityContext = visibilityContext
                                 )

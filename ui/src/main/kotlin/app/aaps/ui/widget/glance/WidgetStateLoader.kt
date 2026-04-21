@@ -21,9 +21,11 @@ import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.keys.BooleanComposedKey
 import app.aaps.core.keys.IntComposedKey
+import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.extensions.displayText
 import app.aaps.core.objects.extensions.round
+import app.aaps.core.objects.extensions.valueToUnits
 import app.aaps.core.objects.profile.ProfileSealed
 import app.aaps.core.ui.compose.DarkGeneralColors
 import app.aaps.core.ui.compose.loopColor
@@ -59,12 +61,17 @@ class WidgetStateLoader @Inject constructor(
         val lastBg = lastBgData.lastBg()
         val bgText = lastBg?.let { profileUtil.fromMgdlToStringInUnits(it.recalculated) }
             ?: rh.gs(app.aaps.core.ui.R.string.value_unavailable_short)
+        val lowMark = preferences.get(UnitDoubleKey.OverviewLowMark)
+        val highMark = preferences.get(UnitDoubleKey.OverviewHighMark)
+        val lastBgInUnits = lastBg?.valueToUnits(profileFunction.getUnits())
+        val isLow = lastBgInUnits?.let { it < lowMark } == true
+        val isHigh = lastBgInUnits?.let { it > highMark } == true
         val bgColor = when {
-            lastBgData.isLow()  -> rh.gc(app.aaps.core.ui.R.color.widget_low)
-            lastBgData.isHigh() -> rh.gc(app.aaps.core.ui.R.color.widget_high)
-            else                -> rh.gc(app.aaps.core.ui.R.color.widget_inrange)
+            isLow  -> rh.gc(app.aaps.core.ui.R.color.widget_low)
+            isHigh -> rh.gc(app.aaps.core.ui.R.color.widget_high)
+            else   -> rh.gc(app.aaps.core.ui.R.color.widget_inrange)
         }
-        val strikeThrough = !lastBgData.isActualBg()
+        val strikeThrough = lastBg?.timestamp?.let { it <= dateUtil.now() - 9 * 60 * 1000L } ?: true
 
         val trendArrow = trendCalculator.getTrendArrow(iobCobCalculator.ads)
         val arrowResId = lastBg?.let { (trendArrow ?: TrendArrow.FLAT).directionToDrawableRes() }

@@ -934,14 +934,14 @@ fun rememberIobLineStyles(showPointDataLabels: Boolean): IobLineStyles {
                 ),
                 dataLabel = if (showPointDataLabels) bolusLabelComponent else null,
                 dataLabelPosition = Position.Vertical.Top,
-                dataLabelValueFormatter = if (showPointDataLabels) bolusValueFormatter else null
+                dataLabelValueFormatter = bolusValueFormatter
             ),
             extBolusLine = LineCartesianLayer.Line(
                 fill = LineCartesianLayer.LineFill.single(Fill(extBolusColor)),
                 areaFill = null,
                 dataLabel = if (showPointDataLabels) extBolusLabelComponent else null,
                 dataLabelPosition = Position.Vertical.Top,
-                dataLabelValueFormatter = if (showPointDataLabels) extBolusValueFormatter else null
+                dataLabelValueFormatter = extBolusValueFormatter
             )
         )
     }
@@ -993,7 +993,7 @@ fun rememberCobLineStyles(showPointDataLabels: Boolean): CobLineStyles {
                 ),
                 dataLabel = if (showPointDataLabels) carbsLabelComponent else null,
                 dataLabelPosition = Position.Vertical.Top,
-                dataLabelValueFormatter = if (showPointDataLabels) carbsValueFormatter else null
+                dataLabelValueFormatter = carbsValueFormatter
             )
         )
     }

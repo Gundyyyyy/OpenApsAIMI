@@ -284,3 +284,159 @@ V2:
 2. Endpoint central etude + monitoring qualite en continu.
 3. Playbook d'analyse clinique standardise.
 
+---
+
+## 9) Comment la donnee physio impacte les decisions AIMI (plan decisionnel)
+
+Objectif:
+- transformer chaque donnee physio en action insulinique explicite, tracable et verifiable.
+
+Principe central:
+- la physio agit comme un modulateur de securite (agressivite de SMB/basal/ISF),
+- jamais comme un contournement des garde-fous du loop.
+
+### 9.1 Pipeline "donnee -> etat -> action"
+
+Etape A - Ingestion qualifiee:
+- collecte sleep/HR/HRV/steps + metadonnees source/age/qualite,
+- construction d'un score de fiabilite (0-1),
+- neutralisation automatique si donnees insuffisantes ou incoherentes.
+
+Etape B - Derivation de contexte:
+- extraction de features (duree sommeil, efficience, fragmentation, HRV RMSSD, RHR deviation),
+- comparaison a baseline personnelle (percentiles et z-scores),
+- classification d'etat:
+  - `OPTIMAL`,
+  - `RECOVERY_NEEDED`,
+  - `STRESS_DETECTED`,
+  - `INFECTION_RISK`,
+  - `UNKNOWN`.
+
+Etape C - Traduction therapeutique:
+- conversion d'etat en multiplicateurs bornes:
+  - `isf_factor`,
+  - `basal_factor`,
+  - `smb_factor`,
+  - `reactivity_factor`.
+- application obligatoire des caps de securite (hard caps) avant sortie.
+
+Etape D - Gating clinique:
+- veto si hypo recente / BG bas / confiance faible / stale data,
+- dans ces cas: retour neutre (`1.0`) et journalisation du motif.
+
+### 9.2 Matrice d'impact decisionnel proposee (v1 clinique conservative)
+
+- `OPTIMAL`:
+  - action: neutre,
+  - impact attendu: aucune modulation.
+
+- `RECOVERY_NEEDED` (mauvaise nuit / dette sommeil / HRV basse legere):
+  - action: reduction moderee de l'agressivite,
+  - impact attendu: diminution risque hypo nocturne/matinale.
+
+- `STRESS_DETECTED` (RHR haut + HRV basse):
+  - action: reduction plus marquee SMB, ISF plus prudent,
+  - impact attendu: eviter sur-correction en phase de stress physiologique.
+
+- `INFECTION_RISK` (anomalies convergentes):
+  - action: mode protecteur fort mais borne,
+  - impact attendu: securite prioritaire sur agressivite glycemique.
+
+- `UNKNOWN` ou fiabilite basse:
+  - action: neutral fallback,
+  - impact attendu: pas d'effet iatrogene lie a un signal incertain.
+
+### 9.3 Champs a exposer pour expliquer chaque decision
+
+Pour chaque tick loop, exporter:
+- `physio_state`,
+- `physio_confidence`,
+- `physio_data_quality`,
+- `physio_signal_age_min`,
+- `physio_flags` (poor_sleep, hrv_depressed, rhr_elevated, activity_reduced),
+- `physio_recommendation` (reduce_basal, reduce_smb, increase_isf),
+- `physio_applied_multipliers` (isf, basal, smb, reactivity),
+- `physio_veto_reason` (si neutralisation),
+- `final_loop_decision_type`.
+
+Ces champs sont essentiels pour repondre en clinique a:
+- "quelle donnee a modifie quoi, et pourquoi ?"
+
+### 9.4 Regles de securite non negociables
+
+- pas de modulation si `physio_confidence` < seuil defini,
+- pas de modulation en cas d'hypo recente ou BG sous seuil clinique,
+- jamais de depassement des caps globaux du loop,
+- fallback systematique a `1.0` en cas d'erreur pipeline.
+
+### 9.5 Plan de validation d'efficacite (scientifique)
+
+Design recommande:
+- comparaison intra-sujet ON vs OFF physio, fenetres equivalentes.
+
+Endpoints primaires:
+- `TIR_nuit_70_180`,
+- `TBR_<70_nuit`,
+- frequence hypo matinale,
+- variabilite glycemique nocturne.
+
+Endpoints secondaires:
+- charge d'intervention (SMB/TBR),
+- temps >180 nocturne,
+- stabilite post-reveil.
+
+Critere de valeur clinique:
+- benefice net si baisse hypo nocturne sans degradation majeure du TIR global.
+
+### 9.6 Decision framework produit (go/no-go)
+
+GO (deploiement elargi):
+- amelioration reproductible des endpoints primaires,
+- absence de signal de risque sur hypoglycemies severes,
+- qualite de donnees stable.
+
+NO-GO / rollback:
+- gain non reproductible,
+- hausse d'evenements indeses,
+- forte sensibilite aux donnees manquantes ou bruit capteur.
+
+---
+
+## 10) Task list implementation (dev checklist)
+
+### Phase 1 - Decision trace fiable (immediat)
+
+1. Definir un score explicite `sleep_quality_score` (0-1) dans les features physio.
+2. Integrer ce score dans les regles de detection `poorSleep`.
+3. Exposer ce score dans les logs de decision loop.
+4. Verifier fallback neutre si qualite absente/faible confiance.
+
+Done criteria:
+- la decision n'utilise plus uniquement la duree de sommeil,
+- chaque modulation est explicable par des champs exportables.
+
+### Phase 2 - Durcissement clinique
+
+1. Ajouter un score de fiabilite source (device/app/sync age).
+2. Ajouter un veto explicite pour donnees stale/incoherentes.
+3. Ajouter export decisionnel standard:
+   - state, confidence, quality, multipliers, veto_reason.
+4. Ajouter monitor de derive (drift) inter-device pour HR/HRV.
+
+Done criteria:
+- une decision physio est toujours justifiee ou neutralisee explicitement.
+
+### Phase 3 - Validation HORMONITOR
+
+1. Protocole ON/OFF intra-sujet 2-4 semaines.
+2. Table outcomes nuit + matin.
+3. Rapport d'efficacite:
+   - hypo nuit,
+   - TIR nuit,
+   - variabilite,
+   - charge SMB/TBR.
+4. Recommandation GO/NO-GO documentee.
+
+Done criteria:
+- preuve d'utilite clinique ou rollback objectivable.
+

@@ -94,7 +94,7 @@ class AndroidPermissionImpl @Inject constructor(
                 text = rh.gs(app.aaps.core.ui.R.string.smscommunicator_missingsmspermission),
                 level = NotificationLevel.URGENT,
                 actions = listOf(
-                    NotificationAction(R.string.request) {
+                    NotificationAction(R.string.askforpermission) {
                         askForPermission(
                             activity,
                             arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.SEND_SMS, Manifest.permission.RECEIVE_MMS)
@@ -116,7 +116,7 @@ class AndroidPermissionImpl @Inject constructor(
                     text = rh.gs(app.aaps.core.ui.R.string.need_connect_permission),
                     level = NotificationLevel.URGENT,
                     actions = listOf(
-                        NotificationAction(R.string.request) {
+                        NotificationAction(R.string.askforpermission) {
                             askForPermission(activity, arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT))
                         }
                     ),
@@ -139,7 +139,7 @@ class AndroidPermissionImpl @Inject constructor(
                 text = rh.gs(R.string.need_whitelisting, rh.gs(config.appName)),
                 level = NotificationLevel.URGENT,
                 actions = listOf(
-                    NotificationAction(R.string.request) {
+                    NotificationAction(R.string.askforpermission) {
                         askForPermission(activity, arrayOf(Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS))
                     }
                 ),
@@ -157,7 +157,7 @@ class AndroidPermissionImpl @Inject constructor(
                 text = rh.gs(R.string.need_storage_permission),
                 level = NotificationLevel.URGENT,
                 actions = listOf(
-                    NotificationAction(R.string.request) {
+                    NotificationAction(R.string.askforpermission) {
                         askForPermission(activity, arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE))
                     }
                 ),
@@ -175,7 +175,7 @@ class AndroidPermissionImpl @Inject constructor(
                 text = rh.gs(R.string.need_location_permission),
                 level = NotificationLevel.URGENT,
                 actions = listOf(
-                    NotificationAction(R.string.request) {
+                    NotificationAction(R.string.askforpermission) {
                         askForPermission(
                             activity,
                             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -193,7 +193,7 @@ class AndroidPermissionImpl @Inject constructor(
                 text = rh.gs(R.string.need_background_location_permission),
                 level = NotificationLevel.URGENT,
                 actions = listOf(
-                    NotificationAction(R.string.request) {
+                    NotificationAction(R.string.askforpermission) {
                         askForPermission(activity, arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
                     }
                 ),
@@ -209,7 +209,7 @@ class AndroidPermissionImpl @Inject constructor(
                 text = rh.gs(R.string.need_system_window_permission),
                 level = NotificationLevel.URGENT,
                 actions = listOf(
-                    NotificationAction(R.string.request) {
+                    NotificationAction(R.string.askforpermission) {
                         val intent = Intent(
                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                             ("package:" + activity.packageName).toUri()

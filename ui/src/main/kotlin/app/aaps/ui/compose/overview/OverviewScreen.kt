@@ -15,8 +15,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
+import app.aaps.ui.compose.scenes.ActiveSceneBanner
 import app.aaps.core.interfaces.notifications.AapsNotification
 import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.pump.BolusProgressState
@@ -36,15 +39,18 @@ private val SPLIT_LAYOUT_MIN_WIDTH: Dp = 720.dp
 @Composable
 fun OverviewScreen(
     profileName: String,
+    profilePsId: Long = 0,
     isProfileModified: Boolean,
     profileProgress: Float,
     tempTargetText: String,
     tempTargetState: TempTargetChipState,
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
+    tempTargetRecordId: Long = 0,
     runningMode: RM.Mode,
     runningModeText: String,
     runningModeProgress: Float,
+    runningModeRecordId: Long = 0,
     tbrState: TbrState,
     isSimpleMode: Boolean,
     calcProgress: Int,
@@ -58,6 +64,11 @@ fun OverviewScreen(
     onNotificationActionClick: (AapsNotification) -> Unit,
     autoShowNotificationSheet: Boolean,
     onAutoShowConsumed: () -> Unit,
+    activeSceneState: ActiveSceneState? = null,
+    sceneExpired: Boolean = false,
+    onEndScene: () -> Unit = {},
+    onDismissScene: () -> Unit = {},
+    formatDuration: (Long) -> String = { ms -> "${(ms / 60000L).toInt()}m" },
     paddingValues: PaddingValues,
     fabBottomOffset: Dp = 0.dp,
     bolusState: BolusProgressState? = null,
@@ -84,6 +95,13 @@ fun OverviewScreen(
         }
     }
 
+    val runningModeSceneManaged = activeSceneState?.priorState?.sceneRunningModeId
+        ?.let { it == runningModeRecordId && it > 0 } == true
+    val tempTargetSceneManaged = activeSceneState?.priorState?.sceneTtId
+        ?.let { it == tempTargetRecordId && it > 0 } == true
+    val profileSceneManaged = activeSceneState?.priorState?.scenePsId
+        ?.let { it == profilePsId && it > 0 } == true
+
     Box(modifier = modifier.fillMaxSize()) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             if (maxWidth >= SPLIT_LAYOUT_MIN_WIDTH) {
@@ -91,13 +109,16 @@ fun OverviewScreen(
                     profileName = profileName,
                     isProfileModified = isProfileModified,
                     profileProgress = profileProgress,
+                    profileSceneManaged = profileSceneManaged,
                     tempTargetText = tempTargetText,
                     tempTargetState = tempTargetState,
                     tempTargetProgress = tempTargetProgress,
                     tempTargetReason = tempTargetReason,
+                    tempTargetSceneManaged = tempTargetSceneManaged,
                     runningMode = runningMode,
                     runningModeText = runningModeText,
                     runningModeProgress = runningModeProgress,
+                    runningModeSceneManaged = runningModeSceneManaged,
                     tbrState = tbrState,
                     isSimpleMode = isSimpleMode,
                     calcProgress = calcProgress,
@@ -108,19 +129,27 @@ fun OverviewScreen(
                     onNavigate = onNavigate,
                     paddingValues = paddingValues,
                     useRingHeroHome = useRingHeroHome,
+                    activeSceneState = activeSceneState,
+                    sceneExpired = sceneExpired,
+                    onEndScene = onEndScene,
+                    onDismissScene = onDismissScene,
+                    formatDuration = formatDuration
                 )
             } else {
                 OverviewScreenStacked(
                     profileName = profileName,
                     isProfileModified = isProfileModified,
                     profileProgress = profileProgress,
+                    profileSceneManaged = profileSceneManaged,
                     tempTargetText = tempTargetText,
                     tempTargetState = tempTargetState,
                     tempTargetProgress = tempTargetProgress,
                     tempTargetReason = tempTargetReason,
+                    tempTargetSceneManaged = tempTargetSceneManaged,
                     runningMode = runningMode,
                     runningModeText = runningModeText,
                     runningModeProgress = runningModeProgress,
+                    runningModeSceneManaged = runningModeSceneManaged,
                     tbrState = tbrState,
                     isSimpleMode = isSimpleMode,
                     calcProgress = calcProgress,
@@ -131,6 +160,11 @@ fun OverviewScreen(
                     onNavigate = onNavigate,
                     paddingValues = paddingValues,
                     useRingHeroHome = useRingHeroHome,
+                    activeSceneState = activeSceneState,
+                    sceneExpired = sceneExpired,
+                    onEndScene = onEndScene,
+                    onDismissScene = onDismissScene,
+                    formatDuration = formatDuration
                 )
             }
         }

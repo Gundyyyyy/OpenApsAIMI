@@ -71,6 +71,7 @@ import app.aaps.core.objects.extensions.toStringShort
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.plugins.main.R
 import app.aaps.core.objects.overview.DashboardCoherentGlucose
+import androidx.core.text.HtmlCompat
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import kotlinx.coroutines.CancellationException
@@ -671,7 +672,7 @@ class OverviewViewModel(
                 T.mins(9).msecs()
             ),
             contentDescription = contentDescription,
-            pumpStatusText = buildPumpLine(dateUtil.now()),
+            pumpStatusText = buildPumpAdjustmentDisplay(dateUtil.now()).lineHtml,
             predictionText = buildPredictionLine(dateUtil.now()),
             unicornImageRes = selectUnicornImage(  // 🦄 Dynamic unicorn image
                 bg = displayMgdl,
@@ -793,12 +794,16 @@ class OverviewViewModel(
             now
         )
         val adjustments = buildActiveAdjustments(now)
+        val pumpDisplay = buildPumpAdjustmentDisplay(now)
         val state = AdjustmentCardState(
             glycemiaLine = buildGlycemiaLine(displayMgdl, trendArrow, glucoseStatus),
             predictionLine = buildPredictionLine(now),
             iobActivityLine = buildIobActivityLine(),
             decisionLine = buildDecisionLine(),
-            pumpLine = buildPumpLine(now),
+            pumpLine = pumpDisplay.lineHtml,
+            pumpReservoirPlain = pumpDisplay.reservoirPlain,
+            pumpSitePlain = pumpDisplay.sitePlain,
+            pumpSensorPlain = pumpDisplay.sensorPlain,
             safetyLine = buildSafetyLine(displayMgdl, glucoseStatus),
             modeLine = resolveModeLine(now),
             adjustments = adjustments,
@@ -954,7 +959,17 @@ class OverviewViewModel(
         return resourceHelper.gs(R.string.dashboard_aimi_pulse_meta, smb, basalDisplay, sens)
     }
 
-    private suspend fun buildPumpLine(now: Long): String {
+    private data class PumpAdjustmentDisplay(
+        val lineHtml: String,
+        val reservoirPlain: String,
+        val sitePlain: String,
+        val sensorPlain: String,
+    )
+
+    private fun htmlSegmentToPlain(html: String): String =
+        HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim()
+
+    private suspend fun buildPumpAdjustmentDisplay(now: Long): PumpAdjustmentDisplay {
         val reservoirUnits = activePlugin.activePump.reservoirLevel.value.cU
         val reservoirText =
             if (reservoirUnits > 0)
@@ -993,7 +1008,13 @@ class OverviewViewModel(
             reservoirText
         }
 
-        return resourceHelper.gs(R.string.dashboard_adjustment_pump, statusText, siteAge, sensorAge)
+        val lineHtml = resourceHelper.gs(R.string.dashboard_adjustment_pump, statusText, siteAge, sensorAge)
+        return PumpAdjustmentDisplay(
+            lineHtml = lineHtml,
+            reservoirPlain = htmlSegmentToPlain(statusText),
+            sitePlain = htmlSegmentToPlain(siteAge),
+            sensorPlain = htmlSegmentToPlain(sensorAge),
+        )
     }
 
     private fun buildSafetyLine(displayMgdl: Double?, glucoseStatus: GlucoseStatus?): String {
@@ -1272,6 +1293,10 @@ data class AdjustmentCardState(
     val iobActivityLine: String,
     val decisionLine: String,
     val pumpLine: String,
+    /** Plain-text segments for compact pump badges (same data as [pumpLine], without HTML). */
+    val pumpReservoirPlain: String = "",
+    val pumpSitePlain: String = "",
+    val pumpSensorPlain: String = "",
     val safetyLine: String,
     val modeLine: String?,
     val adjustments: List<String>,

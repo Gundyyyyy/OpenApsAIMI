@@ -3,6 +3,7 @@ package app.aaps.plugins.main.general.dashboard.compose
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -344,6 +346,12 @@ fun DashboardCircleTopCompose(
                             }
                         }
                     }
+                    PumpCompactBadgeRow(
+                        state = state,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp),
+                    )
                     if (extendedMetrics) {
                         Text(
                             text = state.iobText.ifBlank { "—" },
@@ -501,11 +509,9 @@ private fun ExtendedMetricsBlock(state: StatusCardState, modifier: Modifier = Mo
         stringResource(R.string.dashboard_tir_stats_placeholder)
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // COB seul : réservoir / batterie / site sont dans [PumpCompactBadgeRow] sous la boucle.
         Text(
-            "${stringResource(app.aaps.core.ui.R.string.cob)}: ${state.cobText.ifBlank { "0g" }} · " +
-                "${stringResource(R.string.pump_battery)}: ${(state.pumpBatteryText ?: "").ifBlank { "—" }} · " +
-                "${stringResource(R.string.reservoir_short)}: ${(state.reservoirText ?: "").ifBlank { "—" }} · " +
-                "${stringResource(R.string.infusion_age)}: ${(state.infusionAgeText ?: "").ifBlank { "—" }}",
+            "${stringResource(app.aaps.core.ui.R.string.cob)}: ${state.cobText.ifBlank { "0g" }}",
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -513,6 +519,49 @@ private fun ExtendedMetricsBlock(state: StatusCardState, modifier: Modifier = Mo
         Text(
             text = tirStats,
             style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun PumpCompactBadgeRow(state: StatusCardState, modifier: Modifier = Modifier) {
+    val dash = stringResource(app.aaps.core.ui.R.string.value_unavailable_short)
+    val resV = state.reservoirText?.trim().orEmpty().ifBlank { dash }
+    val battV = state.pumpBatteryText?.trim().orEmpty().ifBlank { dash }
+    val siteV = state.infusionAgeText?.trim().orEmpty().ifBlank { dash }
+    val scroll = rememberScrollState()
+    Row(
+        modifier = modifier.horizontalScroll(scroll),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        HeroPumpBadge(
+            text = stringResource(R.string.dashboard_pump_pill_reservoir, resV),
+            contentDescription = stringResource(R.string.dashboard_pump_pill_reservoir_a11y, resV),
+        )
+        HeroPumpBadge(
+            text = stringResource(R.string.dashboard_pump_pill_battery, battV),
+            contentDescription = stringResource(R.string.dashboard_pump_pill_battery_a11y, battV),
+        )
+        HeroPumpBadge(
+            text = stringResource(R.string.dashboard_pump_pill_site, siteV),
+            contentDescription = stringResource(R.string.dashboard_pump_pill_site_a11y, siteV),
+        )
+    }
+}
+
+@Composable
+private fun HeroPumpBadge(text: String, contentDescription: String) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
+        modifier = Modifier.semantics { this.contentDescription = contentDescription },
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

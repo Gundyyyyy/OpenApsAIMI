@@ -121,6 +121,87 @@
                     app:iconTint="@color/dashboard_metric_info"
                     tools:text="Boucle fermée" />
 
+                <!-- Pump / site snapshot — même famille visuelle que la puce boucle (scroll horizontal si besoin). -->
+                <HorizontalScrollView
+                    android:id="@+id/dashboard_pump_chips_scroll"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:overScrollMode="never"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dashboard_pump_chip_reservoir"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="@dimen/dashboard_chip_spacing"
+                            android:minHeight="32dp"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="10dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/dashboard_on_surface"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            app:cornerRadius="16dp"
+                            app:backgroundTint="@color/dashboard_chip_background"
+                            app:strokeWidth="2dp"
+                            app:strokeColor="@color/dashboard_card_stroke"
+                            tools:text="Res. 127 IE" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dashboard_pump_chip_battery"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="@dimen/dashboard_chip_spacing"
+                            android:minHeight="32dp"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="10dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/dashboard_on_surface"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            app:cornerRadius="16dp"
+                            app:backgroundTint="@color/dashboard_chip_background"
+                            app:strokeWidth="2dp"
+                            app:strokeColor="@color/dashboard_card_stroke"
+                            tools:text="Batt. —" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dashboard_pump_chip_site"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:minHeight="32dp"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="10dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/dashboard_on_surface"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            app:cornerRadius="16dp"
+                            app:backgroundTint="@color/dashboard_chip_background"
+                            app:strokeWidth="2dp"
+                            app:strokeColor="@color/dashboard_card_stroke"
+                            tools:text="Site 3d 4h" />
+                    </LinearLayout>
+                </HorizontalScrollView>
+
                 <TextView
                     android:id="@+id/dashboard_hero_status_iob"
                     android:layout_width="match_parent"
@@ -351,28 +432,7 @@
                         android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- Reservoir -->
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="4dp">
-
-                    <androidx.compose.ui.platform.ComposeView
-                        android:id="@+id/metric_icon_reservoir"
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:layout_marginEnd="6dp" />
-
-                    <TextView
-                        android:id="@+id/reservoir_chip"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--"
-                        android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
-                        android:textColor="@color/dashboard_on_surface" />
-                </LinearLayout>
+                <!-- Réservoir / batterie : pastilles sous la boucle (dashboard_pump_chip_*) — évite doublon ici. -->
 
                 <!-- COB (Carbs On Board) -->
                 <LinearLayout
@@ -416,29 +476,6 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="CV --%"
-                        android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
-                        android:textColor="@color/dashboard_on_surface" />
-                </LinearLayout>
-                
-                <!-- Pump Battery -->
-                <LinearLayout
-                    android:id="@+id/pump_battery_container"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <androidx.compose.ui.platform.ComposeView
-                        android:id="@+id/metric_icon_battery"
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:layout_marginEnd="6dp" />
-
-                    <TextView
-                        android:id="@+id/pump_battery_text"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--"
                         android:textAppearance="@style/TextAppearance.MaterialComponents.Caption"
                         android:textColor="@color/dashboard_on_surface" />
                 </LinearLayout>

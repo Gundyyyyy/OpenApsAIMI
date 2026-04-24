@@ -1,6 +1,8 @@
 package app.aaps.core.objects.overview
 
 import android.content.Context
+import android.view.ContextThemeWrapper
+import androidx.annotation.AttrRes
 import androidx.annotation.ColorInt
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.iob.InMemoryGlucoseValue
@@ -21,6 +23,18 @@ object DashboardCoherentGlucose {
 
     /** Same freshness window as SMB / AutoISF glucose status calculators for non-stale data. */
     private const val GLUCOSE_STATUS_FRESH_MS = 7 * 60 * 1000L
+
+    /**
+     * Dashboard [Context] is often [Context.getApplicationContext] (launcher theme without BG attrs).
+     * Wrapping with [AppTheme] ensures `bgInRange` / `bgLow` / `highColor` resolve instead of falling
+     * back to white — which made the hybrid glucose hero unreadable in light mode.
+     */
+    @ColorInt
+    private fun resolveDashboardThemeColor(context: Context?, rh: ResourceHelper, @AttrRes attr: Int): Int {
+        val base = context ?: return rh.gac(attr)
+        val themed = ContextThemeWrapper(base, app.aaps.core.ui.R.style.AppTheme)
+        return rh.gac(themed, attr)
+    }
 
     fun displayMgdl(
         lastBg: InMemoryGlucoseValue?,
@@ -81,11 +95,11 @@ object DashboardCoherentGlucose {
     ): Int =
         when {
             isDisplayLow(displayMgdl, profileFunction, preferences) ->
-                rh.gac(context, app.aaps.core.ui.R.attr.bgLow)
+                resolveDashboardThemeColor(context, rh, app.aaps.core.ui.R.attr.bgLow)
             isDisplayHigh(displayMgdl, profileFunction, preferences) ->
-                rh.gac(context, app.aaps.core.ui.R.attr.highColor)
+                resolveDashboardThemeColor(context, rh, app.aaps.core.ui.R.attr.highColor)
             else ->
-                rh.gac(context, app.aaps.core.ui.R.attr.bgInRange)
+                resolveDashboardThemeColor(context, rh, app.aaps.core.ui.R.attr.bgInRange)
         }
 
     fun displayBgDescription(

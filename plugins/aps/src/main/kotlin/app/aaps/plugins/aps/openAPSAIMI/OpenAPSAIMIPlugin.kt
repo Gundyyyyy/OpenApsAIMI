@@ -1435,15 +1435,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 ),
             )
         )
-        add(
-            PreferenceSubScreenDef(
-                key = "aimi_compose_remote_security",
-                titleResId = R.string.OApsAIMI_RemoteControlPin_title,
-                items = listOf(
-                    AimiStringKey.RemoteControlPin,
-                ),
-            )
-        )
+        // Single string pref: inline avoids an extra nested sub-screen + full-screen drill-down
+        // (same UX as other lone keys, e.g. pregnancy date).
+        add(AimiStringKey.RemoteControlPin)
         add(
             PreferenceSubScreenDef(
                 key = "aimi_compose_sos",

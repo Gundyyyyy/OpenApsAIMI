@@ -771,6 +771,7 @@ internal class DashboardShellController(
         val composeState = host.embeddedComposeState
         val useComposeOnlyGraphPipeline = !shouldAttachLegacyGraphBackend()
         val now = dateUtil.now()
+        val showPredictionsOnStrip = menuChartSettings[0][CharType.PRE.ordinal]
 
         val hasBgData = overviewData.bgReadingsArray.isNotEmpty()
         if (!useComposeOnlyGraphPipeline) {
@@ -942,7 +943,11 @@ internal class DashboardShellController(
             emptyList()
         }
         val lastPredEpochMs = predictionPoints.maxOfOrNull { it.timestampEpochMs }
-        val graphDisplayToEpoch = if (lastPredEpochMs != null) {
+        // When predictions are enabled on the main chart, keep a fixed future band (see
+        // predictionFutureHorizonMs) so a short prediction series does not collapse the X axis to ~1h.
+        val graphDisplayToEpoch = if (showPredictionsOnStrip) {
+            predictionDisplayToEpoch
+        } else if (lastPredEpochMs != null) {
             max(visibleToEpoch, minOf(lastPredEpochMs, predictionDisplayToEpoch))
         } else {
             visibleToEpoch

@@ -42,8 +42,6 @@ import app.aaps.core.ui.compose.dashboard.GlucoseHeroRing
 import app.aaps.core.ui.compose.dashboard.GlucoseHeroUiState
 import app.aaps.core.ui.compose.icons.IcCarbs
 import app.aaps.core.ui.compose.icons.IcPluginObjectives
-import app.aaps.core.ui.compose.icons.IcPumpBattery
-import app.aaps.core.ui.compose.icons.IcPumpCartridge
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.views.GlucoseRingColorComputer
 import app.aaps.plugins.main.databinding.ComponentCircleTopStatusHybridBinding
@@ -183,10 +181,8 @@ class CircleTopDashboardView @JvmOverloads constructor(
         }
 
         bindMetricIcon(binding.metricIconSteps, muted, 18.dp, Icons.Outlined.DirectionsWalk)
-        bindMetricIcon(binding.metricIconReservoir, onSurface, 18.dp, IcPumpCartridge)
         bindMetricIcon(binding.metricIconCob, attention, 18.dp, IcCarbs)
         bindMetricIcon(binding.metricIconCv, onSurface, 18.dp, Icons.Outlined.Waves)
-        bindMetricIcon(binding.metricIconBattery, onSurface, 18.dp, IcPumpBattery)
         bindMetricIcon(binding.metricIconHr, muted, 18.dp, Icons.Outlined.Favorite)
         bindMetricIcon(binding.metricIconLastReading, info, 18.dp, Icons.Outlined.WaterDrop)
         bindMetricIcon(binding.metricIconTbr, warning, 18.dp, Icons.Outlined.ErrorOutline)
@@ -399,11 +395,9 @@ class CircleTopDashboardView @JvmOverloads constructor(
             // ═══════════════════════════════════════════════════════════════
             // 2. Left Column Metrics
             // ═══════════════════════════════════════════════════════════════
-            binding.reservoirChip.text = getProp<String>("reservoirText") ?: "--"
             binding.cobText.text = getProp<String>("cobText") ?: "0g"
             binding.cvText.text = getProp<String>("cvText") ?: "CV --%"
             binding.activityText.text = getProp<String>("activityPctText") ?: "0%"
-            binding.pumpBatteryText.text = getProp<String>("pumpBatteryText") ?: "--"
 
             // ═══════════════════════════════════════════════════════════════
             // 3. Right Column Metrics
@@ -505,6 +499,32 @@ class CircleTopDashboardView @JvmOverloads constructor(
                 if (state is StatusCardState) state.loopIsRunning
                 else getProp<Boolean>("loopIsRunning") ?: true
             applyLoopStatusChip(loopRunning)
+
+            // Pompe / réservoir / site — pastilles lisibles (même esprit que la puce boucle / CGM).
+            if (state is StatusCardState) {
+                val dash = context.getString(app.aaps.core.ui.R.string.value_unavailable_short)
+                val resV = state.reservoirText?.trim().orEmpty().ifBlank { dash }
+                val battV = state.pumpBatteryText?.trim().orEmpty().ifBlank { dash }
+                val siteV = state.infusionAgeText?.trim().orEmpty().ifBlank { dash }
+                binding.dashboardPumpChipReservoir.text =
+                    context.getString(app.aaps.plugins.main.R.string.dashboard_pump_pill_reservoir, resV)
+                binding.dashboardPumpChipReservoir.contentDescription =
+                    context.getString(app.aaps.plugins.main.R.string.dashboard_pump_pill_reservoir_a11y, resV)
+                binding.dashboardPumpChipBattery.text =
+                    context.getString(app.aaps.plugins.main.R.string.dashboard_pump_pill_battery, battV)
+                binding.dashboardPumpChipBattery.contentDescription =
+                    context.getString(app.aaps.plugins.main.R.string.dashboard_pump_pill_battery_a11y, battV)
+                binding.dashboardPumpChipSite.text =
+                    context.getString(app.aaps.plugins.main.R.string.dashboard_pump_pill_site, siteV)
+                binding.dashboardPumpChipSite.contentDescription =
+                    context.getString(app.aaps.plugins.main.R.string.dashboard_pump_pill_site_a11y, siteV)
+                binding.dashboardPumpChipReservoir.isClickable = false
+                binding.dashboardPumpChipReservoir.isFocusable = false
+                binding.dashboardPumpChipBattery.isClickable = false
+                binding.dashboardPumpChipBattery.isFocusable = false
+                binding.dashboardPumpChipSite.isClickable = false
+                binding.dashboardPumpChipSite.isFocusable = false
+            }
 
             val extendedMetrics =
                 dashboardPreferences?.get(BooleanKey.OverviewDashboardExtendedMetrics) == true

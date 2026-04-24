@@ -73,7 +73,12 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
         )
         val graphViewModel = ViewModelProvider(act)[GraphViewModel::class.java]
         val cv = ComposeView(context).apply {
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            // Dispose with our LifecycleRegistry (not DetachedFromWindow): manual removeAllViews()
+            // while nested AndroidView interop is recomposing can race with accessibility teardown
+            // (NPE in AndroidComposeViewAccessibilityDelegateCompat.onViewDetachedFromWindow).
+            setViewCompositionStrategy(
+                ViewCompositionStrategy.DisposeOnLifecycleDestroyed(this@AimiDashboardComposeRootView),
+            )
             setContent {
                 var shellCtrl by remember { mutableStateOf<DashboardShellController?>(null) }
                 val heroCommands = shellCtrl?.heroCommandsForCompose() ?: NoopDashboardHeroCommands
@@ -163,8 +168,12 @@ class AimiDashboardComposeRootView @JvmOverloads constructor(
         shellController?.stop()
         shellController?.destroyView()
         shellController = null
+        // Lifecycle → ON_DESTROY runs dispose via DisposeOnLifecycleDestroyed before we detach children.
+        val cv = composeView
         composeView = null
-        removeAllViews()
+        if (cv != null && cv.parent === this) {
+            removeView(cv)
+        }
         super.onDetachedFromWindow()
         lifecycleRegistry = LifecycleRegistry(this)
     }

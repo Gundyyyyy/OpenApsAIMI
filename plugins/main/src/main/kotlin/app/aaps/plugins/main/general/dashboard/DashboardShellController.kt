@@ -136,10 +136,6 @@ internal class DashboardShellController(
 
     private val heroCommands: DashboardHeroCommands by lazy { createHeroCommands() }
 
-    companion object {
-        private const val BG_GRAPH_EMPTY_GAP_HOLD_MS = 10_000L
-    }
-
     /**
      * Compose shell: [runDashboardUiAttachedSide] was invoked in bursts (activity lifecycle + replay),
      * cancelling the 60s periodic job before its first delay and flooding Rx — see user logs
@@ -1371,6 +1367,7 @@ internal class DashboardShellController(
     }
 
     companion object {
+        private const val BG_GRAPH_EMPTY_GAP_HOLD_MS = 10_000L
         private const val STALE_BG_LAG_MS = 10 * 60 * 1000L
         private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
         private const val GRAPH_REFRESH_DEBOUNCE_MS = 120L

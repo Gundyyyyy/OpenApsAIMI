@@ -132,6 +132,7 @@ internal class DashboardShellController(
     private var embeddedLayoutSettleRefreshJob: Job? = null
     private var isHypoRiskDialogShowing = false
     private var uiPipelineAttachRetries = 0
+    private var lastNonEmptyComposeGraphInput: DashboardEmbeddedComposeState.GraphRenderInput? = null
 
     private val heroCommands: DashboardHeroCommands by lazy { createHeroCommands() }
 
@@ -777,21 +778,34 @@ internal class DashboardShellController(
         }
         if (!hasBgData) {
             lastGraphBgLagMs = null
-            composeState?.updateGraphRenderInput(
-                GraphRenderInputFactory.build(
-                    rangeHours = overviewData.rangeToDisplay,
-                    hasBgData = false,
-                    followLive = true,
-                    graphPanActive = false,
-                    lastRefreshEpochMs = now,
-                    fromTimeEpochMs = overviewData.fromTime,
-                    toTimeEpochMs = overviewData.endTime,
-                    nowEpochMs = now,
-                    targetLowMgdl = preferences.get(UnitDoubleKey.OverviewLowMark),
-                    targetHighMgdl = preferences.get(UnitDoubleKey.OverviewHighMark),
-                    points = emptyList(),
-                ),
-            )
+            val fallbackInput = lastNonEmptyComposeGraphInput
+            val hasRecentFallback = fallbackInput != null &&
+                now - fallbackInput.lastRefreshEpochMs <= BG_GRAPH_EMPTY_GAP_HOLD_MS
+            if (hasRecentFallback) {
+                composeState?.updateGraphRenderInput(
+                    fallbackInput!!.copy(
+                        lastRefreshEpochMs = now,
+                        nowEpochMs = now,
+                    ),
+                )
+                aapsLogger.debug(LTag.CORE, "Dashboard graph reused last BG snapshot during transient empty data gap")
+            } else {
+                composeState?.updateGraphRenderInput(
+                    GraphRenderInputFactory.build(
+                        rangeHours = overviewData.rangeToDisplay,
+                        hasBgData = false,
+                        followLive = true,
+                        graphPanActive = false,
+                        lastRefreshEpochMs = now,
+                        fromTimeEpochMs = overviewData.fromTime,
+                        toTimeEpochMs = overviewData.endTime,
+                        nowEpochMs = now,
+                        targetLowMgdl = preferences.get(UnitDoubleKey.OverviewLowMark),
+                        targetHighMgdl = preferences.get(UnitDoubleKey.OverviewHighMark),
+                        points = emptyList(),
+                    ),
+                )
+            }
             aapsLogger.debug(LTag.CORE, "Dashboard graph skipped: no BG data")
             return
         }
@@ -977,25 +991,25 @@ internal class DashboardShellController(
             markerDataRetryJob = null
         }
         val graphPanActive = useComposeOnlyGraphPipeline && panPastMs > 0L
-        composeState?.updateGraphRenderInput(
-            GraphRenderInputFactory.build(
-                rangeHours = overviewData.rangeToDisplay,
-                hasBgData = true,
-                followLive = followLive,
-                graphPanActive = graphPanActive,
-                lastRefreshEpochMs = now,
-                fromTimeEpochMs = visibleFromEpoch,
-                toTimeEpochMs = graphDisplayToEpoch,
-                nowEpochMs = now,
-                targetLowMgdl = preferences.get(UnitDoubleKey.OverviewLowMark),
-                targetHighMgdl = preferences.get(UnitDoubleKey.OverviewHighMark),
-                points = composePoints,
-                predictionPoints = predictionPoints,
-                smbMarkers = smbMarkers,
-                tbrMarkerEpochMs = tbrMarkers,
-                tbrSegments = tbrSegments,
-            ),
+        val graphInput = GraphRenderInputFactory.build(
+            rangeHours = overviewData.rangeToDisplay,
+            hasBgData = true,
+            followLive = followLive,
+            graphPanActive = graphPanActive,
+            lastRefreshEpochMs = now,
+            fromTimeEpochMs = visibleFromEpoch,
+            toTimeEpochMs = graphDisplayToEpoch,
+            nowEpochMs = now,
+            targetLowMgdl = preferences.get(UnitDoubleKey.OverviewLowMark),
+            targetHighMgdl = preferences.get(UnitDoubleKey.OverviewHighMark),
+            points = composePoints,
+            predictionPoints = predictionPoints,
+            smbMarkers = smbMarkers,
+            tbrMarkerEpochMs = tbrMarkers,
+            tbrSegments = tbrSegments,
         )
+        composeState?.updateGraphRenderInput(graphInput)
+        lastNonEmptyComposeGraphInput = graphInput
     }
 
     /**
@@ -1353,6 +1367,7 @@ internal class DashboardShellController(
     }
 
     companion object {
+        private const val BG_GRAPH_EMPTY_GAP_HOLD_MS = 10_000L
         private const val STALE_BG_LAG_MS = 10 * 60 * 1000L
         private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
         private const val GRAPH_REFRESH_DEBOUNCE_MS = 120L

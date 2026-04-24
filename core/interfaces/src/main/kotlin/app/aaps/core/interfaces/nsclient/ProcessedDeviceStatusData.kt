@@ -54,7 +54,6 @@ interface ProcessedDeviceStatusData {
 
     var openAPSData: OpenAPSData
 
-    // test warning level // color
     fun pumpStatus(nsSettingsStatus: NSSettingsStatus): Spanned
     fun pumpStatusHtml(nsSettingsStatus: NSSettingsStatus): String
     val extendedPumpStatusHtml: String

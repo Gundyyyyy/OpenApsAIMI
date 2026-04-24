@@ -373,7 +373,7 @@ class RemoteControlFragment : DaggerFragment(), PluginFragment {
             
             ModeCategory.ACTIVITY, ModeCategory.CONTEXT_ONLY, ModeCategory.PHYSIO -> {
                 // ACTIVITY/CONTEXT_ONLY/PHYSIO use ContextManager
-                sendContextMode(mode, durationMin)
+                sendContextMode(mode, durationMin, pin)
             }
         }
     }
@@ -431,14 +431,14 @@ class RemoteControlFragment : DaggerFragment(), PluginFragment {
     /**
      * Send ACTIVITY/PHYSIO mode via ContextManager (AIMI contexts).
      */
-    private fun sendContextMode(mode: ModePreset, durationMin: Int) {
+    private fun sendContextMode(mode: ModePreset, durationMin: Int, pin: String) {
         lifecycleScope.launch {
             try {
                 val intentText = "${mode.therapyKeyword} ${durationMin}min"
                 
                 aapsLogger.info(LTag.NSCLIENT, "[RemoteControl] Sending ACTIVITY/PHYSIO via ContextManager: '$intentText'")
                 
-                val ids = contextManager.addIntent(intentText, forceLLM = false)
+                val ids = contextManager.addIntent(intentText, forceLLM = false, remotePin = pin)
                 
                 if (ids.isNotEmpty()) {
                     aapsLogger.info(LTag.NSCLIENT, "[RemoteControl] Context created: $ids")

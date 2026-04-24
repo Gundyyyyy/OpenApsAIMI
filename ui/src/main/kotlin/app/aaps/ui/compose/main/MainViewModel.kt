@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.aaps.core.data.iob.InMemoryGlucoseValue
+import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
 import app.aaps.core.data.time.T
@@ -39,6 +40,8 @@ import app.aaps.core.interfaces.pump.defs.determineCorrectBolusStepSize
 import app.aaps.core.interfaces.queue.Callback
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
+import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventShowDialog
 import app.aaps.core.interfaces.ui.IconsProvider
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
@@ -51,13 +54,12 @@ import app.aaps.core.objects.wizard.QuickWizard
 import app.aaps.core.objects.wizard.QuickWizardEntry
 import app.aaps.core.objects.wizard.QuickWizardMode
 import app.aaps.ui.compose.alertDialogs.AboutDialogData
-import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.ui.compose.quickLaunch.QuickLaunchResolver
+import app.aaps.ui.compose.quickLaunch.QuickLaunchSerializer
+import app.aaps.ui.compose.quickLaunch.ResolvedQuickLaunchItem
 import app.aaps.ui.compose.scenes.ActiveSceneManager
 import app.aaps.ui.compose.scenes.SceneExecutor
 import app.aaps.ui.compose.scenes.SceneRepository
-import app.aaps.ui.compose.quickLaunch.QuickLaunchSerializer
-import app.aaps.ui.compose.quickLaunch.ResolvedQuickLaunchItem
 import app.aaps.ui.compose.tempTarget.toTTPresetsWithNameRes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -104,7 +106,8 @@ class MainViewModel @Inject constructor(
     private val protectionCheck: ProtectionCheck,
     private val sceneRepository: SceneRepository,
     private val sceneExecutor: SceneExecutor,
-    private val activeSceneManager: ActiveSceneManager
+    private val activeSceneManager: ActiveSceneManager,
+    private val rxBus: RxBus
 ) : ViewModel() {
 
     // Event-driven state (drawer, dialogs, simple-mode preference). Imperative .update{} calls
@@ -199,7 +202,7 @@ class MainViewModel @Inject constructor(
         // permanent TT uses Long.MAX_VALUE — avoid Long-overflow in expiry math).
         val ttIsFinite = ttData != null && ttData.state == TempTargetState.ACTIVE
             && ttData.duration > 0 && ttData.duration < T.days(30).msecs()
-        val ttExpired = ttIsFinite && now >= ttData!!.timestamp + ttData.duration
+        val ttExpired = ttIsFinite && now >= ttData.timestamp + ttData.duration
         if (ttExpired) overviewDataCache.refreshTempTarget()
 
         val profileExpired = profileData != null && profileData.duration > 0
@@ -207,7 +210,7 @@ class MainViewModel @Inject constructor(
         if (profileExpired) overviewDataCache.refreshProfile()
 
         val rmIsFinite = rmData != null && rmData.duration > 0 && rmData.duration < T.days(30).msecs()
-        val rmExpired = rmIsFinite && now >= rmData!!.timestamp + rmData.duration
+        val rmExpired = rmIsFinite && now >= rmData.timestamp + rmData.duration
         if (rmExpired) overviewDataCache.refreshRunningMode()
 
         val tbrExpired = tbrData != null && tbrData.state != TbrState.NONE && tbrData.duration > 0
@@ -216,7 +219,7 @@ class MainViewModel @Inject constructor(
 
         // TT progress and display text
         val ttProgress = if (ttIsFinite && !ttExpired) {
-            val elapsed = now - ttData!!.timestamp
+            val elapsed = now - ttData.timestamp
             (elapsed.toFloat() / ttData.duration.toFloat()).coerceIn(0f, 1f)
         } else 0f
 
@@ -244,7 +247,7 @@ class MainViewModel @Inject constructor(
 
         // Running mode progress and display text
         val rmProgress = if (rmIsFinite && !rmExpired) {
-            val elapsed = now - rmData!!.timestamp
+            val elapsed = now - rmData.timestamp
             (elapsed.toFloat() / rmData.duration.toFloat()).coerceIn(0f, 1f)
         } else 0f
 
@@ -373,29 +376,29 @@ class MainViewModel @Inject constructor(
      * Execute QuickWizard by GUID: re-validates at execution time and calls confirmAndExecute.
      * Needs Activity context for the confirmation dialog.
      */
-    fun executeQuickWizard(context: android.content.Context, guid: String) {
+    fun executeQuickWizard(guid: String) {
         viewModelScope.launch {
             val entry = quickWizard.get(guid) ?: return@launch
             if (!entry.isActive()) return@launch
             when (entry.mode()) {
-                QuickWizardMode.WIZARD  -> executeQuickWizardMode(context, entry)
-                QuickWizardMode.INSULIN -> executeInsulinMode(context, entry)
-                QuickWizardMode.CARBS   -> executeCarbsMode(context, entry)
+                QuickWizardMode.WIZARD  -> executeQuickWizardMode(entry)
+                QuickWizardMode.INSULIN -> executeInsulinMode(entry)
+                QuickWizardMode.CARBS   -> executeCarbsMode(entry)
             }
         }
     }
 
-    private suspend fun executeQuickWizardMode(context: android.content.Context, entry: QuickWizardEntry) {
+    private suspend fun executeQuickWizardMode(entry: QuickWizardEntry) {
         val bg = iobCobCalculator.ads.actualBg() ?: return
         val profile = profileFunction.getProfile() ?: return
         val profileName = profileFunction.getProfileName()
         val wizard = entry.doCalc(profile, profileName, bg)
         if (wizard.calculatedTotalInsulin > 0.0 && entry.carbs() > 0) {
-            wizard.confirmAndExecute(context, entry)
+            wizard.confirmAndExecute(entry)
         }
     }
 
-    private fun executeInsulinMode(context: android.content.Context, entry: QuickWizardEntry) {
+    private fun executeInsulinMode(entry: QuickWizardEntry) {
         val pump = activePlugin.activePump
         if (!pump.isInitialized() || pump.isSuspended()) return
 
@@ -414,33 +417,34 @@ class MainViewModel @Inject constructor(
             }
         }
 
-        uiInteraction.showOkCancelDialog(
-            context = context,
-            title = entry.buttonText(),
-            message = message,
-            ok = {
-                uel.log(
-                    Action.BOLUS, Sources.QuickWizard,
-                    entry.buttonText(),
-                    ValueWithUnit.Insulin(insulinAfterConstraints)
-                )
-                val detailedBolusInfo = DetailedBolusInfo().apply {
-                    eventType = app.aaps.core.data.model.TE.Type.CORRECTION_BOLUS
-                    this.insulin = insulinAfterConstraints
-                }
-                commandQueue.bolus(detailedBolusInfo, object : Callback() {
-                    override fun run() {
-                        if (!result.success) {
-                            uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
-                        }
+        rxBus.send(
+            EventShowDialog.OkCancel(
+                title = entry.buttonText(),
+                message = message,
+                onOk = {
+                    uel.log(
+                        Action.BOLUS, Sources.QuickWizard,
+                        entry.buttonText(),
+                        ValueWithUnit.Insulin(insulinAfterConstraints)
+                    )
+                    val detailedBolusInfo = DetailedBolusInfo().apply {
+                        eventType = app.aaps.core.data.model.TE.Type.CORRECTION_BOLUS
+                        this.insulin = insulinAfterConstraints
                     }
-                })
-                entry.markAsUsed()
-            }
+                    commandQueue.bolus(detailedBolusInfo, object : Callback() {
+                        override fun run() {
+                            if (!result.success) {
+                                uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
+                            }
+                        }
+                    })
+                    entry.markAsUsed()
+                }
+            )
         )
     }
 
-    private fun executeCarbsMode(context: android.content.Context, entry: QuickWizardEntry) {
+    private fun executeCarbsMode(entry: QuickWizardEntry) {
         val carbs = entry.carbs()
         if (carbs <= 0) return
 
@@ -448,30 +452,31 @@ class MainViewModel @Inject constructor(
             append(rh.gs(app.aaps.core.ui.R.string.carbs) + ": ${carbs}g")
         }
 
-        uiInteraction.showOkCancelDialog(
-            context = context,
-            title = entry.buttonText(),
-            message = message,
-            ok = {
-                uel.log(
-                    Action.CARBS, Sources.QuickWizard,
-                    entry.buttonText(),
-                    ValueWithUnit.Gram(carbs)
-                )
-                val detailedBolusInfo = DetailedBolusInfo().apply {
-                    eventType = app.aaps.core.data.model.TE.Type.CARBS_CORRECTION
-                    this.carbs = carbs.toDouble()
-                    carbsTimestamp = dateUtil.now()
-                }
-                commandQueue.bolus(detailedBolusInfo, object : Callback() {
-                    override fun run() {
-                        if (!result.success) {
-                            uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
-                        }
+        rxBus.send(
+            EventShowDialog.OkCancel(
+                title = entry.buttonText(),
+                message = message,
+                onOk = {
+                    uel.log(
+                        Action.CARBS, Sources.QuickWizard,
+                        entry.buttonText(),
+                        ValueWithUnit.Gram(carbs)
+                    )
+                    val detailedBolusInfo = DetailedBolusInfo().apply {
+                        eventType = app.aaps.core.data.model.TE.Type.CARBS_CORRECTION
+                        this.carbs = carbs.toDouble()
+                        carbsTimestamp = dateUtil.now()
                     }
-                })
-                entry.markAsUsed()
-            }
+                    commandQueue.bolus(detailedBolusInfo, object : Callback() {
+                        override fun run() {
+                            if (!result.success) {
+                                uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
+                            }
+                        }
+                    })
+                    entry.markAsUsed()
+                }
+            )
         )
     }
 

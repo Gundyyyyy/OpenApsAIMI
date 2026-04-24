@@ -448,10 +448,25 @@ class ComposeMainActivity : AppCompatActivity() {
             preferences = preferences,
             checkPassword = cryptoUtil::checkPassword,
             showBiometric = { activity, titleRes, onGranted, onCancelled, onDenied ->
-                BiometricCheck.biometricPrompt(activity, titleRes, onGranted, onCancelled, onDenied, passwordCheck)
+                BiometricCheck.biometricPrompt(
+                    activity = activity,
+                    title = titleRes,
+                    rxBus = rxBus,
+                    ok = Runnable { onGranted() },
+                    cancel = Runnable { onCancelled() },
+                    fail = Runnable { onDenied() },
+                    passwordCheck = passwordCheck
+                )
             },
             showBiometricSimple = { activity, titleRes, onSuccess, onFallback, onCancel ->
-                BiometricCheck.biometricPromptSimple(activity, titleRes, onSuccess, onFallback, onCancel)
+                BiometricCheck.biometricPromptSimple(
+                    activity = activity,
+                    title = titleRes,
+                    rxBus = rxBus,
+                    onSuccess = Runnable { onSuccess() },
+                    onFallback = Runnable { onFallback() },
+                    onCancel = Runnable { onCancel() }
+                )
             }
         )
 
@@ -761,7 +776,7 @@ class ComposeMainActivity : AppCompatActivity() {
                     }
                 },
                 onRefreshPermissions = { permissionsViewModel.refresh() },
-                onExecuteQuickWizard = { guid -> mainViewModel.executeQuickWizard(this@ComposeMainActivity, guid) },
+                onExecuteQuickWizard = { guid -> mainViewModel.executeQuickWizard(guid) },
                 onRequestDirectoryAccess = {
                     try {
                         accessTree?.launch(null)
@@ -963,7 +978,7 @@ class ComposeMainActivity : AppCompatActivity() {
 
             // Dynamic actions — execution-based, not navigation
             is QuickLaunchAction.QuickWizardAction -> withProtection(ElementType.QUICK_WIZARD.protection) {
-                mainViewModel.executeQuickWizard(this, action.guid)
+                mainViewModel.executeQuickWizard(action.guid)
             }
 
             is QuickLaunchAction.AutomationAction  -> mainViewModel.requestAutomationConfirmation(action.automationId)
@@ -991,7 +1006,7 @@ class ComposeMainActivity : AppCompatActivity() {
         when (request) {
             is NavigationRequest.Element           -> navigateProtected(request.type, navController)
             is NavigationRequest.QuickWizard       -> withProtection(ElementType.QUICK_WIZARD.protection) {
-                mainViewModel.executeQuickWizard(this@ComposeMainActivity, request.guid)
+                mainViewModel.executeQuickWizard(request.guid)
             }
 
             is NavigationRequest.Plugin            -> {

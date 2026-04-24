@@ -77,6 +77,14 @@
     <string name="dashboard_chip_announced_context_opened">Contexte AIMI ouvert</string>
     <string name="dashboard_loop_run_requested">Exécution de la boucle demandée</string>
     <string name="dashboard_tir_stats_format">Moy %1$s - A1C %2$.1f%%</string>
+    <string name="dashboard_pump_pill_reservoir">Rés. %1$s</string>
+    <string name="dashboard_pump_pill_battery">Batt. %1$s</string>
+    <string name="dashboard_pump_pill_site">Site %1$s</string>
+    <string name="dashboard_pump_pill_reservoir_a11y">Réservoir %1$s</string>
+    <string name="dashboard_pump_pill_battery_a11y">Batterie pompe %1$s</string>
+    <string name="dashboard_pump_pill_site_a11y">Âge du site d\'infusion %1$s</string>
+    <string name="dashboard_pump_pill_sensor">Cap. %1$s</string>
+    <string name="dashboard_pump_pill_sensor_a11y">Âge du capteur %1$s</string>
     <string name="dashboard_aimi_pulse_title">Dernière exécution AIMI</string>
     <string name="dashboard_aimi_pulse_title_with_age">Dernière exécution AIMI · %1$s</string>
     <string name="dashboard_aimi_pulse_summary_none">Pas encore de sortie APS. Lancez la boucle ou attendez la prochaine glycémie.</string>

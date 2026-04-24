@@ -262,6 +262,14 @@
     <string name="dashboard_hero_status_reading_line">Reading · %1$s</string>
     <string name="dashboard_hero_status_sensor_line">Sensor · %1$s</string>
     <string name="dashboard_hero_status_reading_sensor_one_line">%1$s · %2$s</string>
+    <string name="dashboard_pump_pill_reservoir">Res. %1$s</string>
+    <string name="dashboard_pump_pill_battery">Batt. %1$s</string>
+    <string name="dashboard_pump_pill_site">Site %1$s</string>
+    <string name="dashboard_pump_pill_reservoir_a11y">Reservoir %1$s</string>
+    <string name="dashboard_pump_pill_battery_a11y">Pump battery %1$s</string>
+    <string name="dashboard_pump_pill_site_a11y">Infusion site age %1$s</string>
+    <string name="dashboard_pump_pill_sensor">Sens. %1$s</string>
+    <string name="dashboard_pump_pill_sensor_a11y">Sensor age %1$s</string>
     <string name="dashboard_hero_sensor_badge_short">CGM %1$s</string>
     <string name="dashboard_hero_sensor_dialog_title">CGM</string>
     <string name="dashboard_hero_sensor_dialog_message">%1$s\n\n%2$s</string>

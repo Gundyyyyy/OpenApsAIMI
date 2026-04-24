@@ -6,6 +6,7 @@
     <!--    General-->
     <string name="temp_basal_overview_short_name">T:</string>
     <string name="treatments">Treatments</string>
+    <string name="treatments_history">Treatments history</string>
     <string name="treatments_desc">View and manage treatment history</string>
     <string name="nav_configuration">Configuration</string>
     <string name="nav_configuration_desc">Setup your configuration (CGM, Pump, ...) end enable features</string>

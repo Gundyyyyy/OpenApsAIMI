@@ -771,6 +771,7 @@ internal class DashboardShellController(
         val composeState = host.embeddedComposeState
         val useComposeOnlyGraphPipeline = !shouldAttachLegacyGraphBackend()
         val now = dateUtil.now()
+        val showPredictionsOnStrip = menuChartSettings[0][CharType.PRE.ordinal]
 
         val hasBgData = overviewData.bgReadingsArray.isNotEmpty()
         if (!useComposeOnlyGraphPipeline) {
@@ -779,15 +780,20 @@ internal class DashboardShellController(
         if (!hasBgData) {
             lastGraphBgLagMs = null
             val fallbackInput = lastNonEmptyComposeGraphInput
-            val hasRecentFallback = fallbackInput != null &&
-                now - fallbackInput.lastRefreshEpochMs <= BG_GRAPH_EMPTY_GAP_HOLD_MS
+            val newestPointMs = fallbackInput?.points?.maxOfOrNull { it.timestampEpochMs } ?: 0L
+            val snapshotHasPoints = newestPointMs > 0L
+            val snapshotNotStale = !snapshotHasPoints ||
+                (now - newestPointMs) <= BG_GRAPH_SNAPSHOT_MAX_POINT_AGE_MS
+            val holdOk = fallbackInput != null &&
+                (now - fallbackInput.lastRefreshEpochMs) <= BG_GRAPH_EMPTY_GAP_HOLD_MS
+            val hasRecentFallback = fallbackInput != null && snapshotNotStale && (holdOk || snapshotHasPoints)
             if (hasRecentFallback) {
-                composeState?.updateGraphRenderInput(
-                    fallbackInput!!.copy(
-                        lastRefreshEpochMs = now,
-                        nowEpochMs = now,
-                    ),
+                val reused = fallbackInput!!.copy(
+                    lastRefreshEpochMs = now,
+                    nowEpochMs = now,
                 )
+                composeState?.updateGraphRenderInput(reused)
+                lastNonEmptyComposeGraphInput = reused
                 aapsLogger.debug(LTag.CORE, "Dashboard graph reused last BG snapshot during transient empty data gap")
             } else {
                 composeState?.updateGraphRenderInput(
@@ -805,8 +811,8 @@ internal class DashboardShellController(
                         points = emptyList(),
                     ),
                 )
+                aapsLogger.debug(LTag.CORE, "Dashboard graph cleared: no BG data and no usable snapshot (hold=${holdOk}, stale=${!snapshotNotStale})")
             }
-            aapsLogger.debug(LTag.CORE, "Dashboard graph skipped: no BG data")
             return
         }
 
@@ -937,7 +943,11 @@ internal class DashboardShellController(
             emptyList()
         }
         val lastPredEpochMs = predictionPoints.maxOfOrNull { it.timestampEpochMs }
-        val graphDisplayToEpoch = if (lastPredEpochMs != null) {
+        // When predictions are enabled on the main chart, keep a fixed future band (see
+        // predictionFutureHorizonMs) so a short prediction series does not collapse the X axis to ~1h.
+        val graphDisplayToEpoch = if (showPredictionsOnStrip) {
+            predictionDisplayToEpoch
+        } else if (lastPredEpochMs != null) {
             max(visibleToEpoch, minOf(lastPredEpochMs, predictionDisplayToEpoch))
         } else {
             visibleToEpoch
@@ -1367,7 +1377,10 @@ internal class DashboardShellController(
     }
 
     companion object {
-        private const val BG_GRAPH_EMPTY_GAP_HOLD_MS = 10_000L
+        /** Max time after last successful graph refresh to keep reusing a snapshot when [OverviewData.bgReadingsArray] is transiently empty. */
+        private const val BG_GRAPH_EMPTY_GAP_HOLD_MS = 120_000L
+        /** Do not show a cached graph if the newest BG point in that snapshot is older than this (real stale CGM). */
+        private const val BG_GRAPH_SNAPSHOT_MAX_POINT_AGE_MS = 20 * 60 * 1000L
         private const val STALE_BG_LAG_MS = 10 * 60 * 1000L
         private const val LAG_IMPROVEMENT_FOR_RECOVERY_MS = 2 * 60 * 1000L
         private const val GRAPH_REFRESH_DEBOUNCE_MS = 120L

@@ -34,8 +34,7 @@ enum class AimiStringKey(
         defaultValue = "",
         titleResId = R.string.OApsAIMI_RemoteControlPin_title,
         summaryResId = R.string.OApsAIMI_RemoteControlPin_summary,
-        isPin = true,
-        isPassword = true
+        isPin = true
     ),
 
     /** Steps & heart-rate source (same key as [UnifiedActivityProviderMTR.PREF_KEY_SOURCE_MODE]). */

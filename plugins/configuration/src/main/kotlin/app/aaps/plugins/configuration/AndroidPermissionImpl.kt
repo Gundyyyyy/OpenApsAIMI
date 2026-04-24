@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.fragment.app.FragmentActivity
@@ -22,7 +23,6 @@ import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.pump.VirtualPump
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.ui.dialogs.OKDialog
-import app.aaps.core.ui.toast.ToastUtils
 import app.aaps.plugins.configuration.activities.DaggerAppCompatActivityWithResult
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,7 +54,7 @@ class AndroidPermissionImpl @Inject constructor(
                 try {
                     activity.requestMultiplePermissions?.launch(permissions)
                 } catch (_: IllegalStateException) {
-                    ToastUtils.errorToast(activity, rh.gs(R.string.error_asking_for_permissions))
+                    Toast.makeText(activity, rh.gs(R.string.error_asking_for_permissions), Toast.LENGTH_LONG).show()
                 }
         }
         if (testBattery) {
@@ -63,7 +63,7 @@ class AndroidPermissionImpl @Inject constructor(
                     try {
                         activity.callForBatteryOptimization?.launch(null)
                     } catch (_: IllegalStateException) {
-                        ToastUtils.errorToast(activity, rh.gs(R.string.error_asking_for_permissions))
+                        Toast.makeText(activity, rh.gs(R.string.error_asking_for_permissions), Toast.LENGTH_LONG).show()
                     }
             } catch (_: ActivityNotFoundException) {
                 permissionBatteryOptimizationFailed = true

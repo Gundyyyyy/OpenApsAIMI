@@ -12,6 +12,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
+import android.widget.Toast
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.cardview.widget.CardView
@@ -408,16 +409,18 @@ class AimiModeSettingsActivity : TranslatedDaggerAppCompatActivity() {
                         withContext(Dispatchers.IO) {
                             persistenceLayer.insertOrUpdateTherapyEvent(te)
                         }
-                        app.aaps.core.ui.toast.ToastUtils.okToast(
+                        Toast.makeText(
                             this@AimiModeSettingsActivity,
-                            "$modeNote Mode Activated ($durationMin min)!"
-                        )
+                            "$modeNote Mode Activated ($durationMin min)!",
+                            Toast.LENGTH_LONG
+                        ).show()
                         finish()
                     } catch (e: Exception) {
-                        app.aaps.core.ui.toast.ToastUtils.errorToast(
+                        Toast.makeText(
                             this@AimiModeSettingsActivity,
-                            "Error: ${e.message ?: e.toString()}"
-                        )
+                            "Error: ${e.message ?: e.toString()}",
+                            Toast.LENGTH_LONG
+                        ).show()
                         e.printStackTrace()
                     }
                 }

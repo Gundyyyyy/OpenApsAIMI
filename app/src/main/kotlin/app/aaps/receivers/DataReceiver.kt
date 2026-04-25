@@ -117,10 +117,12 @@ open class DataReceiver : DaggerBroadcastReceiver() {
                     .build()
                 // Keep Dexcom ingestion isolated from generic receiver queue to avoid
                 // head-of-line blocking when another receiver worker stalls.
+                // Use APPEND_OR_REPLACE (not REPLACE): with REPLACE, bursts of Dexcom intents can
+                // repeatedly cancel in-flight work and leave BG insertion starved/silent.
                 dataWorkerStorage.enqueue(
                     request = request,
                     groupName = DEXCOM_JOB_GROUP_NAME,
-                    policy = ExistingWorkPolicy.REPLACE
+                    policy = ExistingWorkPolicy.APPEND_OR_REPLACE
                 )
                 null
             }

@@ -30,5 +30,4 @@ dependencies {
     api(libs.androidx.compose.runtime)
     api(libs.androidx.ui)
     api(libs.com.patrykandpatrick.vico.compose)
-    api(libs.com.patrykandpatrick.vico.compose.m3)
 }

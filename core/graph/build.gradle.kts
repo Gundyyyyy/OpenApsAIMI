@@ -19,6 +19,7 @@ dependencies {
     implementation(project(":core:data"))
     api(project(":core:graphview"))
     implementation(project(":core:interfaces"))
+    implementation(project(":core:keys"))
     implementation(project(":core:objects"))
     implementation(project(":core:ui"))
 

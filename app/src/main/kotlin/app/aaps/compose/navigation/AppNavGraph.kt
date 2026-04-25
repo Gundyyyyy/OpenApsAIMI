@@ -10,8 +10,11 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +52,7 @@ import app.aaps.core.keys.interfaces.PreferenceVisibilityContext
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.compose.AapsTopAppBar
 import app.aaps.core.ui.compose.ComposablePluginContent
+import app.aaps.core.ui.compose.LocalSnackbarHostState
 import app.aaps.core.ui.compose.ScreenMode
 import app.aaps.core.ui.compose.ToolbarConfig
 import app.aaps.core.ui.compose.navigation.ElementType
@@ -669,6 +673,7 @@ private fun PluginContentRoute(
     onNavigationRequest: (NavigationRequest, NavHostController) -> Unit,
     withProtection: (ProtectionCheck.Protection, () -> Unit) -> Unit,
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
     val navigateBack: @Composable () -> Unit = {
         IconButton(onClick = { navController.safePopBackStack() }) {
             Icon(
@@ -701,6 +706,7 @@ private fun PluginContentRoute(
         )
     }
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             AapsTopAppBar(
                 title = { Text(toolbarConfig.title) },
@@ -714,16 +720,18 @@ private fun PluginContentRoute(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            composeContent.Render(
-                setToolbarConfig = { config -> toolbarConfig = config },
-                onNavigateBack = { navController.safePopBackStack() },
-                onSettings = {
-                    onNavigationRequest(
-                        NavigationRequest.PluginPreferences(plugin.javaClass.simpleName),
-                        navController
-                    )
-                }
-            )
+            CompositionLocalProvider(LocalSnackbarHostState provides snackbarHostState) {
+                composeContent.Render(
+                    setToolbarConfig = { config -> toolbarConfig = config },
+                    onNavigateBack = { navController.safePopBackStack() },
+                    onSettings = {
+                        onNavigationRequest(
+                            NavigationRequest.PluginPreferences(plugin.javaClass.simpleName),
+                            navController
+                        )
+                    }
+                )
+            }
         }
     }
 }

@@ -19,7 +19,6 @@ dependencies {
     implementation(project(":core:data"))
     api(project(":core:graphview"))
     implementation(project(":core:interfaces"))
-    implementation(project(":core:keys"))
     implementation(project(":core:objects"))
     implementation(project(":core:ui"))
 
@@ -30,5 +29,4 @@ dependencies {
     api(libs.androidx.compose.runtime)
     api(libs.androidx.ui)
     api(libs.com.patrykandpatrick.vico.compose)
-    api(libs.com.patrykandpatrick.vico.compose.m3)
 }

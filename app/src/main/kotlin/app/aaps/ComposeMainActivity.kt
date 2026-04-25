@@ -134,7 +134,7 @@ import app.aaps.plugins.main.skins.SkinDashboardPreferenceSync
 import app.aaps.plugins.main.skins.SkinProvider
 import app.aaps.plugins.source.DexcomPlugin
 import app.aaps.plugins.source.activities.RequestDexcomPermissionActivity
-import app.aaps.ui.compose.automationSheet.AutomationViewModel
+import app.aaps.ui.compose.scenesSheet.ScenesViewModel
 import app.aaps.ui.compose.configuration.ConfigurationViewModel
 import app.aaps.ui.compose.fillDialog.FillPreselect
 import app.aaps.ui.compose.insulinManagement.InsulinManagementViewModel
@@ -218,7 +218,7 @@ class ComposeMainActivity : AppCompatActivity() {
     private val maintenanceViewModel: MaintenanceViewModel by viewModels()
     private val statusViewModel: StatusViewModel by viewModels()
     private val treatmentViewModel: TreatmentViewModel by viewModels()
-    private val automationViewModel: AutomationViewModel by viewModels()
+    private val scenesViewModel: ScenesViewModel by viewModels()
     private val loopActionViewModel: LoopActionViewModel by viewModels()
     private val graphViewModel: GraphViewModel by viewModels {
         viewModelFactory { initializer { graphViewModelFactory.create(overviewDataCache) } }
@@ -637,7 +637,7 @@ class ComposeMainActivity : AppCompatActivity() {
                     maintenanceViewModel = maintenanceViewModel,
                     statusViewModel = statusViewModel,
                     treatmentViewModel = treatmentViewModel,
-                    automationViewModel = automationViewModel,
+                    scenesViewModel = scenesViewModel,
                     loopActionViewModel = loopActionViewModel,
                     // Search
                     searchUiState = searchState,

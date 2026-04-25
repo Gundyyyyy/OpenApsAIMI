@@ -39,6 +39,12 @@
     <!-- Patched Ottai App -->
     <string name="ottai_app">Ottai</string>
     <string name="description_source_patched_ottai_app">Receive glucose data from Ottai App.</string>
+    <!-- Instara App -->
+    <string name="instara_app">Instara</string>
+    <string name="description_source_instara_app">Receive BG values from the Instara App.</string>
+    <!-- Instara preferences -->
+    <string name="pref_title_instara_history_request">Instara historical data request</string>
+    <string name="pref_summary_instara_history_request">Request possible missing historical data in background</string>
     <!-- Notification Reader -->
     <string name="notification_reader">Notification Reader</string>
     <string name="description_source_notification_reader">Read glucose values from notifications posted by official CGM apps (Dexcom, Medtronic, Eversense, etc.).</string>

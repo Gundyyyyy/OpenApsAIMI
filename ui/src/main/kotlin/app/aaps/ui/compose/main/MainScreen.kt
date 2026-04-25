@@ -49,8 +49,8 @@ import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.ui.compose.alertDialogs.AboutAlertDialog
 import app.aaps.ui.compose.alertDialogs.AboutDialogData
-import app.aaps.ui.compose.automationSheet.AutomationBottomSheet
-import app.aaps.ui.compose.automationSheet.AutomationViewModel
+import app.aaps.ui.compose.scenesSheet.ScenesBottomSheet
+import app.aaps.ui.compose.scenesSheet.ScenesViewModel
 import app.aaps.ui.compose.maintenance.ImportSource
 import app.aaps.ui.compose.maintenance.MaintenanceDialogs
 import app.aaps.ui.compose.maintenance.MaintenanceViewModel
@@ -83,7 +83,7 @@ fun MainScreen(
     maintenanceViewModel: MaintenanceViewModel,
     statusViewModel: StatusViewModel,
     treatmentViewModel: TreatmentViewModel,
-    automationViewModel: AutomationViewModel,
+    scenesViewModel: ScenesViewModel,
     loopActionViewModel: app.aaps.ui.compose.loopSheet.LoopActionViewModel,
     // Search
     searchUiState: SearchUiState,
@@ -147,7 +147,7 @@ fun MainScreen(
     var showTreatmentSheet by remember { mutableStateOf(false) }
     var showAutomationSheet by remember { mutableStateOf(false) }
     var showLoopActionSheet by remember { mutableStateOf(false) }
-    val automationState by automationViewModel.uiState.collectAsStateWithLifecycle()
+    val automationState by scenesViewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val isDashboardEmbedded = dashboardOverview != null
     var dashboardNotificationSheet by remember { mutableStateOf(false) }
@@ -357,7 +357,7 @@ fun MainScreen(
                                 },
                                 quickWizardCount = uiState.quickWizardItems.size,
                                 onAutomationClick = {
-                                    automationViewModel.refreshState()
+                                    scenesViewModel.refreshState()
                                     showAutomationSheet = true
                                 },
                                 automationCount = automationState.items.size + automationState.sceneItems.size,
@@ -476,7 +476,7 @@ fun MainScreen(
 
         // Automation bottom sheet
         if (showAutomationSheet) {
-            AutomationBottomSheet(
+            ScenesBottomSheet(
                 onDismiss = { showAutomationSheet = false },
                 automationItems = automationState.items,
                 onItemClick = { item -> mainViewModel.requestAutomationConfirmation(item.eventId) },

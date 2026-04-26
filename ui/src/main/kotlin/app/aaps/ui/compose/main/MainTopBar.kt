@@ -1,6 +1,7 @@
 package app.aaps.ui.compose.main
 
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -86,6 +87,7 @@ fun MainTopBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = Color.Transparent
         ),
+        windowInsets = WindowInsets(0),
         modifier = modifier
     )
 }

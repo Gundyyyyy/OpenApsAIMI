@@ -101,6 +101,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.collections.asSequence
 import app.aaps.core.interfaces.profile.EffectiveProfile
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlin.math.abs
 import kotlin.math.exp
@@ -408,7 +409,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 fetcher = { fromMillis: Long ->
                     // Récupère les TBR depuis 'fromMillis', puis trie DESC par timestamp
                     val raws: List<TB> = try {
-                        runBlocking {
+                        runBlocking(Dispatchers.IO) {
                             persistenceLayer.getTemporaryBasalsStartingFromTime(fromMillis, ascending = false)
                         }
                     } catch (t: Throwable) {
@@ -437,6 +438,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
     /** Suspend stats caches for one [determine_basal] pass; see [DetermineBasalInvocationCaches]. */
     private val determineBasalInvocationCaches = DetermineBasalInvocationCaches()
+    private val bolusQueryCache = mutableMapOf<Pair<Long, Boolean>, List<BS>>()
 
     // État interne d’hystérèse
     private var lastHypoBlockAt: Long = 0L
@@ -1239,14 +1241,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      * 🧠 AI Auditor Helper: Calculate cumulative SMB delivered in last 30 minutes
      * Used for intelligent audit triggering
      */
+    private fun getBolusesFromTimeCached(startTime: Long, ascending: Boolean): List<BS> {
+        val key = startTime to ascending
+        return bolusQueryCache.getOrPut(key) {
+            runBlocking(Dispatchers.IO) { persistenceLayer.getBolusesFromTime(startTime, ascending) }
+        }
+    }
+
     private fun calculateSmbLast30Min(): Double {
         val now = dateUtil.now()
         val lookback30min = now - 30 * 60 * 1000L
         
         return try {
-            val boluses = runBlocking {
-                persistenceLayer.getBolusesFromTime(lookback30min, ascending = false)
-            }.filter { it.type == BS.Type.SMB }
+            val boluses = getBolusesFromTimeCached(lookback30min, ascending = false)
+                .filter { it.type == BS.Type.SMB }
 
             boluses.sumOf { it.amount }
         } catch (e: Exception) {
@@ -2369,7 +2377,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val lookbackTime = dateUtil.now() - minutes * 60 * 1000L
         
         // 1. Check DB
-        val boluses = runBlocking { persistenceLayer.getBolusesFromTime(lookbackTime, true) }
+        val boluses = getBolusesFromTimeCached(lookbackTime, true)
         val dbHasBolus = boluses.any { it.amount > 0.3 }
 
         // 2. Check Pump Status Memory (Fallback)
@@ -4624,24 +4632,24 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         if (trajectoryFlagEnabled) {
             try {
-                val effectiveProfileForTrajectory: EffectiveProfile? = runBlocking {
-                    try {
+                val (effectiveProfileForTrajectory, trajectoryHistory) = runBlocking(Dispatchers.IO) {
+                    val effectiveProfile: EffectiveProfile? = try {
                         profileFunction.getProfile(currentTime)
                     } catch (_: Exception) {
                         null
                     }
+                    val history = trajectoryHistoryProvider.buildHistory(
+                        nowMillis = currentTime, historyMinutes = 90, currentBg = bg,
+                        currentDelta = delta, currentAccel = bgacc,
+                        insulinActivityNow = iobActivityNow, iobNow = iob.toDouble(),
+                        pkpdStage = insulinActionState.activityStage,
+                        timeSinceLastBolus = if (lastBolusAgeMinutes.isFinite()) lastBolusAgeMinutes.toInt() else 120,
+                        cobNow = cob.toDouble(),
+                        effectiveProfile = effectiveProfile,
+                        historicalInsulinPeakMinutes = profile.peakTime.toInt().coerceAtLeast(35),
+                    )
+                    effectiveProfile to history
                 }
-                // 1. Build Phase-Space History
-                val trajectoryHistory = trajectoryHistoryProvider.buildHistory(
-                    nowMillis = currentTime, historyMinutes = 90, currentBg = bg,
-                    currentDelta = delta, currentAccel = bgacc,
-                    insulinActivityNow = iobActivityNow, iobNow = iob.toDouble(),
-                    pkpdStage = insulinActionState.activityStage,
-                    timeSinceLastBolus = if (lastBolusAgeMinutes.isFinite()) lastBolusAgeMinutes.toInt() else 120,
-                    cobNow = cob.toDouble(),
-                    effectiveProfile = effectiveProfileForTrajectory,
-                    historicalInsulinPeakMinutes = profile.peakTime.toInt().coerceAtLeast(35),
-                )
                 
                 // 2. Run Trajectory Analysis (The "Insight" Gate)
                 val stableOrbit = app.aaps.plugins.aps.openAPSAIMI.trajectory.StableOrbit.fromProfile(targetBg, profile.current_basal)
@@ -4783,6 +4791,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         extraDebug: String = "" // 🌀 Extensible Debug Channel (e.g. Cosine Gate)
     ): RT {
         determineBasalInvocationCaches.beginInvocation()
+        bolusQueryCache.clear()
         consoleError = mutableListOf()
         consoleLog = mutableListOf()
         exerciseInsulinLockoutActive = false
@@ -5191,7 +5200,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // On définit fromTime pour couvrir une longue période (par exemple, les 7 derniers jours)
         val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)
 // Récupération des événements de changement de cannule
-        val siteChanges = runBlocking {
+        val siteChanges = runBlocking(Dispatchers.IO) {
             persistenceLayer.getTherapyEventDataFromTime(fromTime, TE.Type.CANNULA_CHANGE, true)
         }
 
@@ -5333,7 +5342,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val dayOfWeek = calendarInstance[Calendar.DAY_OF_WEEK]
         val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
         this.bg = glucoseStatus.glucose
-        val getlastBolusSMB = runBlocking { persistenceLayer.getNewestBolusOfType(BS.Type.SMB) }
+        val getlastBolusSMB = runBlocking(Dispatchers.IO) { persistenceLayer.getNewestBolusOfType(BS.Type.SMB) }
         val lastBolusSMBTime = getlastBolusSMB?.timestamp ?: 0L
         //val lastBolusSMBMinutes = lastBolusSMBTime / 60000
         this.lastBolusSMBUnit = getlastBolusSMB?.amount?.toFloat() ?: 0.0F
@@ -5422,7 +5431,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var tirbasal3B: Double? = null
         var tirbasal3A: Double? = null
         var tirbasalhAP: Double? = null
-        runBlocking {
+        runBlocking(Dispatchers.IO) {
             val tir1Day = tirCalculator.calculate(1, 65.0, 180.0)
             determineBasalInvocationCaches.storeTir65180FromWarmup(tir1Day)
             this@DetermineBasalaimiSMB2.tir1DAYabove = tirCalculator.averageTIR(tir1Day)?.abovePct()!!
@@ -5449,7 +5458,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var lastCarbTimestamp = mealData.lastCarbTime
         val fourHoursAgo = now - 4 * 60 * 60 * 1000
         val oneDayAgoIfNotFound = now - 24 * 60 * 60 * 1000
-        runBlocking {
+        runBlocking(Dispatchers.IO) {
             if (lastCarbTimestamp.toInt() == 0) {
                 lastCarbTimestamp = persistenceLayer.getMostRecentCarbByDate() ?: oneDayAgoIfNotFound
             }
@@ -5570,9 +5579,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val t3cCapCutoff   = System.currentTimeMillis() - t3cCapWindowMs
             
             // 1. Check Database (Harden: count ALL bolus types, not just SMB)
-            val recentBolusCount = runBlocking {
-                persistenceLayer.getBolusesFromTime(t3cCapCutoff, true)
-            }.count { it.type == BS.Type.SMB || it.type == BS.Type.NORMAL }
+            val recentBolusCount = getBolusesFromTimeCached(t3cCapCutoff, true)
+                .count { it.type == BS.Type.SMB || it.type == BS.Type.NORMAL }
 
             // 2. Check Internal Memory (Ensures 1 tick = 1 dose max even if DB is slow)
             val timeSinceInternalSmbMs = System.currentTimeMillis() - internalLastSmbMillis
@@ -5725,7 +5733,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // 🕒 FCL 5.0 Pre-calc: Total Bolus Volume Last Hour
         val oneHourAgo = now - (60 * 60 * 1000L)
-        val bolusesHistory = runBlocking { persistenceLayer.getBolusesFromTime(oneHourAgo, true) }
+        val bolusesHistory = getBolusesFromTimeCached(oneHourAgo, true)
         val totalBolusLastHour = bolusesHistory.sumOf { it.amount }
 
         val bgTrend = calculateBgTrend(recentBGs, reason)
@@ -5932,7 +5940,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         this.tdd7DaysPerHour = (tdd7Days / 24).toFloat()
 
         var tdd2Days = tddCalculator.averageTDD(
-            runBlocking { tddCalculator.calculate(2, allowMissingDays = false) }
+            runBlocking(Dispatchers.IO) { tddCalculator.calculate(2, allowMissingDays = false) }
         )?.data?.totalAmount?.toFloat() ?: 0.0f
         if (tdd2Days == 0.0f || tdd2Days < tdd7P) tdd2Days = tdd7P.toFloat()
         this.tdd2DaysPerHour = tdd2Days / 24
@@ -6035,7 +6043,17 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // PRIORITY 3: MEAL ADVISOR
         // PRIORITY 3: MEAL ADVISOR
         // PRIORITY 3: MEAL ADVISOR
-        val advisorRes = tryMealAdvisor(bg, delta, iob_data, profile, lastBolusTimeMs ?: 0L, modesCondition, isExplicitAdvisorRun)
+        val hasRecentBolus45m = hasReceivedRecentBolus(45, lastBolusTimeMs ?: 0L)
+        val advisorRes = tryMealAdvisor(
+            bg = bg,
+            delta = delta,
+            iobData = iob_data,
+            profile = profile,
+            lastBolusTime = lastBolusTimeMs ?: 0L,
+            modesCondition = modesCondition,
+            isExplicitTrigger = isExplicitAdvisorRun,
+            hasRecentBolus45m = hasRecentBolus45m,
+        )
         if (advisorRes is DecisionResult.Applied) {
              consoleLog.add("MEAL_ADVISOR_APPLIED source=${advisorRes.source} bolus=${advisorRes.bolusU}")
              aapsLogger.debug(
@@ -6339,7 +6357,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         // 🧹 Innovation: FCL 5.0 Drift Terminator (Blocked by Post-Hypo)
         // Independent Refractory: Only block if 'Small' was given recently.
-        if (!nightbis && autodrive && bg >= 80 && !isPostHypo && !hasReceivedRecentBolus(45, lastBolusTimeMs ?: 0L) && isDriftTerminatorCondition(bg.toFloat(), terminatorTarget.toFloat(), delta.toFloat(), shortAvgDelta.toFloat(), combinedDelta.toFloat(), mealData.slopeFromMinDeviation, totalBolusLastHour, reason) && modesCondition) {
+        if (!nightbis && autodrive && bg >= 80 && !isPostHypo && !hasRecentBolus45m && isDriftTerminatorCondition(bg.toFloat(), terminatorTarget.toFloat(), delta.toFloat(), shortAvgDelta.toFloat(), combinedDelta.toFloat(), mealData.slopeFromMinDeviation, totalBolusLastHour, reason) && modesCondition) {
             val terminatortap = dynamicPbolusSmall
 
             // [FIX] Force-Enable SMB for Drift Terminator if blocked by Basal First
@@ -6558,7 +6576,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // Robust Steps Retrieval (Matches HR logic)
             // Search window: 210 mins to cover 180min + delays
             val stepsSearchStart = now - 210 * 60 * 1000
-            val allStepsCounts = runBlocking {
+            val allStepsCounts = runBlocking(Dispatchers.IO) {
                 persistenceLayer.getStepsCountFromTimeToTime(stepsSearchStart, now)
             }
 
@@ -6607,7 +6625,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         try {
             // Search window: 200 mins to cover the 180min avg + buffer for overlapping records
             val searchStart = now - 200 * 60 * 1000
-            val allHeartRates = runBlocking {
+            val allHeartRates = runBlocking(Dispatchers.IO) {
                 persistenceLayer.getHeartRatesFromTimeToTime(searchStart, now)
             }
 
@@ -8315,7 +8333,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     // Extract reason tags from finalResult.reason
                     val reasonTags = finalResult.reason.toString().split(". ").map { it.trim() }
 
-                    val auditorEffectiveProfile: EffectiveProfile? = runBlocking {
+                    val auditorEffectiveProfile: EffectiveProfile? = runBlocking(Dispatchers.IO) {
                         try {
                             profileFunction.getProfile(dateUtil.now())
                         } catch (_: Exception) {
@@ -8825,7 +8843,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val diag = appendDecisionFinalSummaryLine(tag, rT, bg, delta)
         val activityThreshold = runDecisionFinalBasalNeuralStep(rT, diag)
         appendDecisionFinalTickLine(diag, activityThreshold)
-    } // 🛑 END OF determine_basal
+    }
 
 
     // ==========================================
@@ -8855,7 +8873,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return resolution.decision
     }
 
-    private fun tryMealAdvisor(bg: Double, delta: Float, iobData: IobTotal, profile: OapsProfileAimi, lastBolusTime: Long, modesCondition: Boolean, isExplicitTrigger: Boolean): DecisionResult {
+    private fun tryMealAdvisor(
+        bg: Double,
+        delta: Float,
+        iobData: IobTotal,
+        profile: OapsProfileAimi,
+        lastBolusTime: Long,
+        modesCondition: Boolean,
+        isExplicitTrigger: Boolean,
+        hasRecentBolus45m: Boolean,
+    ): DecisionResult {
         val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
         val estimatedCarbsTime = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
         val timeSinceEstimateMin = (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0
@@ -8873,7 +8900,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         if (estimatedCarbs > 10.0 && timeSinceEstimateMin in 0.0..maxPassiveWindow && bg >= 60) {
             // Refractory Check (Safety)
             // 🚀 BYPASS if Explicit Trigger (User clicked Snap&Go)
-            if (!isExplicitTrigger && hasReceivedRecentBolus(45, lastBolusTime)) {
+            if (!isExplicitTrigger && hasRecentBolus45m) {
                 aapsLogger.debug(
                     app.aaps.core.interfaces.logging.LTag.APS,
                     "MEAL_ADVISOR_TRACE blocked refractory=true explicit=$isExplicitTrigger lastBolusTime=$lastBolusTime"

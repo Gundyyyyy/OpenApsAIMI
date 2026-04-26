@@ -7,6 +7,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import java.io.File
@@ -134,7 +135,7 @@ class UnifiedReactivityLearner @Inject constructor(
         val start = now - (24 * 60 * 60 * 1000L)
         
         try {
-            val bgReadingsList = runBlocking {
+            val bgReadingsList = runBlocking(Dispatchers.IO) {
                 persistenceLayer.getBgReadingsDataFromTime(start, ascending = false)
             }
 
@@ -404,7 +405,7 @@ class UnifiedReactivityLearner @Inject constructor(
         val start = now - (2 * 60 * 60 * 1000L)  // 2 hours
         
         try {
-            val bgReadingsList = runBlocking {
+            val bgReadingsList = runBlocking(Dispatchers.IO) {
                 persistenceLayer.getBgReadingsDataFromTime(start, ascending = false)
             }
 

@@ -27,6 +27,7 @@ import app.aaps.core.interfaces.rx.events.EventWearUpdateTiles
 import app.aaps.core.interfaces.rx.weardata.CwfData
 import app.aaps.core.interfaces.rx.weardata.CwfMetadataKey
 import app.aaps.core.interfaces.rx.weardata.EventData
+import app.aaps.core.interfaces.scenes.SceneAutomationApi
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
@@ -75,6 +76,7 @@ class WearPlugin @Inject constructor(
     private val config: Config,
     private val bolusProgressData: BolusProgressData,
     private val persistenceLayer: PersistenceLayer,
+    private val scenes: SceneAutomationApi,
 ) : PluginBaseWithPreferences(
     pluginDescription = PluginDescription()
         .mainType(PluginType.SYNC)
@@ -164,6 +166,11 @@ class WearPlugin @Inject constructor(
             .drop(1) // Skip initial emission on collection start
             .debounce(2_000L)
             .onEach { dataHandlerMobile.resendData("TempTargetChange") }
+            .launchIn(newScope)
+        // Refresh wear scene tile whenever the scene list changes (add / update / delete)
+        scenes.scenesFlow
+            .drop(1) // Skip initial replay on subscribe
+            .onEach { dataHandlerMobile.sendScenes() }
             .launchIn(newScope)
         disposable += rxBus
             .toObservable(EventWearUpdateTiles::class.java)

@@ -13,7 +13,6 @@ import androidx.health.connect.client.time.TimeRangeFilter
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.time.Instant
@@ -202,7 +201,7 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
      * 
      * @return SleepDataMTR or null if unavailable
      */
-    fun fetchSleepData(): SleepDataMTR? {
+    suspend fun fetchSleepData(): SleepDataMTR? {
         val cacheKey = "sleep_last"
         val cached = cache[cacheKey] as? CachedData<SleepDataMTR>
         
@@ -214,9 +213,8 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         val client = healthConnectClient ?: return null
         
         return try {
-            runBlocking {
-                withTimeout(API_TIMEOUT_MS) {
-                    withContext(Dispatchers.IO) {
+            withTimeout(API_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
                         val now = Instant.now()
                         val yesterday = now.minusSeconds(48 * 60 * 60) // Last 48h
                         
@@ -271,7 +269,6 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
                         } else {
                             null
                         }
-                    }
                 }
             }
         } catch (e: Exception) {
@@ -289,7 +286,7 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
      * 
      * @return List of HRVDataMTR, empty if unavailable
      */
-    fun fetchHRVData(daysBack: Int = 7): List<HRVDataMTR> {
+    suspend fun fetchHRVData(daysBack: Int = 7): List<HRVDataMTR> {
         val cacheKey = "hrv_${daysBack}days"
         val cached = cache[cacheKey] as? CachedData<List<HRVDataMTR>>
         
@@ -301,9 +298,8 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         val client = healthConnectClient ?: return emptyList()
         
         return try {
-            runBlocking {
-                withTimeout(API_TIMEOUT_MS) {
-                    withContext(Dispatchers.IO) {
+            withTimeout(API_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
                         val now = Instant.now()
                         val startTime = now.minusSeconds((daysBack * 24 * 60 * 60).toLong())
                         
@@ -333,7 +329,6 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
                         }
                         
                         hrvList
-                    }
                 }
             }
         } catch (e: Exception) {
@@ -350,12 +345,11 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
      * Fetches the most recent Heart Rate sample (Real-Time check)
      * Lookback window: 1 hour
      */
-    fun fetchLastHeartRate(): Int {
+    suspend fun fetchLastHeartRate(): Int {
         val client = healthConnectClient ?: return 0
         return try {
-            runBlocking {
-                withTimeout(API_TIMEOUT_MS) {
-                    withContext(Dispatchers.IO) {
+            withTimeout(API_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
                         val now = Instant.now()
                         val start = now.minusSeconds(3600) // 1 hour lookback
                         val request = ReadRecordsRequest(
@@ -368,7 +362,6 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
                         val lastRecord = response.records.firstOrNull()
                         // Get the last sample in the record series
                         lastRecord?.samples?.lastOrNull()?.beatsPerMinute?.toInt() ?: 0
-                    }
                 }
             }
         } catch (e: Exception) {
@@ -418,7 +411,7 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
      * 
      * @return List of RHRDataMTR, empty if unavailable
      */
-    fun fetchMorningRHR(daysBack: Int = 7): List<RHRDataMTR> {
+    suspend fun fetchMorningRHR(daysBack: Int = 7): List<RHRDataMTR> {
         val cacheKey = "rhr_${daysBack}days"
         val cached = cache[cacheKey] as? CachedData<List<RHRDataMTR>>
         
@@ -430,9 +423,8 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         val client = healthConnectClient ?: return emptyList()
         
         return try {
-            runBlocking {
-                withTimeout(API_TIMEOUT_MS) {
-                    withContext(Dispatchers.IO) {
+            withTimeout(API_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
                         val now = Instant.now()
                         val zoneId = ZoneId.systemDefault()
                         val rhrList = mutableListOf<RHRDataMTR>()
@@ -486,7 +478,6 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
                         }
                         
                         sortedRHR
-                    }
                 }
             }
         } catch (e: Exception) {
@@ -505,7 +496,7 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
      * @param ignoreUnifiedSourceMode si true, lit quand même Health Connect (ex. pipeline Physio quand
      *        les pas Garmin sont dans HC mais le mode UI est « préférer la montre »).
      */
-    fun fetchStepsData(daysBack: Int = 7, ignoreUnifiedSourceMode: Boolean = false): Int {
+    suspend fun fetchStepsData(daysBack: Int = 7, ignoreUnifiedSourceMode: Boolean = false): Int {
         if (!ignoreUnifiedSourceMode) {
             val mode = app.aaps.plugins.aps.openAPSAIMI.steps.UnifiedActivityProviderMTR.getMode(context)
             if (mode == app.aaps.plugins.aps.openAPSAIMI.steps.UnifiedActivityProviderMTR.MODE_PREFER_WEAR ||
@@ -524,9 +515,8 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         val client = healthConnectClient ?: return 0
         
         return try {
-            runBlocking {
-                withTimeout(API_TIMEOUT_MS) {
-                    withContext(Dispatchers.IO) {
+            withTimeout(API_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
                         val now = Instant.now()
                         val startTime = now.minusSeconds((daysBack * 24 * 60 * 60).toLong())
                         
@@ -546,7 +536,6 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
                         
                         aapsLogger.info(LTag.APS, "[$TAG] ✅ Steps (HC Aggregated): total=$totalSteps, avg=$avgSteps/day")
                         avgSteps
-                    }
                 }
             }
         } catch (e: Exception) {
@@ -584,7 +573,7 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
      * 
      * @return RawPhysioDataMTR with available data (never null)
      */
-    fun fetchAllData(daysBack: Int = 7): RawPhysioDataMTR {
+    suspend fun fetchAllData(daysBack: Int = 7): RawPhysioDataMTR {
         val startTime = System.currentTimeMillis()
         
         aapsLogger.info(LTag.APS, "[$TAG] 🔄 Fetching physiological data (${daysBack}d window)...")
@@ -642,7 +631,7 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
      * Checks if Health Connect is available and permissions granted
      * Logs diagnostic info about permission state
      */
-    fun isAvailable(): Boolean {
+    suspend fun isAvailable(): Boolean {
         val client = healthConnectClient
         if (client == null) {
             aapsLogger.error(LTag.APS, "[$TAG] ❌ Health Connect client is NULL - not available on this device")
@@ -665,12 +654,10 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         
         // Check granted permissions (async)
         try {
-            val grantedPerms = runBlocking {
-                try {
-                    client.permissionController.getGrantedPermissions()
-                } catch (e: Exception) {
-                    emptySet<String>()
-                }
+            val grantedPerms = try {
+                client.permissionController.getGrantedPermissions()
+            } catch (e: Exception) {
+                emptySet<String>()
             }
             
             // 🔍 DIAGNOSTIC: Log actual granted strings seen by the app

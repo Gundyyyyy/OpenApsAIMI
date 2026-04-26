@@ -53,7 +53,14 @@ class PreparePredictionsWorker(
         }
 
         val apsResult = if (config.APS) loop.lastRun?.constraintsProcessed else processedDeviceStatusData.getAPSResult()
-        val predictionsAvailable = if (config.APS) loop.lastRun?.request?.hasPredictions == true else config.AAPSCLIENT
+        // After Compose migration, [loop.lastRun.request] can lag or diverge from [constraintsProcessed];
+        // still treat non-empty APS predictions as available so horizon + legacy series stay in sync.
+        val predictionsAvailable = if (config.APS) {
+            loop.lastRun?.request?.hasPredictions == true ||
+                !(apsResult?.predictionsAsGv.isNullOrEmpty())
+        } else {
+            config.AAPSCLIENT
+        }
         // align to hours
         val calendar = Calendar.getInstance().also {
             it.timeInMillis = System.currentTimeMillis()
@@ -106,6 +113,7 @@ class PreparePredictionsWorker(
             ?: emptyList()
 
         data.cache.updatePredictions(predictionDataPoints)
+        data.overviewData.replacePredictionGraphSeriesFromWorker(predictionDataPoints)
 
         // Extend cached time range to include prediction horizon
         data.cache.timeRangeFlow.value?.let { current ->

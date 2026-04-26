@@ -7,6 +7,8 @@ import app.aaps.plugins.aps.openAPSAIMI.steps.StepsResult
 import app.aaps.plugins.aps.openAPSAIMI.steps.UnifiedActivityProviderMTR
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
  * 🏥 Health Context Repository
@@ -41,9 +43,9 @@ class HealthContextRepository @Inject constructor(
      */
     fun fetchSnapshot(): HealthContextSnapshot {
         // 1. Fetch Basic Data (HC)
-        val sleepData = hcRepo.fetchSleepData()
-        val hrvList = hcRepo.fetchHRVData(1) // Last 24h
-        val rhrList = hcRepo.fetchMorningRHR(7)
+        val sleepData = runBlocking(Dispatchers.IO) { hcRepo.fetchSleepData() }
+        val hrvList = runBlocking(Dispatchers.IO) { hcRepo.fetchHRVData(1) } // Last 24h
+        val rhrList = runBlocking(Dispatchers.IO) { hcRepo.fetchMorningRHR(7) }
         
         // 2. Fetch Real-Time Data (Unified Provider: Watch > Phone > HC)
         val steps5Result = unifiedProvider.getStepsTotalSince(System.currentTimeMillis() - 5 * 60 * 1000)
@@ -112,9 +114,11 @@ class HealthContextRepository @Inject constructor(
     
     // For Daily Worker: Force heavy refresh
     fun forceHeavyRefresh() {
-        hcRepo.fetchSleepData()
-        hcRepo.fetchMorningRHR(7)
-        hcRepo.fetchHRVData(7)
+        runBlocking(Dispatchers.IO) {
+            hcRepo.fetchSleepData()
+            hcRepo.fetchMorningRHR(7)
+            hcRepo.fetchHRVData(7)
+        }
         fetchSnapshot()
     }
 }

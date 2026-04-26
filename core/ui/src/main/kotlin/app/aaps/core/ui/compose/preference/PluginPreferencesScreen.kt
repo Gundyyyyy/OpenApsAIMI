@@ -103,12 +103,7 @@ fun PluginPreferencesScreen(
                     Scaffold(
                         topBar = {
                             AapsTopAppBar(
-                                title = {
-                                    Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.titleLarge
-                                    )
-                                },
+                                title = { Text(title) },
                                 navigationIcon = {
                                     IconButton(onClick = onBackClick) {
                                         Icon(
@@ -223,12 +218,7 @@ private fun SinglePluginPreferencesRenderer(
     Scaffold(
         topBar = {
             AapsTopAppBar(
-                title = {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                },
+                title = { Text(title) },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(

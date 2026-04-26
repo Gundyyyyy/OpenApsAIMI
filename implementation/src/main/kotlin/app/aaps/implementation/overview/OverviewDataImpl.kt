@@ -9,6 +9,7 @@ import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.graph.Scale
 import app.aaps.core.interfaces.graph.SeriesData
 import app.aaps.core.interfaces.overview.OverviewData
+import app.aaps.core.interfaces.overview.graph.BgDataPoint
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
@@ -35,6 +36,10 @@ class OverviewDataImpl @Inject constructor() : OverviewData {
     override var bucketedGraphSeries: SeriesData = EmptySeriesData()
     override var bgReadingGraphSeries: SeriesData = EmptySeriesData()
     override var predictionsGraphSeries: SeriesData = EmptySeriesData()
+
+    override fun replacePredictionGraphSeriesFromWorker(points: List<BgDataPoint>) {
+        // Stub implementation: real graph data lives in plugins/main OverviewDataImpl.
+    }
 
     override val basalScale: Scale = Scale()
     override var baseBasalGraphSeries: SeriesData = EmptySeriesData()

@@ -4,12 +4,15 @@ import android.content.Context
 import androidx.annotation.AttrRes
 import androidx.annotation.DrawableRes
 import app.aaps.core.data.model.GV
+import app.aaps.core.data.model.SourceSensor
+import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.data.time.T
 import app.aaps.core.graph.data.BarGraphSeries
 import app.aaps.core.graph.data.DataPointWithLabelInterface
 import app.aaps.core.graph.data.DeviationDataPointLegacy
 import app.aaps.core.graph.data.FixedLineGraphSeries
 import app.aaps.core.graph.data.LineGraphSeries
+import app.aaps.core.graph.data.GlucoseValueDataPoint
 import app.aaps.core.graph.data.PointsWithLabelGraphSeries
 import app.aaps.core.graph.data.RunningModeDataPoint
 import app.aaps.core.graph.data.ScaledDataPoint
@@ -19,8 +22,11 @@ import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.graph.Scale
 import app.aaps.core.interfaces.graph.SeriesData
 import app.aaps.core.interfaces.overview.OverviewData
+import app.aaps.core.interfaces.overview.graph.BgDataPoint
+import app.aaps.core.interfaces.overview.graph.BgType
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
+import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.IntNonKey
@@ -49,6 +55,7 @@ class OverviewDataImpl @Inject constructor(
     private val preferences: Preferences,
     private val activePlugin: ActivePlugin,
     private val profileFunction: ProfileFunction,
+    private val profileUtil: ProfileUtil,
     private val persistenceLayer: PersistenceLayer,
     private val processedTbrEbData: ProcessedTbrEbData
 ) : OverviewData {
@@ -257,4 +264,35 @@ class OverviewDataImpl @Inject constructor(
     override var minVarSensValueFound = 50.0
     override val varSensScale = Scale()
     override var varSensSeries: SeriesData = LineGraphSeries<ScaledDataPoint>()
+
+    override fun replacePredictionGraphSeriesFromWorker(points: List<BgDataPoint>) {
+        if (points.isEmpty()) {
+            predictionsGraphSeries = PointsWithLabelGraphSeries<DataPointWithLabelInterface>()
+            return
+        }
+        val units = profileUtil.units
+        val arr = points.map { p ->
+            val mgdl = profileUtil.convertToMgdl(p.value, units)
+            val gv = GV(
+                timestamp = p.timestamp,
+                raw = mgdl,
+                value = mgdl,
+                trendArrow = TrendArrow.NONE,
+                noise = 0.0,
+                sourceSensor = sourceSensorForBgType(p.type),
+            )
+            GlucoseValueDataPoint(gv, profileUtil, rh, dateUtil)
+        }.toTypedArray()
+        predictionsGraphSeries = PointsWithLabelGraphSeries(arr)
+    }
+
+    private fun sourceSensorForBgType(type: BgType): SourceSensor = when (type) {
+        BgType.IOB_PREDICTION   -> SourceSensor.IOB_PREDICTION
+        BgType.COB_PREDICTION   -> SourceSensor.COB_PREDICTION
+        BgType.A_COB_PREDICTION -> SourceSensor.A_COB_PREDICTION
+        BgType.UAM_PREDICTION   -> SourceSensor.UAM_PREDICTION
+        BgType.ZT_PREDICTION    -> SourceSensor.ZT_PREDICTION
+        BgType.REGULAR,
+        BgType.BUCKETED         -> SourceSensor.IOB_PREDICTION
+    }
 }

@@ -5,6 +5,7 @@ import app.aaps.core.data.model.TDD
 import app.aaps.core.interfaces.stats.TIR
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.stats.TirCalculator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -51,7 +52,7 @@ internal class DetermineBasalInvocationCaches {
             if (cachedTdd24hSeq == invocationSeq) {
                 return cachedTdd24hTotalAmount
             }
-            val result = runBlocking { tddCalculator.calculateDaily(-24, 0) }
+            val result = runBlocking(Dispatchers.IO) { tddCalculator.calculateDaily(-24, 0) }
             val total = result?.totalAmount
             cachedTdd24hTotalAmount = total
             cachedTdd24hSeq = invocationSeq
@@ -64,7 +65,7 @@ internal class DetermineBasalInvocationCaches {
             if (cachedTdd1DaySparseSeq == invocationSeq) {
                 return cachedTdd1DaySparse
             }
-            val r = runBlocking { tddCalculator.calculate(1, allowMissingDays = false) }
+            val r = runBlocking(Dispatchers.IO) { tddCalculator.calculate(1, allowMissingDays = false) }
             cachedTdd1DaySparse = r
             cachedTdd1DaySparseSeq = invocationSeq
             return r
@@ -77,7 +78,7 @@ internal class DetermineBasalInvocationCaches {
                 return cachedTir65180!!
             }
         }
-        val r = runBlocking { tirCalculator.calculate(1, 65.0, 180.0) }
+        val r = runBlocking(Dispatchers.IO) { tirCalculator.calculate(1, 65.0, 180.0) }
         synchronized(lock) {
             cachedTir65180 = r
             cachedTir65180Seq = invocationSeq

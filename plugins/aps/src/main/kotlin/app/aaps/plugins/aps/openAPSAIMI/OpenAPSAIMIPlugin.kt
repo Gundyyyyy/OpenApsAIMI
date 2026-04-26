@@ -87,6 +87,10 @@ import org.json.JSONObject
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 import io.reactivex.rxjava3.disposables.Disposable
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Provider
@@ -115,7 +119,6 @@ import app.aaps.plugins.aps.openAPSAIMI.compose.AimiPkpdSettingsScreen
 import app.aaps.plugins.aps.openAPSAIMI.utils.AimiBackupManager
 import app.aaps.core.objects.extensions.put
 import app.aaps.core.objects.extensions.store
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 
@@ -177,6 +180,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         .setDefault(),
     aapsLogger, rh
 ), APS, PluginConstraints {
+
+    /** Background work for plugin startup (avoids blocking the thread that calls [onStart]). */
+    private val aimiPluginIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onStart() {
         super.onStart()
@@ -242,19 +248,26 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             // retourne null si tu veux "laisser la main" au runtime
             preferences.get(DoubleKey.AimiUamConfidence)
         }
-        var count = 0
-        val apsResults = runBlocking {
-            persistenceLayer.getApsResults(dateUtil.now() - T.days(1).msecs(), dateUtil.now())
+        aimiPluginIoScope.launch {
+            try {
+                var count = 0
+                val apsResults =
+                    persistenceLayer.getApsResults(dateUtil.now() - T.days(1).msecs(), dateUtil.now())
+                synchronized(dynIsfCacheLock) {
+                    apsResults.forEach {
+                        val glucose = it.glucoseStatus?.glucose ?: return@forEach
+                        val variableSens = it.variableSens ?: return@forEach
+                        val timestamp = it.date
+                        val key = timestamp - timestamp % T.mins(30).msecs() + glucose.toLong()
+                        if (variableSens > 0) dynIsfCache.put(key, variableSens)
+                        count++
+                    }
+                }
+                aapsLogger.debug(LTag.APS, "Loaded $count variable sensitivity values from database")
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "Dyn ISF cache warm-up failed", e)
+            }
         }
-        apsResults.forEach {
-            val glucose = it.glucoseStatus?.glucose ?: return@forEach
-            val variableSens = it.variableSens ?: return@forEach
-            val timestamp = it.date
-            val key = timestamp - timestamp % T.mins(30).msecs() + glucose.toLong()
-            if (variableSens > 0) dynIsfCache.put(key, variableSens)
-            count++
-        }
-        aapsLogger.debug(LTag.APS, "Loaded $count variable sensitivity values from database")
 
         // 🧠 Pre-load ML model into memory for O(1) SMB inference on hot path
         try {
@@ -337,7 +350,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     private fun computeCannulaSiteAgeDays(): Float {
         val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)
         return try {
-            val siteChanges = runBlocking {
+            val siteChanges = runBlocking(Dispatchers.IO) {
                 persistenceLayer.getTherapyEventDataFromTime(fromTime, TE.Type.CANNULA_CHANGE, true)
             }
             if (siteChanges.isNotEmpty()) {
@@ -425,7 +438,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         val multiplier = (profile as? ProfileSealed.EPS)?.value?.originalPercentage?.div(100.0)
             ?: return null
 
-        val sensitivity = runBlocking { calculateVariableIsf(start) }
+        val sensitivity = runBlocking(Dispatchers.IO) { calculateVariableIsf(start) }
 
         profiler.log(
             LTag.APS,
@@ -437,18 +450,24 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     }
 
     override fun getAverageIsfMgdl(timestamp: Long, caller: String): Double? {
-        if (dynIsfCache.isEmpty()) {
+        val (count, sum) = synchronized(dynIsfCacheLock) {
+            if (dynIsfCache.isEmpty()) {
+                return@synchronized -1 to 0.0
+            }
+            var c = 0
+            var s = 0.0
+            val start = timestamp - T.hours(24).msecs()
+            dynIsfCache.forEach { key, value ->
+                if (key in start..timestamp) {
+                    c++
+                    s += value
+                }
+            }
+            c to s
+        }
+        if (count < 0) {
             maybeLogDynIsfCacheEmptyWarning(caller)
             return null
-        }
-        var count = 0
-        var sum = 0.0
-        val start = timestamp - T.hours(24).msecs()
-        dynIsfCache.forEach { key, value ->
-            if (key in start..timestamp) {
-                count++
-                sum += value
-            }
         }
         val sensitivity = if (count == 0) null else sum / count
         aapsLogger.debug(LTag.APS, "getAverageIsfMgdl() $sensitivity from $count values ${dateUtil.dateAndTimeAndSecondsString(timestamp)} $caller")
@@ -487,6 +506,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     }
 
     private val dynIsfCache = LongSparseArray<Double>()
+    private val dynIsfCacheLock = Any()
 
     // Exemple de fonction pour prédire le delta futur à partir d'un historique récent
     private fun predictedDelta(deltaHistory: List<Double>): Double {
@@ -659,8 +679,10 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
         // 11) cache
         val key = timestamp - timestamp % T.mins(30).msecs() + glucose.toLong()
-        if (dynIsfCache.size > 1000) dynIsfCache.clear()
-        dynIsfCache.put(key, blended)
+        synchronized(dynIsfCacheLock) {
+            if (dynIsfCache.size > 1000) dynIsfCache.clear()
+            dynIsfCache.put(key, blended)
+        }
 
         return "CALC" to blended
     }

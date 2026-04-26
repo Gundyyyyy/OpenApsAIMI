@@ -17,7 +17,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToInt
 import kotlin.math.abs
-import kotlinx.coroutines.runBlocking
 
 /**
  * ============================================================================
@@ -46,7 +45,7 @@ class AuditorDataCollector @Inject constructor(
     /**
      * Build complete auditor input from AIMI runtime state
      */
-    fun buildAuditorInput(
+    suspend fun buildAuditorInput(
         // ... params ...
         bg: Double,
         delta: Double,
@@ -195,7 +194,7 @@ class AuditorDataCollector @Inject constructor(
     /**
      * Build snapshot from runtime state
      */
-    private fun buildSnapshot(
+    private suspend fun buildSnapshot(
         bg: Double,
         delta: Double,
         shortAvgDelta: Double,
@@ -333,7 +332,7 @@ class AuditorDataCollector @Inject constructor(
     /**
      * Build last delivery snapshot from database
      */
-    private fun buildLastDeliverySnapshot(now: Long): LastDeliverySnapshot = runBlocking {
+    private suspend fun buildLastDeliverySnapshot(now: Long): LastDeliverySnapshot {
         val lookbackMs = 60 * 60 * 1000L // 1 hour
         val fromTime = now - lookbackMs
 
@@ -363,7 +362,7 @@ class AuditorDataCollector @Inject constructor(
         }
         val lastTbr = tbrs.firstOrNull()
 
-        LastDeliverySnapshot(
+        return LastDeliverySnapshot(
             lastBolusU = lastBolus?.amount,
             lastBolusTime = lastBolus?.timestamp,
             lastSmbU = lastSmb?.amount,
@@ -421,7 +420,7 @@ class AuditorDataCollector @Inject constructor(
     /**
      * Build 7-day stats from TIR calculator
      */
-    private fun buildStats7d(now: Long): Stats7d = runBlocking {
+    private suspend fun buildStats7d(now: Long): Stats7d {
         val tirData = try {
             tirCalculator.calculate(7L, 70.0, 180.0)
         } catch (e: Exception) {
@@ -438,7 +437,7 @@ class AuditorDataCollector @Inject constructor(
             0.0
         }
 
-        Stats7d(
+        return Stats7d(
             tir = tirStats?.let { it.inRangePct() } ?: 0.0,
             hypoPct = tirStats?.let { it.belowPct() } ?: 0.0,
             hyperPct = tirStats?.let { it.abovePct() } ?: 0.0,

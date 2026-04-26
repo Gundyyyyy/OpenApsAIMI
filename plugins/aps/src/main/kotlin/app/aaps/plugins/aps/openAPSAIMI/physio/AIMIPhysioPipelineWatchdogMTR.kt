@@ -41,33 +41,28 @@ class AIMIPhysioPipelineWatchdogMTR @Inject constructor(
     /**
      * Runs diagnostics and best-effort recovery (HC sync + physio refresh). Safe on any thread.
      */
-    fun runCheckAndRecover() {
+    suspend fun runCheckAndRecover() {
         val now = System.currentTimeMillis()
         val start = now - DB_LOOKBACK_MS
 
-        val (hrCount, scCount) = runBlocking(Dispatchers.IO) {
-            val hr = try {
-                persistenceLayer.getHeartRatesFromTimeToTime(start, now).size
-            } catch (e: Exception) {
-                aapsLogger.warn(LTag.APS, "[$TAG] HR DB query failed: ${e.message}")
-                -1
-            }
-            val sc = try {
-                persistenceLayer.getStepsCountFromTimeToTime(start, now).size
-            } catch (e: Exception) {
-                aapsLogger.warn(LTag.APS, "[$TAG] Steps DB query failed: ${e.message}")
-                -1
-            }
-            hr to sc
+        val hrCount = try {
+            persistenceLayer.getHeartRatesFromTimeToTime(start, now).size
+        } catch (e: Exception) {
+            aapsLogger.warn(LTag.APS, "[$TAG] HR DB query failed: ${e.message}")
+            -1
+        }
+        val scCount = try {
+            persistenceLayer.getStepsCountFromTimeToTime(start, now).size
+        } catch (e: Exception) {
+            aapsLogger.warn(LTag.APS, "[$TAG] Steps DB query failed: ${e.message}")
+            -1
         }
 
-        val hcPermsOk = runBlocking(Dispatchers.IO) {
-            try {
-                permissionsHandler.hasAllPermissions()
-            } catch (e: Exception) {
-                aapsLogger.warn(LTag.APS, "[$TAG] HC permission check failed: ${e.message}")
-                false
-            }
+        val hcPermsOk = try {
+            permissionsHandler.hasAllPermissions()
+        } catch (e: Exception) {
+            aapsLogger.warn(LTag.APS, "[$TAG] HC permission check failed: ${e.message}")
+            false
         }
 
         try {

@@ -103,12 +103,10 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
             
             // Check if permission is granted (simplified - actual permission check happens at request time)
             runBlocking {
-                withContext(Dispatchers.IO) {
-                    try {
-                        client.permissionController.getGrantedPermissions().isNotEmpty()
-                    } catch (e: Exception) {
-                        false
-                    }
+                try {
+                    client.permissionController.getGrantedPermissions().isNotEmpty()
+                } catch (e: Exception) {
+                    false
                 }
             }
         } catch (e: Exception) {
@@ -147,22 +145,20 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
         aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Querying Health Connect: $startTime to $endTime ({$windowMinutes}min)")
         
         return runBlocking {
-            withContext(Dispatchers.IO) {
-                try {
-                    val request = ReadRecordsRequest(
-                        recordType = StepsRecord::class,
-                        timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
-                    )
-                    
-                    val response = client.readRecords(request)
-                    val totalSteps = response.records.sumOf { it.count.toInt() }
-                    
-                    aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Found ${response.records.size} records, total $totalSteps steps")
-                    totalSteps
-                } catch (e: Exception) {
-                    aapsLogger.error(LTag.APS, "[$SOURCE_NAME] Error reading steps from Health Connect", e)
-                    0
-                }
+            try {
+                val request = ReadRecordsRequest(
+                    recordType = StepsRecord::class,
+                    timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
+                )
+                
+                val response = client.readRecords(request)
+                val totalSteps = response.records.sumOf { it.count.toInt() }
+                
+                aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Found ${response.records.size} records, total $totalSteps steps")
+                totalSteps
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "[$SOURCE_NAME] Error reading steps from Health Connect", e)
+                0
             }
         }
     }

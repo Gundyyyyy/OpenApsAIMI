@@ -90,7 +90,9 @@ class AIMIPhysioManagerMTR @Inject constructor(
 
         Thread {
             try {
-                pipelineWatchdog.runCheckAndRecover()
+                kotlinx.coroutines.runBlocking {
+                    pipelineWatchdog.runCheckAndRecover()
+                }
             } catch (e: Exception) {
                 aapsLogger.warn(LTag.APS, "[$TAG] Initial pipeline watchdog failed: ${e.message}")
             }
@@ -249,7 +251,9 @@ class AIMIPhysioManagerMTR @Inject constructor(
         
         Thread {
             try {
-                performUpdate(daysBack = 7, runLLM = true)
+                kotlinx.coroutines.runBlocking {
+                    performUpdate(daysBack = 7, runLLM = true)
+                }
             } catch (e: Exception) {
                 aapsLogger.error(LTag.APS, "[$TAG] Manual update failed", e)
             }
@@ -269,7 +273,7 @@ class AIMIPhysioManagerMTR @Inject constructor(
      * @param daysBack Window for historical data fetch (default 7)
      * @param runLLM Whether to run the optional LLM analysis (default skip to save battery/API)
      */
-    fun performUpdate(daysBack: Int = 7, runLLM: Boolean = false): Boolean {
+    suspend fun performUpdate(daysBack: Int = 7, runLLM: Boolean = false): Boolean {
         return try {
             runPhysioPipeline(daysBack, runLLM)
         } finally {
@@ -282,7 +286,7 @@ class AIMIPhysioManagerMTR @Inject constructor(
         }
     }
 
-    private fun runPhysioPipeline(daysBack: Int, runLLM: Boolean): Boolean {
+    private suspend fun runPhysioPipeline(daysBack: Int, runLLM: Boolean): Boolean {
         val startTime = System.currentTimeMillis()
         var fetchMs = 0L
         var extractMs = 0L

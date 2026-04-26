@@ -41,9 +41,9 @@ class HealthContextRepository @Inject constructor(
      */
     fun fetchSnapshot(): HealthContextSnapshot {
         // 1. Fetch Basic Data (HC)
-        val sleepData = hcRepo.fetchSleepData()
-        val hrvList = hcRepo.fetchHRVData(1) // Last 24h
-        val rhrList = hcRepo.fetchMorningRHR(7)
+        val sleepData = kotlinx.coroutines.runBlocking { hcRepo.fetchSleepData() }
+        val hrvList = kotlinx.coroutines.runBlocking { hcRepo.fetchHRVData(1) } // Last 24h
+        val rhrList = kotlinx.coroutines.runBlocking { hcRepo.fetchMorningRHR(7) }
         
         // 2. Fetch Real-Time Data (Unified Provider: Watch > Phone > HC)
         val steps5Result = unifiedProvider.getStepsTotalSince(System.currentTimeMillis() - 5 * 60 * 1000)
@@ -112,9 +112,11 @@ class HealthContextRepository @Inject constructor(
     
     // For Daily Worker: Force heavy refresh
     fun forceHeavyRefresh() {
-        hcRepo.fetchSleepData()
-        hcRepo.fetchMorningRHR(7)
-        hcRepo.fetchHRVData(7)
+        kotlinx.coroutines.runBlocking {
+            hcRepo.fetchSleepData()
+            hcRepo.fetchMorningRHR(7)
+            hcRepo.fetchHRVData(7)
+        }
         fetchSnapshot()
     }
 }

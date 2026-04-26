@@ -146,7 +146,7 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
      * Main sync logic: Health Connect → Database (Steps & HR)
      * REVISED: Always fetch, never skip. Merge strategy.
      */
-    fun syncDataToDatabase() {
+    suspend fun syncDataToDatabase() {
         if (!isEnabled()) {
             aapsLogger.debug(LTag.APS, "[$TAG] Sync skipped (disabled)")
             return
@@ -182,11 +182,11 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
     }
 
     @Deprecated("Use syncDataToDatabase()")
-    fun syncStepsToDatabase() {
+    suspend fun syncStepsToDatabase() {
         syncDataToDatabase()
     }
 
-    private fun syncSteps(client: HealthConnectClient, now: Long) {
+    private suspend fun syncSteps(client: HealthConnectClient, now: Long) {
         // Fetch steps from Health Connect for multiple windows
         val stepsData = fetchStepsFromHealthConnect(client, now)
 
@@ -204,7 +204,7 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
                 device = SOURCE_DEVICE // "HealthConnect"
             )
 
-            runBlocking(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 try {
                     persistenceLayer.insertOrUpdateStepsCount(sc)
                     aapsLogger.info(
@@ -218,7 +218,7 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
         }
     }
 
-    private fun syncHeartRate(client: HealthConnectClient, now: Long, startMs: Long) {
+    private suspend fun syncHeartRate(client: HealthConnectClient, now: Long, startMs: Long) {
         val hrData = fetchHeartRateFromHealthConnect(client, startMs, now)
         
         if (hrData != null) {
@@ -229,7 +229,7 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
                 device = SOURCE_DEVICE
             )
             
-            runBlocking(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 try {
                     persistenceLayer.insertOrUpdateHeartRate(hr)
                     aapsLogger.info(
@@ -246,54 +246,48 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
     /**
      * Fetches steps from Health Connect for multiple time windows
      */
-    /**
-     * Fetches steps from Health Connect for multiple time windows
-     */
-    private fun fetchStepsFromHealthConnect(client: HealthConnectClient, nowMs: Long): AIMIStepsDataMTR {
-        return runBlocking {
-            withContext(Dispatchers.IO) {
-                try {
-                    // Define time windows (in minutes)
-                    val windows = listOf(5, 10, 15, 30, 60, 180)
-                    val stepsMap = mutableMapOf<Int, Long>()
+    private suspend fun fetchStepsFromHealthConnect(client: HealthConnectClient, nowMs: Long): AIMIHCStepsDataMTR {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Define time windows (in minutes)
+                val windows = listOf(5, 10, 15, 30, 60, 180)
+                val stepsMap = mutableMapOf<Int, Long>()
+                
+                // Fetch steps for each window
+                for (windowMin in windows) {
+                    val startTime = Instant.ofEpochMilli(nowMs - (windowMin * 60 * 1000L))
+                    val endTime = Instant.ofEpochMilli(nowMs)
                     
-                    // Fetch steps for each window
-                    for (windowMin in windows) {
-                        val startTime = Instant.ofEpochMilli(nowMs - (windowMin * 60 * 1000L))
-                        val endTime = Instant.ofEpochMilli(nowMs)
-                        
-                        val request = ReadRecordsRequest(
-                            recordType = StepsRecord::class,
-                            timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
-                        )
-                        
-                        val response = client.readRecords(request)
-                        val totalSteps = response.records.sumOf { it.count }
-                        stepsMap[windowMin] = totalSteps
-                    }
-                    
-                    AIMIStepsDataMTR(
-                        steps5min = (stepsMap[5] ?: 0L).toInt(),
-                        steps10min = (stepsMap[10] ?: 0L).toInt(),
-                        steps15min = (stepsMap[15] ?: 0L).toInt(),
-                        steps30min = (stepsMap[30] ?: 0L).toInt(),
-                        steps60min = (stepsMap[60] ?: 0L).toInt(),
-                        steps180min = (stepsMap[180] ?: 0L).toInt(),
-                        source = SOURCE_DEVICE,
-                        lastUpdateMillis = nowMs,
-                        isValid = (stepsMap[5] ?: 0) > 0
+                    val request = ReadRecordsRequest(
+                        recordType = StepsRecord::class,
+                        timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
                     )
-                } catch (e: Exception) {
-                    aapsLogger.error(LTag.APS, "[$TAG] Health Connect steps read error", e)
-                    AIMIStepsDataMTR.EMPTY
+                    
+                    val response = client.readRecords(request)
+                    val totalSteps = response.records.sumOf { it.count }
+                    stepsMap[windowMin] = totalSteps
                 }
+                
+                AIMIHCStepsDataMTR(
+                    steps5min = (stepsMap[5] ?: 0L).toInt(),
+                    steps10min = (stepsMap[10] ?: 0L).toInt(),
+                    steps15min = (stepsMap[15] ?: 0L).toInt(),
+                    steps30min = (stepsMap[30] ?: 0L).toInt(),
+                    steps60min = (stepsMap[60] ?: 0L).toInt(),
+                    steps180min = (stepsMap[180] ?: 0L).toInt(),
+                    source = SOURCE_DEVICE,
+                    lastUpdateMillis = nowMs,
+                    isValid = (stepsMap[5] ?: 0) > 0
+                )
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "[$TAG] Health Connect steps read error", e)
+                AIMIHCStepsDataMTR.EMPTY
             }
         }
     }
 
-    private fun fetchHeartRateFromHealthConnect(client: HealthConnectClient, startMs: Long, endMs: Long): AIMIHeartRateDataMTR? {
-        return runBlocking {
-             withContext(Dispatchers.IO) {
+    private suspend fun fetchHeartRateFromHealthConnect(client: HealthConnectClient, startMs: Long, endMs: Long): AIMIHeartRateDataMTR? {
+        return withContext(Dispatchers.IO) {
                 try {
                     val request = ReadRecordsRequest(
                         recordType = HeartRateRecord::class,
@@ -315,14 +309,13 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
                     aapsLogger.error(LTag.APS, "[$TAG] Health Connect HR read error", e)
                     null
                 }
-             }
-        }
+            }
     }
 
     /**
      * Data holder
      */
-    private data class AIMIStepsDataMTR(
+    private data class AIMIHCStepsDataMTR(
         val steps5min: Int,
         val steps10min: Int,
         val steps15min: Int,
@@ -334,7 +327,7 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
         val isValid: Boolean
     ) {
         companion object {
-            val EMPTY = AIMIStepsDataMTR(0, 0, 0, 0, 0, 0, "None", 0, false)
+            val EMPTY = AIMIHCStepsDataMTR(0, 0, 0, 0, 0, 0, "None", 0, false)
         }
     }
     
@@ -342,11 +335,9 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
         val bpm: Double,
         val timestamp: Long
     )
-    private fun logExistingSources(startMs: Long, endMs: Long) {
+    private suspend fun logExistingSources(startMs: Long, endMs: Long) {
         try {
-            val recentSteps = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getStepsCountFromTimeToTime(startMs, endMs)
-            }
+            val recentSteps = persistenceLayer.getStepsCountFromTimeToTime(startMs, endMs)
             val otherSources = recentSteps.map { it.device }.distinct().filter { it != SOURCE_DEVICE }
             
             if (otherSources.isNotEmpty()) {

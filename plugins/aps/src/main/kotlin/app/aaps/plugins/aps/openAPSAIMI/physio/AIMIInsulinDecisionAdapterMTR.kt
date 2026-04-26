@@ -458,8 +458,9 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
      */
     fun getRealTimeActivity(): RealTimeActivity {
          // Graceful fallback if repo fail (returns 0)
-         val steps = dataRepository.fetchStepsData(0) 
-         val hr = dataRepository.fetchLastHeartRate()
+         val (steps, hr) = runBlocking {
+             dataRepository.fetchStepsData(0) to dataRepository.fetchLastHeartRate()
+         }
          return RealTimeActivity(steps, hr)
     }
 

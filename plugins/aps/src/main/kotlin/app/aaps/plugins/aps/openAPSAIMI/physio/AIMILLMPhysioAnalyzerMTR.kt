@@ -132,7 +132,7 @@ class AIMILLMPhysioAnalyzerMTR @Inject constructor(
         }
         
         return try {
-            runBlocking {
+            runBlocking(Dispatchers.IO) {
                 withTimeout(TIMEOUT_MS) {
                     withContext(Dispatchers.IO) {
                         when (provider) {

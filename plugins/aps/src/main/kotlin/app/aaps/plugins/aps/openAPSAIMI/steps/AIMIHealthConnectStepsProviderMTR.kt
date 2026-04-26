@@ -102,7 +102,7 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
             val client = healthConnectClient ?: return false
             
             // Check if permission is granted (simplified - actual permission check happens at request time)
-            runBlocking {
+            runBlocking(Dispatchers.IO) {
                 try {
                     client.permissionController.getGrantedPermissions().isNotEmpty()
                 } catch (e: Exception) {
@@ -144,7 +144,7 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
         
         aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Querying Health Connect: $startTime to $endTime ({$windowMinutes}min)")
         
-        return runBlocking {
+        return runBlocking(Dispatchers.IO) {
             try {
                 val request = ReadRecordsRequest(
                     recordType = StepsRecord::class,

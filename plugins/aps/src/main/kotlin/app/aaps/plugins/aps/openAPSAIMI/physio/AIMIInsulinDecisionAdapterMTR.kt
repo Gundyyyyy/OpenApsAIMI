@@ -10,6 +10,7 @@ import app.aaps.plugins.aps.openAPSAIMI.physio.KernelType
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -418,7 +419,7 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
         
         // Check therapy events for hypo treatments
         try {
-            val events = runBlocking {
+            val events = runBlocking(Dispatchers.IO) {
                 persistenceLayer.getTherapyEventDataFromTime(
                     now - RECENT_HYPO_WINDOW_MS,
                     TE.Type.NOTE,
@@ -458,7 +459,7 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
      */
     fun getRealTimeActivity(): RealTimeActivity {
          // Graceful fallback if repo fail (returns 0)
-         val (steps, hr) = runBlocking {
+         val (steps, hr) = runBlocking(Dispatchers.IO) {
              dataRepository.fetchStepsData(0) to dataRepository.fetchLastHeartRate()
          }
          return RealTimeActivity(steps, hr)

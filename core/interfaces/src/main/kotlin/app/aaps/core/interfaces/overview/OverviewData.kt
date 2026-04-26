@@ -6,6 +6,7 @@ import androidx.annotation.DrawableRes
 import app.aaps.core.data.model.GV
 import app.aaps.core.interfaces.graph.Scale
 import app.aaps.core.interfaces.graph.SeriesData
+import app.aaps.core.interfaces.overview.graph.BgDataPoint
 
 interface OverviewData {
 
@@ -49,6 +50,12 @@ interface OverviewData {
     var bucketedGraphSeries: SeriesData
     var bgReadingGraphSeries: SeriesData
     var predictionsGraphSeries: SeriesData
+
+    /**
+     * Refreshes the legacy GraphView prediction series from [PreparePredictionsWorker] output.
+     * The Compose/Vico path uses [app.aaps.core.interfaces.overview.graph.OverviewDataCache.predictionsFlow] separately.
+     */
+    fun replacePredictionGraphSeriesFromWorker(points: List<BgDataPoint>)
 
     val basalScale: Scale
     var baseBasalGraphSeries: SeriesData

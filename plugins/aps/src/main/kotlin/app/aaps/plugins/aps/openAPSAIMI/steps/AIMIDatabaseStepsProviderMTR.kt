@@ -42,7 +42,7 @@ class AIMIDatabaseStepsProviderMTR @Inject constructor(
         val searchStartMs = windowStartMs - SEARCH_WINDOW_BUFFER_MS // Add buffer for delayed data
         
         return try {
-            val allStepsCounts = runBlocking {
+            val allStepsCounts = runBlocking(Dispatchers.IO) {
                 persistenceLayer.getStepsCountFromTimeToTime(searchStartMs, nowMs)
             }
             
@@ -83,7 +83,7 @@ class AIMIDatabaseStepsProviderMTR @Inject constructor(
         return try {
             val now = System.currentTimeMillis()
             val searchStart = now - 210 * 60 * 1000L // Last 3.5 hours
-            val allSteps = runBlocking {
+            val allSteps = runBlocking(Dispatchers.IO) {
                 persistenceLayer.getStepsCountFromTimeToTime(searchStart, now)
             }
             

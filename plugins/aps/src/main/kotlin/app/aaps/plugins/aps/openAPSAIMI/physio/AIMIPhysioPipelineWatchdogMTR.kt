@@ -6,8 +6,6 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.plugins.aps.openAPSAIMI.steps.AIMIHealthConnectSyncServiceMTR
 import app.aaps.plugins.aps.openAPSAIMI.steps.UnifiedActivityProviderMTR
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 

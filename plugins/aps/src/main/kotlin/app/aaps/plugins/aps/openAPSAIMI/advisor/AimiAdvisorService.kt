@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.openAPSAIMI.advisor
 
 import android.content.Context
 import app.aaps.core.interfaces.profile.EffectiveProfile
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlin.math.roundToInt
 import app.aaps.plugins.aps.R
@@ -116,7 +117,7 @@ class AimiAdvisorService {
         val orefWindowDays = periodDays.toLong().coerceIn(1, OrefLocalPipeline.MAX_HISTORY_DAYS_FOR_MEMORY)
         val personalOrefMl = preferences?.get(BooleanKey.OApsAIMIAdvisorPersonalOrefMl) == true
         val orefInsight = if (persistenceLayer != null) {
-            runBlocking {
+            runBlocking(Dispatchers.IO) {
                 try {
                     OrefLocalPipeline(persistenceLayer).run(
                         profileSnapshot = context.profile,
@@ -171,7 +172,7 @@ class AimiAdvisorService {
         val metrics = calculateMetrics(periodDays)
 
         // 2. Snapshot Profile
-        val profile = runBlocking { profileFunction.getProfile() }
+        val profile = runBlocking(Dispatchers.IO) { profileFunction.getProfile() }
         val profileSnapshot = if (profile != null) {
             val totalBasalCalc = (0 until 24).sumOf { h -> profile.getBasal((h * 3600).toLong()) }
             val dia = (profile as? EffectiveProfile)?.iCfg?.dia ?: 5.0
@@ -242,7 +243,7 @@ class AimiAdvisorService {
         return if (totalDuration > 0) totalWeightedValue / totalDuration else 0.0
     }
 
-    private fun calculateMetrics(days: Int): AdvisorMetrics = runBlocking {
+    private fun calculateMetrics(days: Int): AdvisorMetrics = runBlocking(Dispatchers.IO) {
         // Fallback defaults
         var tir70_180 = 0.65
         var tir70_140 = 0.40
@@ -895,7 +896,7 @@ class AimiAdvisorService {
 
     fun generateBasalProfileProposal(periodDays: Int = 7): BasalProfileProposal {
         val metrics = calculateMetrics(periodDays)
-        val profile = profileFunction?.let { runBlocking { it.getProfile() } }
+        val profile = profileFunction?.let { runBlocking(Dispatchers.IO) { it.getProfile() } }
         if (profile == null) {
             return BasalProfileProposal(
                 generatedAt = System.currentTimeMillis(),
@@ -1050,7 +1051,7 @@ class AimiAdvisorService {
             val fromTime = now - (periodDays * 24 * 3600 * 1000L)
             
             val bgReadings = try {
-                runBlocking {
+                runBlocking(Dispatchers.IO) {
                     persistenceLayer.getBgReadingsDataFromTimeToTime(fromTime, now, false)
                 }.map { it.value }
                     .filter { it > 30.0 }
@@ -1060,7 +1061,7 @@ class AimiAdvisorService {
             
             // 2. Build Context
             val metrics = calculateMetrics(periodDays)
-            val profile = profileFunction?.let { runBlocking { it.getProfile() } }
+            val profile = profileFunction?.let { runBlocking(Dispatchers.IO) { it.getProfile() } }
             val isf = profile?.getIsfMgdlTimeFromMidnight(0) ?: 40.0 // Default or specific logic needed to get specific ISF
             
             // Dummy Physio Manager (No access to instance here easily without DI)

@@ -11,7 +11,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /**
  * Trajectory History Provider
@@ -51,7 +51,7 @@ class TrajectoryHistoryProvider @Inject constructor(
      * activity fallback use [InsulinWeibullCurve] (same kernel as [app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActionProfiler]) (RFC C.2).
      * @return List of PhaseSpaceState (oldest first)
      */
-    fun buildHistory(
+    suspend fun buildHistory(
         nowMillis: Long,
         historyMinutes: Int = DEFAULT_HISTORY_MINUTES,
         currentBg: Double,
@@ -64,7 +64,7 @@ class TrajectoryHistoryProvider @Inject constructor(
         cobNow: Double = 0.0,
         effectiveProfile: EffectiveProfile? = null,
         historicalInsulinPeakMinutes: Int? = null,
-    ): List<PhaseSpaceState> = runBlocking(Dispatchers.Default) {
+    ): List<PhaseSpaceState> = withContext(Dispatchers.Default) {
 
         val history = mutableListOf<PhaseSpaceState>()
         val fromMillis = nowMillis - (historyMinutes * 60_000L)
@@ -79,7 +79,7 @@ class TrajectoryHistoryProvider @Inject constructor(
 
             if (filteredBgReadings.isEmpty()) {
                 aapsLogger.warn(LTag.APS, "TrajectoryHistory: No BG readings found in last $historyMinutes min")
-                return@runBlocking listOf(
+                return@withContext listOf(
                     createCurrentState(
                         nowMillis, currentBg, currentDelta, currentAccel,
                         insulinActivityNow, iobNow, pkpdStage, timeSinceLastBolus, cobNow
@@ -187,7 +187,7 @@ class TrajectoryHistoryProvider @Inject constructor(
             
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "Error building trajectory history: ${e.message}")
-            return@runBlocking listOf(
+            return@withContext listOf(
                 createCurrentState(
                     nowMillis, currentBg, currentDelta, currentAccel,
                     insulinActivityNow, iobNow, pkpdStage, timeSinceLastBolus, cobNow

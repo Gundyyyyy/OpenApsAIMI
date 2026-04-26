@@ -16,6 +16,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
  * 🎛️ AIMI Physiological Manager - MTR Implementation
@@ -90,7 +92,7 @@ class AIMIPhysioManagerMTR @Inject constructor(
 
         Thread {
             try {
-                kotlinx.coroutines.runBlocking {
+                runBlocking(Dispatchers.IO) {
                     pipelineWatchdog.runCheckAndRecover()
                 }
             } catch (e: Exception) {
@@ -251,7 +253,7 @@ class AIMIPhysioManagerMTR @Inject constructor(
         
         Thread {
             try {
-                kotlinx.coroutines.runBlocking {
+                runBlocking(Dispatchers.IO) {
                     performUpdate(daysBack = 7, runLLM = true)
                 }
             } catch (e: Exception) {

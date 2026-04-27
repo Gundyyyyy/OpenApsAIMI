@@ -270,6 +270,18 @@ class LoopPlugin @Inject constructor(
 
     override suspend fun runningMode(): RM.Mode = runningModeRecord().mode
 
+    private fun isMainThread(): Boolean =
+        Looper.getMainLooper().thread == Thread.currentThread()
+
+    private suspend fun runningModePreCheckSuspend() {
+        runningModePreCheck()
+    }
+
+    private suspend fun refreshRunningModeSnapshotAfterPreCheck() {
+        runningModePreCheckSuspend()
+        runningModeSnapshot.set(persistenceLayer.getRunningModeActiveAt(dateUtil.now()))
+    }
+
     override suspend fun runningModeRecord(): RM {
         runningModePreCheck()
         return persistenceLayer.getRunningModeActiveAt(dateUtil.now())
@@ -1024,6 +1036,7 @@ class LoopPlugin @Inject constructor(
             )
         }
         val pump = activePlugin.activePump
+        val profile = runBlocking { profileFunction.getProfile() } ?: return
         if (config.APS) {
             if (pump.pumpDescription.tempBasalStyle == PumpDescription.ABSOLUTE) {
                 commandQueue.tempBasalAbsolute(0.0, durationInMinutes, true, profile, PumpSync.TemporaryBasalType.EMULATED_PUMP_SUSPEND, object : Callback() {

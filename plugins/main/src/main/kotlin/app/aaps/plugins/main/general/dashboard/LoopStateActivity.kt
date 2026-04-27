@@ -61,7 +61,7 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
             val (allowedModes, runningModeRecord, pumpDescription) = withContext(Dispatchers.Default) {
                 Triple(
                     loop.allowedNextModes(),
-                    loop.runningModeRecord,
+                    loop.runningModeRecord(),
                     activePlugin.activePump.pumpDescription
                 )
             }
@@ -74,7 +74,7 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
                 title: String,
                 iconRes: Int? = null,
                 composeIcon: AutomationIconData? = null,
-                onClick: () -> Unit
+                onClick: suspend () -> Unit
             ) {
                 val icon = when {
                     composeIcon != null -> rasterizeAutomationIconForViews(this@LoopStateActivity, composeIcon)
@@ -91,7 +91,7 @@ class LoopStateActivity : TranslatedDaggerAppCompatActivity() {
                             "${resourceHelper.gs(app.aaps.core.ui.R.string.confirm)}: $title",
                             Runnable {
                                 lifecycleScope.launch {
-                                    withContext(Dispatchers.Default) { onClick() }
+                                    onClick()
                                     finish()
                                 }
                             }

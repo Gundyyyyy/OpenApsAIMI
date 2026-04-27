@@ -697,7 +697,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
             R.id.active_profile       -> {
                 activity?.let { act ->
-                    if (loop.runningMode == RM.Mode.DISCONNECTED_PUMP)
+                    if (runBlocking { loop.runningMode() } == RM.Mode.DISCONNECTED_PUMP)
                         OKDialog.show(act, rh.gs(R.string.not_available_full), rh.gs(R.string.smscommunicator_pump_disconnected))
                     else
                         protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
@@ -720,7 +720,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             profileFunction.getProfileName()
             iobCobCalculator.ads.actualBg()
             var list = ""
-            val runningMode = withContext(Dispatchers.IO) { loop.runningMode }
+            val runningMode = withContext(Dispatchers.IO) { loop.runningMode() }
 
             // **** Temp button ****
             val lastRun = loop.lastRun
@@ -788,7 +788,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
     private fun processAps() {
         val pump = activePlugin.activePump
         suspend fun readLoopUiInputs(): Pair<RM.Mode, Int> {
-            val mode = loop.runningMode
+            val mode = loop.runningMode()
             val mins = loop.minutesToEndOfSuspend()
             return mode to mins
         }

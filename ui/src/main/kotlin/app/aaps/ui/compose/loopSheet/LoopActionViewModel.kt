@@ -67,7 +67,7 @@ class LoopActionViewModel @Inject constructor(
         val pump = activePlugin.activePump
         val profile = profileFunction.getProfile()
         val lastRun = loop.lastRun
-        val runningMode = withContext(Dispatchers.IO) { loop.runningMode }
+        val runningMode = withContext(Dispatchers.IO) { loop.runningMode() }
 
         val resultAvailable = lastRun != null &&
             (lastRun.lastOpenModeAccept == 0L || lastRun.lastOpenModeAccept < lastRun.lastAPSRun) &&

@@ -663,8 +663,8 @@ class OverviewViewModel(
             deltaText = deltaText,
             iobText = iobText,
             cobText = cobText,
-            loopStatusText = loopStatusText(loop.runningMode),
-            loopIsRunning = !loop.runningMode.isSuspended(),
+            loopStatusText = loopStatusText(loop.runningMode()),
+            loopIsRunning = !loop.runningMode().isSuspended(),
             timeAgo = timeAgo,
             timeAgoDescription = timeAgoLong,
             isGlucoseActual = DashboardCoherentGlucose.isDisplayActual(

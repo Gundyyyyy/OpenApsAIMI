@@ -587,18 +587,26 @@ class OverviewViewModel(
                 ?: stepsList.firstOrNull { isHealthConnect(it.device) }?.device
                 ?: stepsList.firstOrNull { isPhone(it.device) }?.device
 
-            val totalSteps = if (bestSource != null) {
+            fun dedupedTotalForDevice(device: String): Double =
                 stepsList
                     .asSequence()
-                    .filter { it.device == bestSource }
-                    // Wear can send multiple window records (5/10/15/30/60/180) with the same timestamp.
-                    // Deduplicate by timestamp so each 5-minute bucket is counted once.
-                    .groupBy { it.timestamp }
+                    .filter { it.device == device }
+                    // Deduplicate on 5-minute buckets: wear retries and multi-window payloads
+                    // can create multiple rows for the same logical interval.
+                    .groupBy { it.timestamp / (5 * 60 * 1000L) }
                     .values
                     .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
                     .toDouble()
-            } else {
-                0.0
+
+            val healthConnectTotal = stepsList
+                .firstOrNull { isHealthConnect(it.device) }
+                ?.let { dedupedTotalForDevice("HealthConnect") }
+                ?: 0.0
+
+            val totalSteps = when {
+                healthConnectTotal > 0.0 -> healthConnectTotal
+                bestSource != null -> dedupedTotalForDevice(bestSource)
+                else -> 0.0
             }
 
             stepsText = when {

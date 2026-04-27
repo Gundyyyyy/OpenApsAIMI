@@ -78,10 +78,10 @@ class UnifiedActivityProviderMTR @Inject constructor(
             if (records.isEmpty()) return null
             
             // Separate by source
-            val garminRecord = records.firstOrNull { it.device == SOURCE_GARMIN }
-            val wearRecord = records.firstOrNull { isWearDevice(it.device) }
-            val hcRecord = records.firstOrNull { it.device == SOURCE_HC }
-            val phoneRecord = records.firstOrNull { it.device == SOURCE_PHONE }
+            val garminRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_GARMIN })
+            val wearRecord = selectLatestDeltaRecord(records.filter { isWearDevice(it.device) })
+            val hcRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_HC })
+            val phoneRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_PHONE })
             
             return when (mode) {
                 MODE_PREFER_WEAR -> {
@@ -145,8 +145,12 @@ class UnifiedActivityProviderMTR @Inject constructor(
 
             if (filtered.isEmpty()) return null
 
-            // WICHTIG: nur Delta-Felder summieren
-            val totalSteps = filtered.sumOf { it.steps5min }
+            // Sum one value per logical 5-minute bucket to avoid overcounting
+            // when multiple rows exist for the same interval (wear multi-window/retries).
+            val totalSteps = filtered
+                .groupBy { it.timestamp / (5 * 60 * 1000L) }
+                .values
+                .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
 
             StepsResult(
                 steps = totalSteps,
@@ -223,5 +227,11 @@ class UnifiedActivityProviderMTR @Inject constructor(
             timestamp = hr.timestamp,
             source = hr.device
         )
+    }
+
+    private fun selectLatestDeltaRecord(records: List<SC>): SC? {
+        if (records.isEmpty()) return null
+        // Prefer 5-minute rows when available (true interval signal for AIMI activity gating).
+        return records.firstOrNull { it.duration in 299_000L..301_000L } ?: records.first()
     }
 }

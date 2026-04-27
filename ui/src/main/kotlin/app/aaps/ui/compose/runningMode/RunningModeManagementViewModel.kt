@@ -65,14 +65,9 @@ class RunningModeManagementViewModel @Inject constructor(
     fun loadState() {
         viewModelScope.launch {
             try {
-                // LoopPlugin.runningModeRecord / allowedNextModes use runBlocking(DB); never call from Main.
-                val (runningModeRecord, allowedModes, pumpDescription) = withContext(Dispatchers.Default) {
-                    Triple(
-                        loop.runningModeRecord,
-                        loop.allowedNextModes(),
-                        activePlugin.activePump.pumpDescription
-                    )
-                }
+                val runningModeRecord = withContext(Dispatchers.IO) { loop.runningModeRecord() }
+                val allowedModes = withContext(Dispatchers.IO) { loop.allowedNextModes() }
+                val pumpDescription = activePlugin.activePump.pumpDescription
                 val currentMode = runningModeRecord.mode
 
                 _uiState.update {

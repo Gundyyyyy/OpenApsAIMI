@@ -89,8 +89,9 @@ class LocationService : DaggerService() {
             stopSelf()
             return START_NOT_STICKY
         }
+        aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
+        // Even with permissions granted, the system can still reject the FGS-location promotion.
         try {
-            aapsLogger.debug("Starting LocationService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     notificationHolder.notificationID,
@@ -100,19 +101,26 @@ class LocationService : DaggerService() {
             } else {
                 startForeground(notificationHolder.notificationID, notificationHolder.notification)
             }
+        } catch (e: SecurityException) {
+            aapsLogger.error(LTag.LOCATION, "FGS-location start denied by system, stopping", e)
+            stopSelf()
+            return START_NOT_STICKY
         } catch (e: Exception) {
             aapsLogger.error(LTag.LOCATION, "Failed to start foreground service: ${e.message}", e)
-            try {
-                startForeground(4711, Notification())
-            } catch (_: Exception) {
-            }
+            stopSelf()
+            return START_NOT_STICKY
         }
         return START_STICKY
     }
 
-    private fun hasLocationPermission(): Boolean =
-        ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    private fun hasLocationPermission(): Boolean {
+        val hasFineOrCoarse =
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasBackground =
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+        return hasFineOrCoarse && hasBackground
+    }
 
     override fun onCreate() {
         super.onCreate()

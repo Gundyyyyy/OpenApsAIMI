@@ -598,16 +598,16 @@ class OverviewViewModel(
                     .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
                     .toDouble()
 
-            val healthConnectTotal = stepsList
-                .firstOrNull { isHealthConnect(it.device) }
-                ?.let { dedupedTotalForDevice("HealthConnect") }
-                ?: 0.0
+            val totalsByDevice = stepsList
+                .asSequence()
+                .mapNotNull { it.device.takeUnless(String::isNullOrBlank) }
+                .distinct()
+                .associateWith { dedupedTotalForDevice(it) }
 
-            val totalSteps = when {
-                healthConnectTotal > 0.0 -> healthConnectTotal
-                bestSource != null -> dedupedTotalForDevice(bestSource)
-                else -> 0.0
-            }
+            val totalSteps = totalsByDevice
+                .values
+                .maxOrNull()
+                ?: if (bestSource != null) dedupedTotalForDevice(bestSource) else 0.0
 
             stepsText = when {
                 stepsList.isEmpty() -> "--"

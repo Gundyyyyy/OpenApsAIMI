@@ -591,7 +591,11 @@ class OverviewViewModel(
                 stepsList
                     .asSequence()
                     .filter { it.device == bestSource }
-                    .sumOf { it.steps5min.coerceAtLeast(0) }
+                    // Wear can send multiple window records (5/10/15/30/60/180) with the same timestamp.
+                    // Deduplicate by timestamp so each 5-minute bucket is counted once.
+                    .groupBy { it.timestamp }
+                    .values
+                    .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
                     .toDouble()
             } else {
                 0.0

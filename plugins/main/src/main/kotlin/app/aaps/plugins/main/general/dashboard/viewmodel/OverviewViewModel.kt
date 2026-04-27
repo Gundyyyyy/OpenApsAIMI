@@ -572,26 +572,29 @@ class OverviewViewModel(
                 a1c = (mean + 46.7) / 28.7
             }
             
-            // --- Steps (Integration of rolling windows) ---
+            // --- Steps (Today) ---
+            // Select one source deterministically to avoid mixing overlapping streams.
             val stepsList = persistenceLayer.getStepsCountFromTimeToTime(from, now).sortedBy { it.timestamp }
-            var totalSteps = 0.0
-            var lastTimestamp = from
+            fun isGarmin(device: String?): Boolean = device == "Garmin-Watchface"
+            fun isHealthConnect(device: String?): Boolean = device == "HealthConnect"
+            fun isPhone(device: String?): Boolean = device == "PhoneSensor"
+            fun isWear(device: String?): Boolean =
+                !device.isNullOrBlank() && !isGarmin(device) && !isHealthConnect(device) && !isPhone(device)
 
-            stepsList.forEach { sc ->
-                if (sc.duration > 0 && sc.steps5min > 0) {
-                    val dt = (sc.timestamp - lastTimestamp).coerceAtLeast(0)
-                    if (dt > 0) {
-                        // Calculate rate (steps per ms)
-                        val rate = sc.steps5min.toDouble() / sc.duration
-                        // Determine meaningful time window (handle overlaps vs gaps)
-                        // If dt < duration (overlap), we integrate over dt.
-                        // If dt >= duration (gap), we integrate over duration (full record) and assume 0 for the gap.
-                        val coveredDuration = java.lang.Math.min(dt, sc.duration)
-                        
-                        totalSteps += rate * coveredDuration
-                    }
-                }
-                lastTimestamp = java.lang.Math.max(lastTimestamp, sc.timestamp)
+            val bestSource = stepsList
+                .firstOrNull { isWear(it.device) }?.device
+                ?: stepsList.firstOrNull { isGarmin(it.device) }?.device
+                ?: stepsList.firstOrNull { isHealthConnect(it.device) }?.device
+                ?: stepsList.firstOrNull { isPhone(it.device) }?.device
+
+            val totalSteps = if (bestSource != null) {
+                stepsList
+                    .asSequence()
+                    .filter { it.device == bestSource }
+                    .sumOf { it.steps5min.coerceAtLeast(0) }
+                    .toDouble()
+            } else {
+                0.0
             }
 
             stepsText = when {

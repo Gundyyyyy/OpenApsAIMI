@@ -628,14 +628,16 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                     if ((loop as PluginBase).isEnabled()) {
                         val lastRun = loop.lastRun
                         loop.invoke("Accept temp button", false)
-                        if (lastRun?.lastAPSRun != null && lastRun.constraintsProcessed?.isChangeRequested == true) {
+                        val changeRequested = lastRun?.constraintsProcessed?.isChangeRequested() == true
+                        val resultHtml = lastRun?.constraintsProcessed?.resultAsHtmlString().orEmpty()
+                        if (lastRun?.lastAPSRun != null && changeRequested) {
                             protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
                                 if (result != ProtectionResult.GRANTED) return@requestProtection
                                 if (!isAdded) return@requestProtection
                                 uiInteraction.showOkCancelDialog(
                                     context = requireActivity(),
                                     title = rh.gs(app.aaps.core.ui.R.string.tempbasal_label),
-                                    message = lastRun.constraintsProcessed?.resultAsHtmlString() ?: "",
+                                    message = resultHtml,
                                     ok = {
                                         uel.log(Action.ACCEPTS_TEMP_BASAL, Sources.Overview)
                                         (context?.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager?)?.cancel(Constants.notificationID)
@@ -697,7 +699,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
             R.id.active_profile       -> {
                 activity?.let { act ->
-                    if (loop.runningMode == RM.Mode.DISCONNECTED_PUMP)
+                    if (runBlocking { loop.runningMode() } == RM.Mode.DISCONNECTED_PUMP)
                         OKDialog.show(act, rh.gs(R.string.not_available_full), rh.gs(R.string.smscommunicator_pump_disconnected))
                     else
                         protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
@@ -720,14 +722,16 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
             profileFunction.getProfileName()
             iobCobCalculator.ads.actualBg()
             var list = ""
-            val runningMode = withContext(Dispatchers.IO) { loop.runningMode }
+            val runningMode = withContext(Dispatchers.IO) { loop.runningMode() }
 
             // **** Temp button ****
             val lastRun = loop.lastRun
+            val changeRequested = lastRun?.constraintsProcessed?.isChangeRequested() == true
+            val resultString = lastRun?.constraintsProcessed?.resultAsString().orEmpty()
             val resultAvailable =
                 lastRun != null &&
                     (lastRun.lastOpenModeAccept == 0L || lastRun.lastOpenModeAccept < lastRun.lastAPSRun) &&// never accepted or before last result
-                    lastRun.constraintsProcessed?.isChangeRequested == true // change is requested
+                    changeRequested // change is requested
 
             val events = automation.userEvents()
             val runnableEvents = withContext(Dispatchers.IO) {
@@ -738,7 +742,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                 _binding ?: return@runOnUiThread
                 if (resultAvailable && pump.isInitialized() && runningMode == RM.Mode.OPEN_LOOP && (loop as PluginBase).isEnabled()) {
                     binding.buttonsLayout.acceptTempButton.visibility = View.VISIBLE
-                    binding.buttonsLayout.acceptTempButton.text = "${rh.gs(R.string.set_basal_question)}\n${lastRun.constraintsProcessed?.resultAsString()}"
+                    binding.buttonsLayout.acceptTempButton.text = "${rh.gs(R.string.set_basal_question)}\n$resultString"
                 } else {
                     binding.buttonsLayout.acceptTempButton.visibility = View.GONE
                 }
@@ -788,7 +792,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
     private fun processAps() {
         val pump = activePlugin.activePump
         suspend fun readLoopUiInputs(): Pair<RM.Mode, Int> {
-            val mode = loop.runningMode
+            val mode = loop.runningMode()
             val mins = loop.minutesToEndOfSuspend()
             return mode to mins
         }

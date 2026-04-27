@@ -107,7 +107,7 @@ class SafetyPlugin @Inject constructor(
         return value
     }
 
-    override fun isClosedLoopAllowed(value: Constraint<Boolean>): Constraint<Boolean> {
+    override suspend fun isClosedLoopAllowed(value: Constraint<Boolean>): Constraint<Boolean> {
         if (!config.isEngineeringModeOrRelease()) {
             if (value.value()) {
                 notificationManager.post(NotificationId.TOAST_ALARM, R.string.closed_loop_disabled_on_dev_branch, level = NotificationLevel.NORMAL)
@@ -122,15 +122,14 @@ class SafetyPlugin @Inject constructor(
         return value
     }
 
-    override fun isSMBModeEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
+    override suspend fun isSMBModeEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
         val closedLoop = constraintChecker.isClosedLoopAllowed()
         if (!closedLoop.value()) value.set(false, rh.gs(R.string.smbnotallowedinopenloopmode), this)
         return value
     }
 
-    override fun isAdvancedFilteringEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
-        val advancedFiltering = iobCobCalculator.ads.lastBg()?.sourceSensor?.advancedFilteringSupported() ?: false
-        if (!advancedFiltering) value.set(false, rh.gs(R.string.smbalwaysdisabled), this)
+    override suspend fun isAdvancedFilteringEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
+        if (!persistenceLayer.isAdvancedFilteringSupported()) value.set(false, rh.gs(R.string.smbalwaysdisabled), this)
         return value
     }
 

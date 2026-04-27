@@ -82,7 +82,7 @@ class ManageViewModel @Inject constructor(
     fun refreshState() {
         viewModelScope.launch {
             // LoopPlugin.runningMode / runningModeRecord use runBlocking(DB) + preCheck — never invoke from Main.
-            val runningMode = withContext(Dispatchers.IO) { loop.runningMode }
+            val runningMode = withContext(Dispatchers.IO) { loop.runningMode() }
             val profile = profileFunction.getProfile()
             val pump = activePlugin.activePump
             val pumpDescription = pump.pumpDescription

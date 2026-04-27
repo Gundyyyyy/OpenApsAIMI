@@ -111,8 +111,8 @@ class SafetyPluginTest : TestBaseWithProfile() {
     }
 
     @Test
-    fun disabledEngineeringModeShouldLimitClosedLoop() {
-        whenever(loop.runningMode).thenReturn(RM.Mode.CLOSED_LOOP)
+    fun disabledEngineeringModeShouldLimitClosedLoop() = runTest {
+        whenever(loop.runningMode()).thenReturn(RM.Mode.CLOSED_LOOP)
         whenever(config.isEngineeringModeOrRelease()).thenReturn(false)
         val c = safetyPlugin.isClosedLoopAllowed(ConstraintObject(true, aapsLogger))
         assertThat(c.getReasons()).contains("Running dev version. Closed loop is disabled.")
@@ -120,7 +120,7 @@ class SafetyPluginTest : TestBaseWithProfile() {
     }
 
     @Test
-    fun notEnabledSMBInPreferencesDisablesSMB() {
+    fun notEnabledSMBInPreferencesDisablesSMB() = runTest {
         whenever(preferences.get(BooleanKey.ApsUseSmb)).thenReturn(false)
         whenever(constraintChecker.isClosedLoopAllowed(anyOrNull())).thenReturn(ConstraintObject(true, aapsLogger))
         val c = openAPSSMBPlugin.isSMBModeEnabled(ConstraintObject(true, aapsLogger))
@@ -129,7 +129,7 @@ class SafetyPluginTest : TestBaseWithProfile() {
     }
 
     @Test
-    fun openLoopPreventsSMB() {
+    fun openLoopPreventsSMB() = runTest {
         whenever(preferences.get(BooleanKey.ApsUseSmb)).thenReturn(true)
         whenever(constraintChecker.isClosedLoopAllowed()).thenReturn(ConstraintObject(false, aapsLogger))
         val c = safetyPlugin.isSMBModeEnabled(ConstraintObject(true, aapsLogger))
@@ -272,12 +272,12 @@ Safety: Limiting max basal rate to 500.00 U/h because of pump limit
     }
 
     @Test
-    fun iobShouldBeLimited() {
+    fun iobShouldBeLimited() = runTest {
         openAPSAMAPlugin.setPluginEnabledBlocking(PluginType.APS, true)
         openAPSSMBPlugin.setPluginEnabledBlocking(PluginType.APS, true)
         //whenever(openAPSSMBPlugin.isEnabled()).thenReturn(true)
         //whenever(openAPSAMAPlugin.isEnabled()).thenReturn(false)
-        whenever(loop.runningMode).thenReturn(RM.Mode.CLOSED_LOOP_LGS)
+        whenever(loop.runningMode()).thenReturn(RM.Mode.CLOSED_LOOP_LGS)
         whenever(preferences.get(DoubleKey.ApsAmaMaxIob)).thenReturn(1.5)
         whenever(preferences.get(DoubleKey.ApsSmbMaxIob)).thenReturn(3.0)
         whenever(preferences.get(StringKey.SafetyAge)).thenReturn("teenage")

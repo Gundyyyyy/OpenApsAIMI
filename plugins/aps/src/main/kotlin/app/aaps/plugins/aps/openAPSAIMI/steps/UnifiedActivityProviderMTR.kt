@@ -49,6 +49,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
         // Known Source Identifiers
         private const val SOURCE_HC = "HealthConnect"
         private const val SOURCE_PHONE = "PhoneSensor"
+        private const val SOURCE_GARMIN = "Garmin-Watchface"
         
         /**
          * Static helper to get mode from any component context
@@ -77,21 +78,24 @@ class UnifiedActivityProviderMTR @Inject constructor(
             if (records.isEmpty()) return null
             
             // Separate by source
-            val wearRecord = records.firstOrNull { isWearDevice(it.device) }
-            val hcRecord = records.firstOrNull { it.device == SOURCE_HC }
-            val phoneRecord = records.firstOrNull { it.device == SOURCE_PHONE }
+            val garminRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_GARMIN })
+            val wearRecord = selectLatestDeltaRecord(records.filter { isWearDevice(it.device) })
+            val hcRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_HC })
+            val phoneRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_PHONE })
             
             return when (mode) {
                 MODE_PREFER_WEAR -> {
-                    // Strict Wear OS preference (no fallback to HC/Phone)
+                    // Strict Wear OS preference; fallback to Garmin only if no wear sample is available
                     wearRecord?.let { toStepsResult(it) }
+                        ?: garminRecord?.let { toStepsResult(it) }
                 }
                 MODE_HEALTH_CONNECT_ONLY -> {
                     hcRecord?.let { toStepsResult(it) }
                 }
                 MODE_AUTO_FALLBACK -> {
-                    // Priority: Wear > HC > Phone
-                    wearRecord?.let { toStepsResult(it) } 
+                    // Priority: Garmin > Wear > HC > Phone
+                    garminRecord?.let { toStepsResult(it) }
+                        ?: wearRecord?.let { toStepsResult(it) }
                         ?: hcRecord?.let { toStepsResult(it) }
                         ?: phoneRecord?.let { toStepsResult(it) }
                 }
@@ -121,21 +125,32 @@ class UnifiedActivityProviderMTR @Inject constructor(
             val filtered = when (mode) {
                 MODE_PREFER_WEAR ->
                     records.filter { isWearDevice(it.device) }
+                        .ifEmpty { records.filter { it.device == SOURCE_GARMIN } }
 
                 MODE_HEALTH_CONNECT_ONLY ->
                     records.filter { it.device == SOURCE_HC }
 
                 MODE_AUTO_FALLBACK -> {
+                    val garmin = records.filter { it.device == SOURCE_GARMIN }
                     val wear = records.filter { isWearDevice(it.device) }
-                    wear.ifEmpty { records.filter { it.device == SOURCE_HC || it.device == SOURCE_PHONE } }
+                    val hcPhone = records.filter { it.device == SOURCE_HC || it.device == SOURCE_PHONE }
+                    when {
+                        garmin.isNotEmpty() -> garmin
+                        wear.isNotEmpty() -> wear
+                        else -> hcPhone
+                    }
                 }
                 else -> emptyList()
             }
 
             if (filtered.isEmpty()) return null
 
-            // WICHTIG: nur Delta-Felder summieren
-            val totalSteps = filtered.sumOf { it.steps5min }
+            // Sum one value per logical 5-minute bucket to avoid overcounting
+            // when multiple rows exist for the same interval (wear multi-window/retries).
+            val totalSteps = filtered
+                .groupBy { it.timestamp / (5 * 60 * 1000L) }
+                .values
+                .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
 
             StepsResult(
                 steps = totalSteps,
@@ -191,7 +206,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
     
     private fun isWearDevice(device: String?): Boolean {
         if (device == null) return false
-        return device != SOURCE_HC && device != SOURCE_PHONE
+        return device != SOURCE_HC && device != SOURCE_PHONE && device != SOURCE_GARMIN
     }
     
     private fun toStepsResult(sc: SC): StepsResult {
@@ -212,5 +227,11 @@ class UnifiedActivityProviderMTR @Inject constructor(
             timestamp = hr.timestamp,
             source = hr.device
         )
+    }
+
+    private fun selectLatestDeltaRecord(records: List<SC>): SC? {
+        if (records.isEmpty()) return null
+        // Prefer 5-minute rows when available (true interval signal for AIMI activity gating).
+        return records.firstOrNull { it.duration in 299_000L..301_000L } ?: records.first()
     }
 }

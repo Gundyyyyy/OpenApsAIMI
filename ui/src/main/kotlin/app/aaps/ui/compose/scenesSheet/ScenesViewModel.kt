@@ -86,7 +86,7 @@ class ScenesViewModel @Inject constructor(
             val pump = activePlugin.activePump
             val profile = profileFunction.getProfile()
 
-            val isSuspended = withContext(Dispatchers.IO) { loop.runningMode.isSuspended() }
+            val isSuspended = withContext(Dispatchers.IO) { loop.runningMode().isSuspended() }
             if (isSuspended || !pump.isInitialized() || profile == null || config.isEnabled(ExternalOptions.SHOW_USER_ACTIONS_ON_WATCH_ONLY)) {
                 _uiState.update { it.copy(items = emptyList(), sceneItems = emptyList()) }
                 return@launch

@@ -572,27 +572,42 @@ class OverviewViewModel(
                 a1c = (mean + 46.7) / 28.7
             }
             
-            // --- Steps (Integration of rolling windows) ---
+            // --- Steps (Today) ---
+            // Select one source deterministically to avoid mixing overlapping streams.
             val stepsList = persistenceLayer.getStepsCountFromTimeToTime(from, now).sortedBy { it.timestamp }
-            var totalSteps = 0.0
-            var lastTimestamp = from
+            fun isGarmin(device: String?): Boolean = device == "Garmin-Watchface"
+            fun isHealthConnect(device: String?): Boolean = device == "HealthConnect"
+            fun isPhone(device: String?): Boolean = device == "PhoneSensor"
+            fun isWear(device: String?): Boolean =
+                !device.isNullOrBlank() && !isGarmin(device) && !isHealthConnect(device) && !isPhone(device)
 
-            stepsList.forEach { sc ->
-                if (sc.duration > 0 && sc.steps5min > 0) {
-                    val dt = (sc.timestamp - lastTimestamp).coerceAtLeast(0)
-                    if (dt > 0) {
-                        // Calculate rate (steps per ms)
-                        val rate = sc.steps5min.toDouble() / sc.duration
-                        // Determine meaningful time window (handle overlaps vs gaps)
-                        // If dt < duration (overlap), we integrate over dt.
-                        // If dt >= duration (gap), we integrate over duration (full record) and assume 0 for the gap.
-                        val coveredDuration = java.lang.Math.min(dt, sc.duration)
-                        
-                        totalSteps += rate * coveredDuration
-                    }
-                }
-                lastTimestamp = java.lang.Math.max(lastTimestamp, sc.timestamp)
-            }
+            val bestSource = stepsList
+                .firstOrNull { isWear(it.device) }?.device
+                ?: stepsList.firstOrNull { isGarmin(it.device) }?.device
+                ?: stepsList.firstOrNull { isHealthConnect(it.device) }?.device
+                ?: stepsList.firstOrNull { isPhone(it.device) }?.device
+
+            fun dedupedTotalForDevice(device: String): Double =
+                stepsList
+                    .asSequence()
+                    .filter { it.device == device }
+                    // Deduplicate on 5-minute buckets: wear retries and multi-window payloads
+                    // can create multiple rows for the same logical interval.
+                    .groupBy { it.timestamp / (5 * 60 * 1000L) }
+                    .values
+                    .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
+                    .toDouble()
+
+            val totalsByDevice = stepsList
+                .asSequence()
+                .mapNotNull { it.device.takeUnless(String::isNullOrBlank) }
+                .distinct()
+                .associateWith { dedupedTotalForDevice(it) }
+
+            val totalSteps = totalsByDevice
+                .values
+                .maxOrNull()
+                ?: if (bestSource != null) dedupedTotalForDevice(bestSource) else 0.0
 
             stepsText = when {
                 stepsList.isEmpty() -> "--"
@@ -660,8 +675,8 @@ class OverviewViewModel(
             deltaText = deltaText,
             iobText = iobText,
             cobText = cobText,
-            loopStatusText = loopStatusText(loop.runningMode),
-            loopIsRunning = !loop.runningMode.isSuspended(),
+            loopStatusText = loopStatusText(loop.runningMode()),
+            loopIsRunning = !loop.runningMode().isSuspended(),
             timeAgo = timeAgo,
             timeAgoDescription = timeAgoLong,
             isGlucoseActual = DashboardCoherentGlucose.isDisplayActual(

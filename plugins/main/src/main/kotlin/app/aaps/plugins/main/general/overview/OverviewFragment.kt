@@ -129,7 +129,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -699,12 +698,15 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
             R.id.active_profile       -> {
                 activity?.let { act ->
-                    if (runBlocking { loop.runningMode() } == RM.Mode.DISCONNECTED_PUMP)
-                        OKDialog.show(act, rh.gs(R.string.not_available_full), rh.gs(R.string.smscommunicator_pump_disconnected))
-                    else
-                        protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
-                            if (result == ProtectionResult.GRANTED && isAdded) uiInteraction.openProfileActivationScreen(act, 0)
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        if (loop.runningMode() == RM.Mode.DISCONNECTED_PUMP) {
+                            OKDialog.show(act, rh.gs(R.string.not_available_full), rh.gs(R.string.smscommunicator_pump_disconnected))
+                        } else {
+                            protectionCheck.requestProtection(ProtectionCheck.Protection.BOLUS) { result ->
+                                if (result == ProtectionResult.GRANTED && isAdded) uiInteraction.openProfileActivationScreen(act, 0)
+                            }
                         }
+                    }
                 }
                 return true
             }
@@ -1274,12 +1276,12 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
     }
 
     private fun updateExtendedBolus() {
-        val pump = activePlugin.activePump
-        val extendedBolus = runBlocking { persistenceLayer.getExtendedBolusActiveAt(dateUtil.now()) }
-        val extendedBolusText = overviewData.extendedBolusText()
-        val extendedBolusDialogText = overviewData.extendedBolusDialogText()
-        runOnUiThread {
-            _binding ?: return@runOnUiThread
+        viewLifecycleOwner.lifecycleScope.launch {
+            val pump = activePlugin.activePump
+            val extendedBolus = withContext(Dispatchers.IO) { persistenceLayer.getExtendedBolusActiveAt(dateUtil.now()) }
+            val extendedBolusText = overviewData.extendedBolusText()
+            val extendedBolusDialogText = overviewData.extendedBolusDialogText()
+            _binding ?: return@launch
             binding.infoLayout.extendedBolus.text = extendedBolusText
             binding.infoLayout.extendedLayout.setOnClickListener { activity?.let { uiInteraction.showOkDialog(context = it, title = rh.gs(app.aaps.core.ui.R.string.extended_bolus), message = extendedBolusDialogText) } }
             binding.infoLayout.extendedLayout.visibility = (extendedBolus != null && !pump.isFakingTempsByExtendedBoluses).toVisibility()
@@ -1315,23 +1317,20 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
         )
     }
 
-    private fun bolusIob(): IobTotal = runBlocking { iobCobCalculator.calculateIobFromBolus() }.round()
-    private fun basalIob(): IobTotal = runBlocking { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended() }.round()
-    private fun iobText(): String =
-        rh.gs(app.aaps.core.ui.R.string.format_insulin_units, bolusIob().iob + basalIob().basaliob)
-
-    private fun iobDialogText(): String =
-        rh.gs(app.aaps.core.ui.R.string.format_insulin_units, bolusIob().iob + basalIob().basaliob) + "\n" +
-            rh.gs(app.aaps.core.ui.R.string.bolus) + ": " + rh.gs(app.aaps.core.ui.R.string.format_insulin_units, bolusIob().iob) + "\n" +
-            rh.gs(app.aaps.core.ui.R.string.basal) + ": " + rh.gs(app.aaps.core.ui.R.string.format_insulin_units, basalIob().basaliob)
-
     private fun updateIobCob() {
-        val iobText = iobText()
-        val iobDialogText = iobDialogText()
-        val displayText = runBlocking { iobCobCalculator.getCobInfo("Overview COB") }.displayText(rh, decimalFormatter)
-        val lastCarbsTime = runBlocking { persistenceLayer.getNewestCarbs() }?.timestamp ?: 0L
-        runOnUiThread {
-            _binding ?: return@runOnUiThread
+        viewLifecycleOwner.lifecycleScope.launch {
+            val bolusIob = withContext(Dispatchers.IO) { iobCobCalculator.calculateIobFromBolus() }.round()
+            val basalIob = withContext(Dispatchers.IO) { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended() }.round()
+            val totalIob = bolusIob.iob + basalIob.basaliob
+            val iobText = rh.gs(app.aaps.core.ui.R.string.format_insulin_units, totalIob)
+            val iobDialogText =
+                rh.gs(app.aaps.core.ui.R.string.format_insulin_units, totalIob) + "\n" +
+                    rh.gs(app.aaps.core.ui.R.string.bolus) + ": " + rh.gs(app.aaps.core.ui.R.string.format_insulin_units, bolusIob.iob) + "\n" +
+                    rh.gs(app.aaps.core.ui.R.string.basal) + ": " + rh.gs(app.aaps.core.ui.R.string.format_insulin_units, basalIob.basaliob)
+            val displayText = withContext(Dispatchers.IO) { iobCobCalculator.getCobInfo("Overview COB") }.displayText(rh, decimalFormatter)
+            val lastCarbsTime = withContext(Dispatchers.IO) { persistenceLayer.getNewestCarbs() }?.timestamp ?: 0L
+
+            _binding ?: return@launch
             binding.infoLayout.iob.text = iobText
             binding.infoLayout.iobLayout.setOnClickListener { activity?.let { uiInteraction.showOkDialog(context = it, title = rh.gs(app.aaps.core.ui.R.string.iob), message = iobDialogText) } }
             // cob

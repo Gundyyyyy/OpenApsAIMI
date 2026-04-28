@@ -12,6 +12,11 @@ data class MealAggressionContext(
     val targetBgMgdl: Double? = null
 )
 
+data class PkpdBolusSample(
+    val ageMin: Double,
+    val units: Double
+)
+
 class PkPdIntegration(private val preferences: Preferences) {
 
     companion object {
@@ -38,6 +43,15 @@ class PkPdIntegration(private val preferences: Preferences) {
     private var damping: SmbDamping? = null
     private var lastTailPolicy: TailAwareSmbPolicy? = null
     private var lastPersisted: PkPdParams? = null
+    private var recentBolusSamples: List<PkpdBolusSample> = emptyList()
+
+    @Synchronized
+    fun setRecentBolusSamples(samples: List<PkpdBolusSample>) {
+        recentBolusSamples = samples
+            .asSequence()
+            .filter { it.units > 0.0 && it.ageMin.isFinite() && it.ageMin >= 0.0 }
+            .toList()
+    }
 @Synchronized
     fun computeRuntime(
         epochMillis: Long,
@@ -113,7 +127,12 @@ class PkPdIntegration(private val preferences: Preferences) {
         val params = estimator.params()
         persistStateIfNeeded(params, config.bounds)
         val tailFraction = estimator.iobResidualAt(windowMin.toDouble()).coerceIn(0.0, 1.0)
-        val activityState = estimator.activityStateAt(windowMin.toDouble())
+        val baselineActivityState = estimator.activityStateAt(windowMin.toDouble())
+        val activityState = aggregateActivityState(
+            estimator = estimator,
+            baseline = baselineActivityState,
+            iobU = iobU
+        )
         val freshness = (1.0 - activityState.postWindowFraction).coerceIn(0.0, 1.0)
         val activityBlend = (0.6 * activityState.relativeActivity + 0.4 * freshness).coerceIn(0.0, 1.0)
         val anticipatoryBoost = activityState.anticipationWeight * 0.1
@@ -158,6 +177,57 @@ class PkPdIntegration(private val preferences: Preferences) {
             pkpdScale = pkpdScale,
             damping = damping,
             activity = activityState
+        )
+    }
+
+    private fun aggregateActivityState(
+        estimator: AdaptivePkPdEstimator,
+        baseline: InsulinActivityState,
+        iobU: Double
+    ): InsulinActivityState {
+        val samples = recentBolusSamples
+        if (samples.isEmpty()) return baseline
+
+        val weightsByStage = linkedMapOf<InsulinActivityStage, Double>()
+        var totalWeight = 0.0
+        var weightedRelative = 0.0
+        var weightedPosition = 0.0
+        var weightedPostWindow = 0.0
+        var weightedAnticipation = 0.0
+        var weightedMinutesToOnset = 0.0
+
+        samples.forEach { sample ->
+            val bolusState = estimator.activityStateAt(sample.ageMin)
+            val residualIob = estimator.iobResidualAt(sample.ageMin)
+            val baseWeight = (sample.units * residualIob).coerceAtLeast(0.0)
+            if (baseWeight <= 1e-6) return@forEach
+
+            val stageWeight = (baseWeight * bolusState.relativeActivity.coerceAtLeast(0.05)).coerceAtLeast(1e-6)
+            totalWeight += stageWeight
+            weightsByStage[bolusState.stage] = (weightsByStage[bolusState.stage] ?: 0.0) + stageWeight
+            weightedRelative += bolusState.relativeActivity * stageWeight
+            weightedPosition += bolusState.normalizedPosition * stageWeight
+            weightedPostWindow += bolusState.postWindowFraction * stageWeight
+            weightedAnticipation += bolusState.anticipationWeight * stageWeight
+            weightedMinutesToOnset += bolusState.minutesUntilOnset * stageWeight
+        }
+
+        if (totalWeight <= 1e-6) return baseline
+
+        val dominantStage = weightsByStage.maxByOrNull { it.value }?.key ?: baseline.stage
+        val coherentStage = if (dominantStage == InsulinActivityStage.PRE_ONSET && iobU >= 3.0) {
+            InsulinActivityStage.RISING
+        } else {
+            dominantStage
+        }
+
+        return baseline.copy(
+            relativeActivity = (weightedRelative / totalWeight).coerceIn(0.0, 1.0),
+            normalizedPosition = (weightedPosition / totalWeight).coerceIn(0.0, 1.0),
+            postWindowFraction = (weightedPostWindow / totalWeight).coerceIn(0.0, 1.0),
+            anticipationWeight = (weightedAnticipation / totalWeight).coerceIn(0.0, 1.0),
+            minutesUntilOnset = (weightedMinutesToOnset / totalWeight).coerceAtLeast(0.0),
+            stage = coherentStage
         )
     }
 

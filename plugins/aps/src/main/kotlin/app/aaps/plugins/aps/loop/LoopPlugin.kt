@@ -515,11 +515,11 @@ class LoopPlugin @Inject constructor(
     }
 
     @Suppress("SameParameterValue")
-    private fun treatmentTimeThreshold(durationMinutes: Int): Boolean {
+    private suspend fun treatmentTimeThreshold(durationMinutes: Int): Boolean {
         val threshold = System.currentTimeMillis() + durationMinutes * 60 * 1000
         var bool = false
-        val lastBolusTime = runBlocking { persistenceLayer.getNewestBolus() }?.timestamp ?: 0L
-        val lastCarbsTime = runBlocking { persistenceLayer.getNewestCarbs() }?.timestamp ?: 0L
+        val lastBolusTime = persistenceLayer.getNewestBolus()?.timestamp ?: 0L
+        val lastCarbsTime = persistenceLayer.getNewestCarbs()?.timestamp ?: 0L
         if (lastBolusTime > threshold || lastCarbsTime > threshold) bool = true
         return bool
     }
@@ -835,8 +835,8 @@ class LoopPlugin @Inject constructor(
         }
     }
 
-    override fun acceptChangeRequest() {
-        val profile = runBlocking { profileFunction.getProfile() } ?: return
+    override suspend fun acceptChangeRequest() {
+        val profile = profileFunction.getProfile() ?: return
         lastRun?.let { lastRun ->
             lastRun.constraintsProcessed?.let { constraintsProcessed ->
                 applyTBRRequest(constraintsProcessed, profile, object : Callback() {
@@ -1020,23 +1020,21 @@ class LoopPlugin @Inject constructor(
      * the RunningModeReconciler observes the change and issues zero-TBR (+ cancels any
      * active extended bolus) on the pump side.
      */
-    private fun goToZeroTemp(durationInMinutes: Int, mode: RM.Mode, action: Action, source: Sources, listValues: List<ValueWithUnit>) {
+    private suspend fun goToZeroTemp(durationInMinutes: Int, mode: RM.Mode, action: Action, source: Sources, listValues: List<ValueWithUnit>) {
         @SuppressLint("CheckResult")
-        runBlocking {
-            persistenceLayer.insertOrUpdateRunningMode(
-                runningMode = RM(
-                    timestamp = dateUtil.now(),
-                    duration = T.mins(durationInMinutes.toLong()).msecs(),
-                    mode = mode
-                ),
-                action = action,
-                source = source,
-                note = null,
-                listValues = listValues
-            )
-        }
+        persistenceLayer.insertOrUpdateRunningMode(
+            runningMode = RM(
+                timestamp = dateUtil.now(),
+                duration = T.mins(durationInMinutes.toLong()).msecs(),
+                mode = mode
+            ),
+            action = action,
+            source = source,
+            note = null,
+            listValues = listValues
+        )
         val pump = activePlugin.activePump
-        val profile = runBlocking { profileFunction.getProfile() } ?: return
+        val profile = profileFunction.getProfile() ?: return
         if (config.APS) {
             if (pump.pumpDescription.tempBasalStyle == PumpDescription.ABSOLUTE) {
                 commandQueue.tempBasalAbsolute(0.0, durationInMinutes, true, profile, PumpSync.TemporaryBasalType.EMULATED_PUMP_SUSPEND, object : Callback() {
@@ -1055,7 +1053,7 @@ class LoopPlugin @Inject constructor(
                     }
                 })
             }
-            if (pump.pumpDescription.isExtendedBolusCapable && runBlocking { persistenceLayer.getExtendedBolusActiveAt(dateUtil.now()) } != null) {
+            if (pump.pumpDescription.isExtendedBolusCapable && persistenceLayer.getExtendedBolusActiveAt(dateUtil.now()) != null) {
                 commandQueue.cancelExtended(object : Callback() {
                     override fun run() {
                         if (!result.success) {
@@ -1070,16 +1068,10 @@ class LoopPlugin @Inject constructor(
         rxBus.send(EventRefreshOverview("goToZeroTemp"))
     }
 
-    private suspend fun suspendLoopSuspend(
-        mode: RM.Mode,
-        autoForced: Boolean,
-        reasons: String?,
-        durationInMinutes: Int,
-        action: Action,
-        source: Sources,
-        note: String? = null,
-        listValues: List<ValueWithUnit> = emptyList()
-    ) {
+    /**
+     * Suspend loop
+     */
+    suspend fun suspendLoop(mode: RM.Mode, autoForced: Boolean, reasons: String?, durationInMinutes: Int, action: Action, source: Sources, note: String? = null, listValues: List<ValueWithUnit> = emptyList()) {
         assert(mode == RM.Mode.SUSPENDED_BY_PUMP || mode == RM.Mode.SUSPENDED_BY_USER)
         @SuppressLint("CheckResult")
         persistenceLayer.insertOrUpdateRunningMode(
@@ -1089,9 +1081,6 @@ class LoopPlugin @Inject constructor(
             note = note,
             listValues = listValues
         )
-    }
-
-    private fun completeSuspendLoopSideEffects(autoForced: Boolean) {
         if (config.APS)
             commandQueue.cancelTempBasal(enforceNew = false, autoForced = autoForced, callback = object : Callback() {
                 override fun run() {
@@ -1100,18 +1089,8 @@ class LoopPlugin @Inject constructor(
                     }
                 }
             })
-        // SUSPENDED_BY_USER / SUSPENDED_BY_PUMP: same gap as goToZeroTemp — refresh overview + hybrid dashboard immediately.
+        // SUSPENDED_BY_USER / SUSPENDED_BY_PUMP: refresh overview + hybrid dashboard immediately.
         rxBus.send(EventRefreshOverview("suspendLoop"))
-    }
-
-    /**
-     * Suspend loop
-     */
-    fun suspendLoop(mode: RM.Mode, autoForced: Boolean, reasons: String?, durationInMinutes: Int, action: Action, source: Sources, note: String? = null, listValues: List<ValueWithUnit> = emptyList()) {
-        runBlocking {
-            suspendLoopSuspend(mode, autoForced, reasons, durationInMinutes, action, source, note, listValues)
-        }
-        completeSuspendLoopSideEffects(autoForced)
     }
 
     var task: Runnable? = null
@@ -1161,13 +1140,10 @@ class LoopPlugin @Inject constructor(
                     enacted?.put("smb", lastRun.tbrSetByPump?.bolusDelivered)
                 }
             }
-        } ?: {
-            val calcIob = runBlocking { iobCobCalculator.calculateIobArrayInDia(profile) }
-            if (calcIob.isNotEmpty()) {
-                iob = calcIob[0].json(dateUtil)
-                iob.put("time", dateUtil.toISOString(dateUtil.now()))
-            }
         }
+        // NOTE: the previous `?: { … }` elvis branch was a lambda that was never invoked
+        // (a long-standing no-op bug). Leaving the null-case as a no-op preserves prior
+        // behavior — fixing it is a separate change.
         persistenceLayer.insertDeviceStatus(
             DS(
                 timestamp = dateUtil.now(),

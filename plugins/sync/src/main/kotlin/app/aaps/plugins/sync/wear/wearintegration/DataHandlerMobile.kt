@@ -181,7 +181,7 @@ class DataHandlerMobile @Inject constructor(
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "OpenLoopRequestConfirmed received from ${it.sourceNodeId}")
                            if (!config.appInitialized) return@subscribe
-                           loop.acceptChangeRequest()
+                           runBlocking { loop.acceptChangeRequest() }
                            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(Constants.notificationID)
                        }, fabricPrivacy::logException)
         disposable += rxBus
@@ -443,6 +443,14 @@ class DataHandlerMobile @Inject constructor(
                            aapsLogger.debug(LTag.WEAR, "ActionSceneConfirmed received $it from ${it.sourceNodeId}")
                            if (!config.appInitialized) return@subscribe
                            handleSceneConfirmed(it)
+                       }, fabricPrivacy::logException)
+        disposable += rxBus
+            .toObservable(EventData.ActionSceneStop::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({
+                           aapsLogger.debug(LTag.WEAR, "ActionSceneStop received from ${it.sourceNodeId}")
+                           if (!config.appInitialized) return@subscribe
+                           appScope.launch { scenes.stopActiveScene() }
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.SnoozeAlert::class.java)
@@ -1445,6 +1453,7 @@ class DataHandlerMobile @Inject constructor(
         sendUserActions()
         // Scenes
         sendScenes()
+        sendActiveSceneState(scenes.isAnySceneActive())
         // GraphData
         iobCobCalculator.ads.getBucketedDataTableCopy()?.let { bucketedData ->
             rxBus.send(EventMobileToWear(EventData.GraphData(ArrayList(bucketedData.map { getSingleBG(it) }))))
@@ -1501,6 +1510,10 @@ class DataHandlerMobile @Inject constructor(
                 )
             )
         }
+    }
+
+    fun sendActiveSceneState(active: Boolean) {
+        rxBus.send(EventMobileToWear(EventData.ActiveSceneState(active)))
     }
 
     private fun sendTreatments() {

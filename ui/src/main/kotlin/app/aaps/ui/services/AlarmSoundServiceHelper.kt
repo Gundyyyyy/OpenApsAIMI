@@ -37,7 +37,7 @@ class AlarmSoundServiceHelper @Inject constructor(
                 // The binder of the service that returns the instance that is created.
                 val binder: AlarmSoundService.LocalBinder = service as AlarmSoundService.LocalBinder
 
-                val alarmSoundService: AlarmSoundService = binder.getService()
+                val alarmSoundService: AlarmSoundService? = binder.getService()
 
                 try {
                     context.startForegroundService(getServiceIntent(context, sound))
@@ -51,7 +51,7 @@ class AlarmSoundServiceHelper @Inject constructor(
 
                 // This is the key: Without waiting Android Framework to call this method
                 // inside Service.onCreate(), immediately call here to post the notification.
-                alarmSoundService.startForeground(notificationHolder.get().notificationID, notificationHolder.get().notification)
+                alarmSoundService?.startForeground(notificationHolder.get().notificationID, notificationHolder.get().notification)
 
                 // Release the connection to prevent leaks.
                 context.unbindService(this)

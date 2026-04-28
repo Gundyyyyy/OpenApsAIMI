@@ -51,6 +51,7 @@ import app.aaps.plugins.aps.openAPSAIMI.model.PumpCaps
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdCsvLogger
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.MealAggressionContext
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdIntegration
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkpdBolusSample
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdLogRow
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
 import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
@@ -1246,6 +1247,21 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return bolusQueryCache.getOrPut(key) {
             runBlocking(Dispatchers.IO) { persistenceLayer.getBolusesFromTime(startTime, ascending) }
         }
+    }
+
+    private fun buildRecentPkpdBolusSamples(nowMillis: Long, fallbackWindowMin: Int): List<PkpdBolusSample> {
+        val diaHours = preferences.get(DoubleKey.OApsAIMIPkpdStateDiaH).coerceIn(4.0, 8.0)
+        val lookbackByDiaMs = (diaHours * 60.0 * 60.0 * 1000.0).toLong()
+        val lookbackByFallbackMs = fallbackWindowMin.coerceAtLeast(60) * 60_000L
+        val lookbackStart = nowMillis - max(lookbackByDiaMs, lookbackByFallbackMs)
+        return getBolusesFromTimeCached(lookbackStart, ascending = true)
+            .asSequence()
+            .filter { it.amount > 0.05 && (it.type == BS.Type.SMB || it.type == BS.Type.NORMAL) }
+            .map { bolus ->
+                val ageMin = ((nowMillis - bolus.timestamp).toDouble() / 60_000.0).coerceAtLeast(0.0)
+                PkpdBolusSample(ageMin = ageMin, units = bolus.amount)
+            }
+            .toList()
     }
 
     private fun calculateSmbLast30Min(): Double {
@@ -5143,6 +5159,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             90
         }
         this.cachedPkpdRuntime = try {
+            pkpdIntegration.setRecentBolusSamples(
+                buildRecentPkpdBolusSamples(
+                    nowMillis = dateUtil.now(),
+                    fallbackWindowMin = earlyPkpdWindowSinceDoseMin
+                )
+            )
              pkpdIntegration.computeRuntime(
                 epochMillis = dateUtil.now(),
                 bg = glucoseStatus.glucose,
@@ -5802,6 +5824,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             mealModeActive = mealModeActiveNow,
             predictedBgMgdl = predictedBg.toDouble(),
             targetBgMgdl = targetBg.toDouble()
+        )
+        pkpdIntegration.setRecentBolusSamples(
+            buildRecentPkpdBolusSamples(
+                nowMillis = currentTime,
+                fallbackWindowMin = windowSinceDoseInt
+            )
         )
         val pkpdRuntimeTemp = pkpdIntegration.computeRuntime(
             epochMillis = currentTime,

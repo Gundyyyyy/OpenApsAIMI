@@ -641,7 +641,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                                         uel.log(Action.ACCEPTS_TEMP_BASAL, Sources.Overview)
                                         (context?.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager?)?.cancel(Constants.notificationID)
                                         rxBus.send(EventMobileToWear(EventData.CancelNotification(dateUtil.now())))
-                                        handler.post { loop.acceptChangeRequest() }
+                                        viewLifecycleOwner.lifecycleScope.launch { loop.acceptChangeRequest() }
                                         binding.buttonsLayout.acceptTempButton.visibility = View.GONE
                                     })
                             }
@@ -894,7 +894,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
                 applyLoopUiOnMain(loopMode, mins)
             }
         } else {
-            runBlocking(Dispatchers.IO) {
+            scope?.launch {
                 val (loopMode, mins) = readLoopUiInputs()
                 applyLoopUiOnMain(loopMode, mins)
             }

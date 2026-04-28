@@ -181,8 +181,10 @@ class DataHandlerMobile @Inject constructor(
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "OpenLoopRequestConfirmed received from ${it.sourceNodeId}")
                            if (!config.appInitialized) return@subscribe
-                           runBlocking { loop.acceptChangeRequest() }
-                           (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(Constants.notificationID)
+                           appScope.launch {
+                               loop.acceptChangeRequest()
+                               (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(Constants.notificationID)
+                           }
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.ActionResendData::class.java)
@@ -196,45 +198,55 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionPumpStatus received from ${it.sourceNodeId}")
-                           rxBus.send(
-                               EventMobileToWear(
-                                   EventData.ConfirmAction(
-                                       rh.gs(R.string.pump_status).uppercase(),
-                                       runBlocking { pumpStatusProvider.shortStatus(false) },
-                                       returnCommand = null
+                           appScope.launch {
+                               val shortStatus = pumpStatusProvider.shortStatus(false)
+                               rxBus.send(
+                                   EventMobileToWear(
+                                       EventData.ConfirmAction(
+                                           rh.gs(R.string.pump_status).uppercase(),
+                                           shortStatus,
+                                           returnCommand = null
+                                       )
                                    )
                                )
-                           )
+                           }
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.ActionLoopStatus::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionLoopStatus received from ${it.sourceNodeId}")
-                           rxBus.send(
-                               EventMobileToWear(
-                                   EventData.ConfirmAction(
-                                       rh.gs(R.string.loop_status).uppercase(),
-                                       "$targetsStatus\n\n$loopStatus\n\n$oAPSResultStatus",
-                                       returnCommand = null
+                           appScope.launch {
+                               val targetsStatus = buildTargetsStatus()
+                               val loopStatus = buildLoopStatus()
+                               val oapsResultStatus = buildOAPSResultStatus()
+                               rxBus.send(
+                                   EventMobileToWear(
+                                       EventData.ConfirmAction(
+                                           rh.gs(R.string.loop_status).uppercase(),
+                                           "$targetsStatus\n\n$loopStatus\n\n$oapsResultStatus",
+                                           returnCommand = null
+                                       )
                                    )
                                )
-                           )
+                           }
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.ActionLoopStatusDetailed::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionLoopStatusDetailed received from ${it.sourceNodeId}")
-                           val statusData = buildLoopStatusData()
-                           rxBus.send(
-                               EventMobileToWear(
-                                   EventData.LoopStatusResponse(
-                                       timeStamp = System.currentTimeMillis(),
-                                       data = statusData
+                           appScope.launch {
+                               val statusData = buildLoopStatusData()
+                               rxBus.send(
+                                   EventMobileToWear(
+                                       EventData.LoopStatusResponse(
+                                           timeStamp = System.currentTimeMillis(),
+                                           data = statusData
+                                       )
                                    )
                                )
-                           )
+                           }
                        }, fabricPrivacy::logException)
 
         disposable += rxBus
@@ -242,7 +254,7 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "RunningModeRequest received from ${it.sourceNodeId}")
-                           handleAvailableRunningModes()
+                           appScope.launch { handleAvailableRunningModes() }
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.RunningModeSelected::class.java)
@@ -359,14 +371,14 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionQuickWizardPreCheck received $it from ${it.sourceNodeId}")
-                           handleQuickWizardPreCheck(it)
+                           appScope.launch { handleQuickWizardPreCheck(it) }
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.ActionWizardPreCheck::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionWizardPreCheck received $it from ${it.sourceNodeId}")
-                           handleWizardPreCheck(it)
+                           appScope.launch { handleWizardPreCheck(it) }
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.ActionWizardConfirmed::class.java)
@@ -487,7 +499,7 @@ class DataHandlerMobile @Inject constructor(
         return values.filterNotNull().maxOrNull()
     }
 
-    private fun buildLoopStatusData(): LoopStatusData {
+    private suspend fun buildLoopStatusData(): LoopStatusData {
         val tempTarget = runBlocking { persistenceLayer.getTemporaryTargetActiveAt(dateUtil.now()) }
         val profile = runBlocking { profileFunction.getProfile() }
         val usedAPS = activePlugin.activeAPS
@@ -526,7 +538,7 @@ class DataHandlerMobile @Inject constructor(
         }
 
         // Map loop mode
-        val loopMode = when (runBlocking { loop.runningMode() }) {
+        val loopMode = when (loop.runningMode()) {
             RM.Mode.CLOSED_LOOP       -> LoopStatusData.LoopMode.CLOSED
             RM.Mode.OPEN_LOOP         -> LoopStatusData.LoopMode.OPEN
             RM.Mode.CLOSED_LOOP_LGS   -> LoopStatusData.LoopMode.LGS
@@ -599,7 +611,7 @@ class DataHandlerMobile @Inject constructor(
             // Determine what to display
             val (displayRate, displayDuration, displayPercent) = if (isLetTempRun) {
                 // Get currently running temp basal from database
-                val currentTbr = runBlocking { persistenceLayer.getTemporaryBasalActiveAt(dateUtil.now()) }
+                val currentTbr = persistenceLayer.getTemporaryBasalActiveAt(dateUtil.now())
 
                 if (currentTbr != null) {
                     // Calculate absolute rate
@@ -636,7 +648,7 @@ class DataHandlerMobile @Inject constructor(
 
                 // For AAPSClient, use current TBR rate if available, otherwise use constrained rate
                 val finalRate = if (!config.APS) {
-                    val currentTbr = runBlocking { persistenceLayer.getTemporaryBasalActiveAt(dateUtil.now()) }
+                    val currentTbr = persistenceLayer.getTemporaryBasalActiveAt(dateUtil.now())
                     currentTbr?.rate ?: constrainedRate
                 } else {
                     constrainedRate
@@ -646,7 +658,7 @@ class DataHandlerMobile @Inject constructor(
             }
 
             OapsResultInfo(
-                changeRequested = runBlocking { result.isChangeRequested() } && !isLetTempRun,
+                changeRequested = result.isChangeRequested() && !isLetTempRun,
                 isLetTempRun = isLetTempRun,
                 rate = displayRate,
                 ratePercent = displayPercent,
@@ -659,7 +671,7 @@ class DataHandlerMobile @Inject constructor(
         return LoopStatusData(
             timestamp = System.currentTimeMillis(),
             loopMode = loopMode,
-            apsName = if (runBlocking { loop.runningMode() }.isLoopRunning())
+            apsName = if (loop.runningMode().isLoopRunning())
                 (usedAPS as? PluginBase)?.name else null,
             lastRun = lastRunTimestamp,
             lastEnact = lastEnactTimestamp,
@@ -718,9 +730,9 @@ class DataHandlerMobile @Inject constructor(
         )
     }
 
-    private fun handleWizardPreCheck(command: EventData.ActionWizardPreCheck) {
+    private suspend fun handleWizardPreCheck(command: EventData.ActionWizardPreCheck) {
         val pump = activePlugin.activePump
-        if (!pump.isInitialized() || runBlocking { loop.runningMode() }.isSuspended()) {
+        if (!pump.isInitialized() || loop.runningMode().isSuspended()) {
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_pump_not_available))
             return
         }
@@ -731,8 +743,8 @@ class DataHandlerMobile @Inject constructor(
             return
         }
         val percentage = command.percentage
-        val profile = runBlocking { profileFunction.getProfile() }
-        val profileName = runBlocking { profileFunction.getProfileName() }
+        val profile = profileFunction.getProfile()
+        val profileName = profileFunction.getProfileName()
         if (profile == null) {
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_no_active_profile))
             return
@@ -742,12 +754,12 @@ class DataHandlerMobile @Inject constructor(
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_no_actual_bg))
             return
         }
-        val cobInfo = runBlocking { iobCobCalculator.getCobInfo("Wizard wear") }
+        val cobInfo = iobCobCalculator.getCobInfo("Wizard wear")
         if (cobInfo.displayCob == null) {
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_no_cob))
             return
         }
-        val tempTarget = runBlocking { persistenceLayer.getTemporaryTargetActiveAt(dateUtil.now()) }
+        val tempTarget = persistenceLayer.getTemporaryTargetActiveAt(dateUtil.now())
 
         // Store the preference values before calling doCalc
         val useBgPref = preferences.get(BooleanKey.WearWizardBg)
@@ -756,26 +768,24 @@ class DataHandlerMobile @Inject constructor(
         val useTTPref = preferences.get(BooleanKey.WearWizardTt)
         val useTrendPref = preferences.get(BooleanKey.WearWizardTrend)
 
-        val bolusWizard = runBlocking {
-            bolusWizardProvider.get().doCalc(
-                profile = profile,
-                profileName = profileName,
-                tempTarget = tempTarget,
-                carbs = carbsAfterConstraints,
-                cob = cobInfo.displayCob!!,
-                bg = bgReading.valueToUnits(profileFunction.getUnits()),
-                correction = 0.0,
-                percentageCorrection = percentage,
-                useBg = useBgPref,
-                useCob = useCobPref,
-                includeBolusIOB = useIobPref,
-                includeBasalIOB = useIobPref,
-                useSuperBolus = false,
-                useTT = useTTPref,
-                useTrend = useTrendPref,
-                useAlarm = false
-            )
-        }
+        val bolusWizard = bolusWizardProvider.get().doCalc(
+            profile = profile,
+            profileName = profileName,
+            tempTarget = tempTarget,
+            carbs = carbsAfterConstraints,
+            cob = cobInfo.displayCob!!,
+            bg = bgReading.valueToUnits(profileFunction.getUnits()),
+            correction = 0.0,
+            percentageCorrection = percentage,
+            useBg = useBgPref,
+            useCob = useCobPref,
+            includeBolusIOB = useIobPref,
+            includeBasalIOB = useIobPref,
+            useSuperBolus = false,
+            useTT = useTTPref,
+            useTrend = useTrendPref,
+            useAlarm = false
+        )
         val insulinAfterConstraints = bolusWizard.insulinAfterConstraints
         val minStep = pump.pumpDescription.pumpType.determineCorrectBolusStepSize(insulinAfterConstraints)
         if (abs(insulinAfterConstraints - bolusWizard.calculatedTotalInsulin) >= minStep) {
@@ -896,10 +906,10 @@ class DataHandlerMobile @Inject constructor(
         }
     }
 
-    private fun handleQuickWizardPreCheck(command: EventData.ActionQuickWizardPreCheck) {
+    private suspend fun handleQuickWizardPreCheck(command: EventData.ActionQuickWizardPreCheck) {
         val actualBg = iobCobCalculator.ads.actualBg()
-        val profile = runBlocking { profileFunction.getProfile() }
-        val profileName = runBlocking { profileFunction.getProfileName() }
+        val profile = profileFunction.getProfile()
+        val profileName = profileFunction.getProfileName()
         val quickWizardEntry = quickWizard.get(command.guid)
         if (quickWizardEntry == null) {
             sendError(rh.gs(R.string.quick_wizard_not_available))
@@ -913,18 +923,18 @@ class DataHandlerMobile @Inject constructor(
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_no_active_profile))
             return
         }
-        val cobInfo = runBlocking { iobCobCalculator.getCobInfo("QuickWizard wear") }
+        val cobInfo = iobCobCalculator.getCobInfo("QuickWizard wear")
         if (cobInfo.displayCob == null) {
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_no_cob))
             return
         }
         val pump = activePlugin.activePump
-        if (!pump.isInitialized() || runBlocking { loop.runningMode() }.isSuspended()) {
+        if (!pump.isInitialized() || loop.runningMode().isSuspended()) {
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_pump_not_available))
             return
         }
 
-        val wizard = runBlocking { quickWizardEntry.doCalc(profile, profileName, actualBg) }
+        val wizard = quickWizardEntry.doCalc(profile, profileName, actualBg)
 
         val carbsAfterConstraints = constraintChecker.applyCarbsConstraints(ConstraintObject(quickWizardEntry.carbs(), aapsLogger)).value()
         if (carbsAfterConstraints != quickWizardEntry.carbs()) {
@@ -1260,8 +1270,8 @@ class DataHandlerMobile @Inject constructor(
     private var lastAuthorizedRunningModeChangeTS: Long? = null
     private var lastRunningModes: List<AvailableRunningMode>? = null
 
-    private fun handleAvailableRunningModes() {
-        if (!runBlocking { profileFunction.isProfileValid("WearDataHandler_LoopChangeState") }) return
+    private suspend fun handleAvailableRunningModes() {
+        if (!profileFunction.isProfileValid("WearDataHandler_LoopChangeState")) return
 
         val pumpDescription = activePlugin.activePump.pumpDescription
         val disconnectDurs = arrayListOf<Int>().apply {
@@ -1270,7 +1280,7 @@ class DataHandlerMobile @Inject constructor(
             for (i in listOf(1, 2, 3)) add(i * 60)
         }
 
-        fun mapMode(mode: RM.Mode): AvailableRunningMode? =
+        suspend fun mapMode(mode: RM.Mode): AvailableRunningMode? =
             when (mode) {
                 RM.Mode.CLOSED_LOOP       -> AvailableRunningMode(AvailableRunningMode.RunningMode.LOOP_CLOSED)
                 RM.Mode.CLOSED_LOOP_LGS   -> AvailableRunningMode(AvailableRunningMode.RunningMode.LOOP_LGS)
@@ -1281,13 +1291,16 @@ class DataHandlerMobile @Inject constructor(
                 RM.Mode.SUSPENDED_BY_PUMP -> null
                 RM.Mode.SUSPENDED_BY_USER -> AvailableRunningMode(AvailableRunningMode.RunningMode.LOOP_USER_SUSPEND, listOf(1, 2, 3, 10).map { it * 60 })
                 RM.Mode.SUSPENDED_BY_DST  -> null
-                RM.Mode.RESUME            -> if (runBlocking { loop.runningMode() } == RM.Mode.DISCONNECTED_PUMP)
+                RM.Mode.RESUME            -> if (loop.runningMode() == RM.Mode.DISCONNECTED_PUMP)
                     AvailableRunningMode(AvailableRunningMode.RunningMode.PUMP_RECONNECT)
                 else
                     AvailableRunningMode(AvailableRunningMode.RunningMode.LOOP_RESUME)
             }
 
-        val allStates = runBlocking { loop.allowedNextModes() }.mapNotNull { mapMode(it) }
+        val allStates = mutableListOf<AvailableRunningMode>()
+        for (mode in loop.allowedNextModes()) {
+            mapMode(mode)?.let { allStates.add(it) }
+        }
         // LOOP_DISABLE is dropped when LOOP_USER_SUSPEND is present to fit within 4 tile slots.
         val states = if (allStates.any { it.state == AvailableRunningMode.RunningMode.LOOP_USER_SUSPEND })
             allStates.filter { it.state != AvailableRunningMode.RunningMode.LOOP_DISABLE }
@@ -1394,7 +1407,7 @@ class DataHandlerMobile @Inject constructor(
                 }
             }
         }
-        handleAvailableRunningModes()
+        appScope.launch { handleAvailableRunningModes() }
     }
 
     private fun sendQuickWizardToWear() {
@@ -1463,7 +1476,7 @@ class DataHandlerMobile @Inject constructor(
         // Status
         // Keep status last. Wear start refreshing after status received
         sendStatus(from)
-        handleAvailableRunningModes()
+        appScope.launch { handleAvailableRunningModes() }
     }
 
     private fun AutomationEvent.toWear(now: Long): EventData.UserAction.UserActionEntry =
@@ -1810,16 +1823,14 @@ class DataHandlerMobile @Inject constructor(
     }
 
     //Check for Temp-Target:
-    private
-    val targetsStatus: String
-        get() {
+    private suspend fun buildTargetsStatus(): String {
             var ret = rh.gs(app.aaps.core.ui.R.string.loopstatus_targets) + "\n"
             if (!config.APS) {
                 return rh.gs(R.string.target_only_aps_mode)
             }
-            val profile = runBlocking { profileFunction.getProfile() } ?: return rh.gs(R.string.no_profile)
+            val profile = profileFunction.getProfile() ?: return rh.gs(R.string.no_profile)
             //Check for Temp-Target:
-            val tempTarget = runBlocking { persistenceLayer.getTemporaryTargetActiveAt(dateUtil.now()) }
+            val tempTarget = persistenceLayer.getTemporaryTargetActiveAt(dateUtil.now())
             if (tempTarget != null) {
                 val target = profileUtil.toTargetRangeString(tempTarget.lowTarget, tempTarget.lowTarget, GlucoseUnit.MGDL)
                 ret += rh.gs(R.string.temp_target) + ": " + target
@@ -1830,17 +1841,15 @@ class DataHandlerMobile @Inject constructor(
             ret += profileUtil.toTargetRangeString(profile.getTargetLowMgdl(), profile.getTargetHighMgdl(), GlucoseUnit.MGDL)
             ret += " " + rh.gs(R.string.target) + ": " + profileUtil.fromMgdlToStringInUnits(profile.getTargetMgdl())
             return ret
-        }
+    }
 
-    private
-    val oAPSResultStatus: String
-        get() {
+    private suspend fun buildOAPSResultStatus(): String {
             var ret = rh.gs(app.aaps.core.ui.R.string.loopstatus_OAPS_result) + "\n"
             if (!config.APS)
                 return rh.gs(R.string.aps_only)
             val usedAPS = activePlugin.activeAPS ?: return rh.gs(R.string.last_aps_result_na)
             val result = usedAPS.lastAPSResult ?: return rh.gs(R.string.last_aps_result_na)
-            ret += if (!runBlocking { result.isChangeRequested() }) {
+            ret += if (!result.isChangeRequested()) {
                 rh.gs(app.aaps.core.ui.R.string.nochangerequested) + "\n"
             } else if (result.rate == 0.0 && result.duration == 0) {
                 rh.gs(app.aaps.core.ui.R.string.cancel_temp) + "\n"
@@ -1849,14 +1858,12 @@ class DataHandlerMobile @Inject constructor(
             }
             ret += "\n" + rh.gs(app.aaps.core.ui.R.string.reason) + ": " + result.reason
             return ret
-        }
+    }
 
     // decide if enabled/disabled closed/open; what Plugin as APS?
-    private
-    val loopStatus: String
-        get() {
+    private suspend fun buildLoopStatus(): String {
             var ret = ""
-            val rm = runBlocking { loop.runningMode() }
+            val rm = loop.runningMode()
             // decide if enabled/disabled closed/open; what Plugin as APS?
             when (rm) {
                 RM.Mode.CLOSED_LOOP     -> ret += rh.gs(R.string.loop_status_closed) + "\n"
@@ -1877,7 +1884,7 @@ class DataHandlerMobile @Inject constructor(
                 }
             }
             return ret
-        }
+    }
 
     private fun isOldData(historyList: List<TDD>): Boolean {
         val startsYesterday = activePlugin.activePump.pumpDescription.supportsTDDs

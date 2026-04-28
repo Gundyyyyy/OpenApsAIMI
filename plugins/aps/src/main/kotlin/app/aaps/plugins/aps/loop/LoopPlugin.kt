@@ -214,7 +214,7 @@ class LoopPlugin @Inject constructor(
                             LTag.APS,
                             "Periodic autodrive fallback (last glucose-driven loop ${sinceGlucoseMs}ms ago, period ${freqMs}ms, BG=$bg)"
                         )
-                        runBlocking { invoke("PeriodicApsMaxSmbFrequency", true) }
+                        appScope.launch { invoke("PeriodicApsMaxSmbFrequency", true) }
                     }
                 } else {
                     aapsLogger.debug(LTag.APS, "Pas de loop périodique : autodrive=$autodrive.")
@@ -414,7 +414,7 @@ class LoopPlugin @Inject constructor(
         if (config.APS) {
             // Suspended pump found but suspended running mode not set
             if (activePlugin.activePump.isSuspended() && runningMode.mode != RM.Mode.SUSPENDED_BY_PUMP) {
-                suspendLoopSuspend(
+                suspendLoop(
                     mode = RM.Mode.SUSPENDED_BY_PUMP,
                     autoForced = true,
                     reasons = rh.gs(app.aaps.core.ui.R.string.pumpsuspended),
@@ -422,7 +422,6 @@ class LoopPlugin @Inject constructor(
                     action = Action.SUSPEND,
                     source = Sources.Loop
                 )
-                completeSuspendLoopSideEffects(autoForced = true)
                 rxBus.send(EventRefreshOverview("runningModePreCheck"))
                 return
             }
@@ -719,31 +718,36 @@ class LoopPlugin @Inject constructor(
                                     // executing TBR may take some time thus give more time to SMB
                                     resultAfterConstraints.deliverAt = lastRun.lastTBREnact
                                     rxBus.send(EventLoopUpdateGui())
-                                    if (resultAfterConstraints.isBolusRequested)
-                                        applySMBRequest(resultAfterConstraints, object : Callback() {
-                                            override fun run() {
-                                                // Callback is only called if a bolus was actually requested
-                                                aapsLogger.debug(
-                                                    LTag.APS,
-                                                    "SMB enact result: requested=%.2fU enacted=%s success=%s comment=%s".format(
-                                                        resultAfterConstraints.smb,
-                                                        result.enacted,
-                                                        result.success,
-                                                        result.comment ?: ""
-                                                    )
-                                                )
-                                                if (result.enacted || result.success) {
-                                                    lastRun.smbSetByPump = result
-                                                    lastRun.lastSMBRequest = lastRun.lastAPSRun
-                                                    lastRun.lastSMBEnact = dateUtil.now()
-                                                    scheduleBuildAndStoreDeviceStatus("applySMBRequest")
-                                                } else {
-                                                    handler?.postDelayed({ runBlocking { invoke("tempBasalFallback", allowNotification, true) } }, 1000)
+                                    if (resultAfterConstraints.isBolusRequested) {
+                                        appScope.launch {
+                                            applySMBRequest(
+                                                resultAfterConstraints,
+                                                object : Callback() {
+                                                    override fun run() {
+                                                        // Callback is only called if a bolus was actually requested
+                                                        aapsLogger.debug(
+                                                            LTag.APS,
+                                                            "SMB enact result: requested=%.2fU enacted=%s success=%s comment=%s".format(
+                                                                resultAfterConstraints.smb,
+                                                                result.enacted,
+                                                                result.success,
+                                                                result.comment ?: ""
+                                                            )
+                                                        )
+                                                        if (result.enacted || result.success) {
+                                                            lastRun.smbSetByPump = result
+                                                            lastRun.lastSMBRequest = lastRun.lastAPSRun
+                                                            lastRun.lastSMBEnact = dateUtil.now()
+                                                            scheduleBuildAndStoreDeviceStatus("applySMBRequest")
+                                                        } else {
+                                                            handler?.postDelayed({ appScope.launch { invoke("tempBasalFallback", allowNotification, true) } }, 1000)
+                                                        }
+                                                        rxBus.send(EventLoopUpdateGui())
+                                                    }
                                                 }
-                                                rxBus.send(EventLoopUpdateGui())
-                                            }
-                                        })
-                                    else {
+                                            )
+                                        }
+                                    } else {
                                         aapsLogger.debug(LTag.APS, "No SMB requested")
                                         scheduleBuildAndStoreDeviceStatus("applyTBRRequest")
                                     }
@@ -957,9 +961,9 @@ class LoopPlugin @Inject constructor(
         }
     }
 
-    private fun applySMBRequest(request: APSResult, callback: Callback?) {
+    private suspend fun applySMBRequest(request: APSResult, callback: Callback?) {
         val pump = activePlugin.activePump
-        val lastBolusTime = runBlocking { persistenceLayer.getNewestBolus() }?.timestamp ?: 0L
+        val lastBolusTime = persistenceLayer.getNewestBolus()?.timestamp ?: 0L
         val now = dateUtil.now()
         val smbIntervalMin = preferences.get(IntKey.ApsMaxSmbFrequency)
         val lastBolusAgeSec = if (lastBolusTime > 0L) ((now - lastBolusTime).coerceAtLeast(0L) / 1000.0) else Double.NaN
@@ -985,7 +989,7 @@ class LoopPlugin @Inject constructor(
             callback?.result(pumpEnactResultProvider.get().comment(R.string.pump_not_initialized).enacted(false).success(false))?.run()
             return
         }
-        if (runBlocking { runningMode() }.isSuspended()) {
+        if (runningMode().isSuspended()) {
             aapsLogger.debug(LTag.APS, "applySMBRequest: " + rh.gs(app.aaps.core.ui.R.string.pumpsuspended))
             callback?.result(pumpEnactResultProvider.get().comment(app.aaps.core.ui.R.string.pumpsuspended).enacted(false).success(false))?.run()
             return
@@ -1002,7 +1006,7 @@ class LoopPlugin @Inject constructor(
 
         // deliver SMB
         val detailedBolusInfo = DetailedBolusInfo()
-        detailedBolusInfo.lastKnownBolusTime = runBlocking { persistenceLayer.getNewestBolus() }?.timestamp ?: 0L
+        detailedBolusInfo.lastKnownBolusTime = persistenceLayer.getNewestBolus()?.timestamp ?: 0L
         detailedBolusInfo.eventType = TE.Type.CORRECTION_BOLUS
         detailedBolusInfo.insulin = request.smb
         detailedBolusInfo.bolusType = BS.Type.SMB
@@ -1099,8 +1103,13 @@ class LoopPlugin @Inject constructor(
         class UpdateRunnable : Runnable {
 
             override fun run() {
-                runBlocking { buildAndStoreDeviceStatus(reason) }
-                task = null
+                appScope.launch {
+                    try {
+                        buildAndStoreDeviceStatus(reason)
+                    } finally {
+                        task = null
+                    }
+                }
             }
         }
         task?.let { handler?.removeCallbacks(it) }

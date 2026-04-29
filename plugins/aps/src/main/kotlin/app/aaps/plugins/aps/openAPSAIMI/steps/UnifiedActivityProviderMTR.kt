@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.openAPSAIMI.steps
 
+import android.os.Looper
 import app.aaps.core.data.model.SC
 import app.aaps.core.data.model.HR
 import app.aaps.core.interfaces.db.PersistenceLayer
@@ -30,6 +31,14 @@ class UnifiedActivityProviderMTR @Inject constructor(
     private val sp: SP,
     private val aapsLogger: AAPSLogger
 ) : ActivityVitalsProvider {
+    @Volatile
+    private var latestStepsCache: StepsResult? = null
+
+    @Volatile
+    private var totalStepsCache: StepsResult? = null
+
+    @Volatile
+    private var latestHrCache: HrResult? = null
 
     companion object {
         private const val TAG = "ActivityProvider"
@@ -63,6 +72,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
     override fun getLatestSteps(windowMs: Long): StepsResult? {
         val mode = getMode()
         if (mode == MODE_DISABLED) return null
+        if (Looper.myLooper() == Looper.getMainLooper()) return latestStepsCache
         
         val now = System.currentTimeMillis()
         val start = now - windowMs
@@ -83,7 +93,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
             val hcRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_HC })
             val phoneRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_PHONE })
             
-            return when (mode) {
+            val result = when (mode) {
                 MODE_PREFER_WEAR -> {
                     // Strict Wear OS preference; fallback to Garmin only if no wear sample is available
                     wearRecord?.let { toStepsResult(it) }
@@ -101,16 +111,19 @@ class UnifiedActivityProviderMTR @Inject constructor(
                 }
                 else -> null
             }
+            latestStepsCache = result
+            return result
             
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "[$TAG] Error fetching steps", e)
-            return null
+            return latestStepsCache
         }
     }
 
     fun getStepsTotalSince(startMs: Long): StepsResult? {
         val mode = getMode()
         if (mode == MODE_DISABLED) return null
+        if (Looper.myLooper() == Looper.getMainLooper()) return totalStepsCache
 
         val now = System.currentTimeMillis()
 
@@ -152,21 +165,24 @@ class UnifiedActivityProviderMTR @Inject constructor(
                 .values
                 .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
 
-            StepsResult(
+            val result = StepsResult(
                 steps = totalSteps,
                 timestamp = now,
                 source = filtered.first().device,
                 duration = now - startMs
             )
+            totalStepsCache = result
+            result
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "[$TAG] Error fetching total steps", e)
-            null
+            totalStepsCache
         }
     }
 
     override fun getLatestHeartRate(windowMs: Long): HrResult? {
         val mode = getMode()
         if (mode == MODE_DISABLED) return null
+        if (Looper.myLooper() == Looper.getMainLooper()) return latestHrCache
         
         val now = System.currentTimeMillis()
         val start = now - windowMs
@@ -181,7 +197,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
             val wearRecord = records.firstOrNull { isWearDevice(it.device) }
             val hcRecord = records.firstOrNull { it.device == SOURCE_HC }
             
-            return when (mode) {
+            val result = when (mode) {
                 MODE_PREFER_WEAR -> wearRecord?.let { toHrResult(it) }
                 MODE_HEALTH_CONNECT_ONLY -> hcRecord?.let { toHrResult(it) }
                 MODE_AUTO_FALLBACK -> {
@@ -191,10 +207,12 @@ class UnifiedActivityProviderMTR @Inject constructor(
                 }
                 else -> null
             }
+            latestHrCache = result
+            return result
             
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "[$TAG] Error fetching HR", e)
-            return null
+            return latestHrCache
         }
     }
     

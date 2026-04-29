@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.openAPSAIMI
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Environment
+import android.os.Looper
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
@@ -410,8 +411,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 fetcher = { fromMillis: Long ->
                     // Récupère les TBR depuis 'fromMillis', puis trie DESC par timestamp
                     val raws: List<TB> = try {
-                        runBlocking(Dispatchers.IO) {
-                            persistenceLayer.getTemporaryBasalsStartingFromTime(fromMillis, ascending = false)
+                        if (Looper.myLooper() == Looper.getMainLooper()) {
+                            emptyList()
+                        } else {
+                            runBlocking(Dispatchers.IO) {
+                                persistenceLayer.getTemporaryBasalsStartingFromTime(fromMillis, ascending = false)
+                            }
                         }
                     } catch (t: Throwable) {
                         emptyList()
@@ -1245,7 +1250,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private fun getBolusesFromTimeCached(startTime: Long, ascending: Boolean): List<BS> {
         val key = startTime to ascending
         return bolusQueryCache.getOrPut(key) {
-            runBlocking(Dispatchers.IO) { persistenceLayer.getBolusesFromTime(startTime, ascending) }
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                emptyList()
+            } else {
+                runBlocking(Dispatchers.IO) { persistenceLayer.getBolusesFromTime(startTime, ascending) }
+            }
         }
     }
 

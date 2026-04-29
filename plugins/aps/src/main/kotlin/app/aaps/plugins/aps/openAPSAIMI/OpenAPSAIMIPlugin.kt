@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.openAPSAIMI
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.os.Looper
 import android.util.LongSparseArray
 import androidx.annotation.ArrayRes
 import androidx.core.util.forEach
@@ -437,6 +438,15 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         val start = dateUtil.now()
         val multiplier = (profile as? ProfileSealed.EPS)?.value?.originalPercentage?.div(100.0)
             ?: return null
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            // Keep UI path non-blocking; use latest cache and refresh in background.
+            val cached = synchronized(dynIsfCacheLock) {
+                if (dynIsfCache.size() == 0) null else dynIsfCache.valueAt(dynIsfCache.size() - 1)
+            }
+            aimiPluginIoScope.launch { runCatching { calculateVariableIsf(start) } }
+            return cached?.let { it * multiplier }
+        }
 
         val sensitivity = runBlocking(Dispatchers.IO) { calculateVariableIsf(start) }
 

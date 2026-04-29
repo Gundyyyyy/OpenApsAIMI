@@ -4,7 +4,8 @@ import app.aaps.core.data.iob.InMemoryGlucoseValue
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.data.plugin.PluginType
-import app.aaps.core.interfaces.aps.IobTotal
+import app.aaps.core.interfaces.configuration.Config
+import app.aaps.core.interfaces.configuration.awaitInitialized
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -12,59 +13,41 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.resources.ResourceHelper
-import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.collect
 import app.aaps.core.interfaces.rx.events.EventAdaptiveSmoothingQuality
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualitySnapshot
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
 import app.aaps.core.interfaces.smoothing.Smoothing
+import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.core.ui.compose.icons.IcStats
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.interfaces.sharedPreferences.SP
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.kotlin.plusAssign
 import java.util.ArrayDeque
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
-import kotlin.math.exp
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.pow
 import kotlin.math.sqrt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.launch
 
 /**
- * 🚀 HYBRID ADAPTIVE UKF SMOOTHING PLUGIN
- *
- * A state-of-the-art fusion of:
- * 1. Unscented Kalman Filter (UKF) -> For optimal signal processing, noise reduction, and lag-free trend estimation.
- * 2. Adaptive Safety Logic -> For heuristic handling of physical artifacts (Compression Lows, Hypo Safety).
- *
- * CORE PHILOSOPHY:
- * "Trust the Maths for precision, trust the Rules for safety."
- * 
- * FEATURES:
- * - UKF State-Space Model (Glucose + Rate positions)
- * - Adaptive Measurement Noise (R) based on signal quality
- * - Compression Artifact Blocking (Rule-based override)
- * - Hypo Safety Passthrough (Data transparency in critical lows)
- * - Zero-Lag Trend Estimation
- *
- * @author MTR, Lyra & The OpenAPS AI Team
+ * Adaptive UKF smoothing: unscented Kalman filter plus rule-based safety (compression lows, hypo).
  */
 @Singleton
 class AdaptiveSmoothingPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     rh: ResourceHelper,
     private val rxBus: RxBus,
-    private val aapsSchedulers: AapsSchedulers,
+    private val config: Config,
     private val persistenceLayer: PersistenceLayer,
     private val sp: SP,
     private val iobCobCalculator: IobCobCalculator,
@@ -108,7 +91,6 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private val R_INIT = 25.0
     private val R_MIN = 16.0
     private val R_MAX = 196.0
-    private val R_EFF_MAX = 400.0
 
     // Adaptation Logic
     private val innovationWindow = 48
@@ -122,7 +104,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private val rawInnovationVariance = ArrayDeque<Double>(innovationWindow + 1)
     private var lastProcessedTimestamp: Long = 0
     private var lastSensorChangeTimestamp: Long = 0
-    private var sensorSessionId: Int = 0
+
+    private val smoothingSupervisor = SupervisorJob()
+    private val smoothingScope = CoroutineScope(smoothingSupervisor + Dispatchers.IO)
 
     // UI-facing informational quality (sent over RxBus, throttled to avoid spam)
     private var lastAdaptiveSmoothingQualityTier: AdaptiveSmoothingQualityTier? = null
@@ -132,10 +116,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     @Volatile
     private var lastQualitySnapshot: AdaptiveSmoothingQualitySnapshot? = null
 
-    // Events
     private val resetRequested = AtomicBoolean(false)
-    private var sensorChangeJob: kotlinx.coroutines.Job? = null
-    private var loadSensorChangeJob: kotlinx.coroutines.Job? = null
+    private var sensorObservationJob: Job? = null
+    private var sensorBackfillJob: Job? = null
 
     // Safety Context
     private data class GlycemicContext(
@@ -156,8 +139,24 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     init {
         initSigmaWeights()
         loadPersistedParameters()
-        subscribeToSensorChanges()
-        loadLastSensorChange()
+        sensorObservationJob = smoothingScope.launch {
+            if (!config.awaitInitialized(30_000L)) {
+                aapsLogger.warn(LTag.GLUCOSE, "AdaptiveSmoothing: config not initialized; sensor TE observation not started")
+                return@launch
+            }
+            try {
+                persistenceLayer.observeChanges(TE::class.java)
+                    .debounce(SENSOR_CHANGE_DEBOUNCE_SECONDS * 1000)
+                    .collect { checkForSensorChange() }
+            } catch (t: Throwable) {
+                aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: sensor subscription error", t)
+            }
+        }
+        sensorBackfillJob = smoothingScope.launch {
+            if (!config.awaitInitialized(30_000L)) return@launch
+            runCatching { loadInitialSensorChangeFromDb() }
+                .onFailure { t -> aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: loadLastSensorChange error", t) }
+        }
     }
 
     private fun initSigmaWeights() {
@@ -171,16 +170,20 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     }
 
     override fun onStop() {
+        sensorObservationJob?.cancel()
+        sensorBackfillJob?.cancel()
+        smoothingSupervisor.cancelChildren()
         super.onStop()
-        sensorChangeJob?.cancel()
-        loadSensorChangeJob?.cancel()
     }
 
     // ============================================================
     // MAIN SMOOTHING LOOP (The "Hybrid" Logic)
     // ============================================================
 
-    override fun smooth(data: MutableList<InMemoryGlucoseValue>): MutableList<InMemoryGlucoseValue> {
+    override suspend fun smooth(
+        data: MutableList<InMemoryGlucoseValue>,
+        context: SmoothingContext
+    ): MutableList<InMemoryGlucoseValue> {
         if (data.size < 2) {
             // Always provide a valid smoothed payload for downstream workers.
             copyRawToSmoothed(data)
@@ -199,11 +202,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             val previousTimestamp = lastProcessedTimestamp
             lastProcessedTimestamp = data[0].timestamp
 
-            // 3. Process Data Segment (Forward Filter + Backward Smoother)
-            // Note: We process the whole segment here, but focusing on the robust estimation
-            // IOB for compression heuristics: compute once per smooth pass. Per-point runBlocking here
-            // used to run while LoadBgDataWorker holds AutosensDataStore.dataLock → ANR / UI freeze.
-            val cachedIobTotalU = runBlocking {
+            // IOB for compression heuristics: prefer caller-supplied cache (e.g. LoadBgDataWorker).
+            val cachedIobTotalU = context.cachedTotalIobUnits ?: run {
                 val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
                 val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob
                 bolusIob + basalIob
@@ -267,10 +267,6 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         var processedPoints = 0
         var compressionPoints = 0
         var outlierPoints = 0
-        
-        // Prepare storage for RTS Smoother
-        val forwardStates = ArrayList<FilterState>(data.size)
-        val results = DoubleArray(data.size)
 
         // --- FORWARD PASS (FILTER) ---
         for (i in startIdx downTo 0) {
@@ -289,7 +285,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             
             val dtClamped = dt.coerceIn(1.0, 15.0) // Clamp to reasonable limits
 
-            // --- 🛡️ ADAPTIVE SAFETY GUARDRAILS ---
+            // --- ADAPTIVE SAFETY GUARDRAILS ---
             // Calculate heuristic context for this point
             val ctx = calculateGlycemicContext(data, i, cachedIobTotalU)
             
@@ -305,11 +301,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             // 1. Standard Prediction (Baseline Physiology)
             var (xPred, PPred) = predict(x, P, Q_FIXED, dtClamped)
             
-            // 2. 🚀 DYNAMIC MANEUVER DETECTION (Zero-Lag Hyper)
-            // "Une hyper rapide sera-t-elle bien traitée ?" -> OUI.
-            // Check if the measurement deviates significantly from prediction (Innovation)
-            // If so, it means our "Baseline Q" was too conservative for this meal/stress spike.
-            // We retrospectively inflate Q (Process Noise) to tell the filter: "Trust the data, the body is moving fast!"
+            // 2. DYNAMIC MANEUVER DETECTION (Zero-Lag Hyper): large positive innovation inflates Q.
             
             val preFitInnovation = z - xPred[0]
             val preFitSigma = sqrt(PPred[0] + R) // Expected deviation
@@ -321,7 +313,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             val isRapidManeuver = (normInnovation > 2.5 && preFitInnovation > 0)
             
             if (isRapidManeuver) {
-                 aapsLogger.debug(LTag.GLUCOSE, "HybridSmoothing: 🚀 RAPID RISE DETECTED (Innov=${preFitInnovation.toInt()}). Inflating Q for Zero-Lag.")
+                 aapsLogger.debug(LTag.GLUCOSE, "HybridSmoothing: RAPID RISE DETECTED (Innov=${preFitInnovation.toInt()}). Inflating Q for Zero-Lag.")
                  
                  // Inflate Q_rate massively to allow instant velocity adaptation
                  val Q_ADAPTIVE = Q_FIXED.clone()
@@ -333,8 +325,6 @@ class AdaptiveSmoothingPlugin @Inject constructor(
                  xPred = result.first
                  PPred = result.second
             }
-
-            val stateBefore = FilterState(x.copyOf(), P.copyOf(), xPred.copyOf(), PPred.copyOf(), dtClamped)
 
             // 3. Update (Measurement)
             // Handling Artifacts:
@@ -369,10 +359,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
                 // Execute Update
                 update(xPred, PPred, z, R, x, P)
 
-                // Store Result
-                // --- 🚨 HYPO KINEMATICS (G7/One+ Safety) ---
-                // "Un marqueur qui va indiquer avant que ça chute"
-                
+                // Hypo kinematics (steep drops): limit masking of real lows.
                 // 1. Predict Future BG (20 min horizon) using current Velocity state
                 val velocity = x[1] // mg/dL per min
                 val predictedBg20min = x[0] + (velocity * 20.0)
@@ -387,20 +374,11 @@ class AdaptiveSmoothingPlugin @Inject constructor(
                                    (velocity < -3.0)
 
                 if (isKineticHypo) {
-                     // ⚠️ PRE-HYPO MODE: ZERO-LAG / NEGATIVE LAG
-                     // We must NOT mask the drop. We trust the raw data or the velocity.
-                     
-                     // If the filter is lagging behind the drop (Filter > Raw), 
-                     // we force the smoothed value DOWN to the raw value immediately.
                      if (x[0] > z) {
-                         x[0] = z 
+                         x[0] = z
                      }
-                     
-                     // If the velocity is extremely steep, we can even "lead" the drop slightly 
-                     // to alert the loop earlier (Projected 5 min ahead)
                      if (velocity < -2.0) {
-                         // Lead by 2 minutes to overcome any sensor lag
-                         x[0] += (velocity * 2.0) 
+                         x[0] += (velocity * 2.0)
                      }
                      
                      aapsLogger.debug(LTag.GLUCOSE, "HybridSmoothing: KINETIC HYPO DETECTED! Vel=${velocity}, Pred20=${predictedBg20min}. Forcing low.")
@@ -415,10 +393,6 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             // Determine Trend Arrow from Rate (State x[1])
             // This is superior to standard Delta
             data[i].trendArrow = computeTrendArrow(x[1])
-            
-            // Store for smoother
-            results[i] = x[0]
-            forwardStates.add(0, stateBefore) // Store in reverse order of processing (Newest first)
         }
         
         // Update learned R globally
@@ -453,21 +427,10 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             lastAdaptiveSmoothingQualityEventAt = now
             rxBus.send(EventAdaptiveSmoothingQuality(tier, learnedR, outlierRate, compressionRate))
         }
-
-        // --- BACKWARD PASS (RTS SMOOTHER) ---
-        // Retrospectively improves history. Important for loop learning.
-        // We only smooth if we have enough states
-        if (forwardStates.size >= 3) {
-             var xSmooth = doubleArrayOf(results[0], 0.0) // Start with newest filter result
-             // Note: x[1] needs to be preserved from filter or re-estimated. 
-             // Ideally we run RTS properly. For now, simplifed RTS or just Filter is huge improvement.
-             // Given complexity/time, Forward Filter is 90% of value. Let's stick to Forward Filter output for 'smoothed' 
-             // to ensure realtime consistency, but update history points for clean graphing.
-        }
     }
 
     // ============================================================
-    // 🛡️ HEURISTIC SAFETY LOGIC (From Adaptive Plugin)
+    // HEURISTIC SAFETY LOGIC
     // ============================================================
 
     private fun calculateGlycemicContext(data: List<InMemoryGlucoseValue>, index: Int, cachedIobTotalU: Double): GlycemicContext {
@@ -481,7 +444,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         // Heuristic Delta (Raw) 
         val rawDelta = valCur - valOld1
         
-        // IOB Safety (current IOB; same for all points — was previously re-fetched per point via runBlocking)
+        // IOB Safety (current IOB; same for all points in this pass)
         val iob = cachedIobTotalU
 
         // Night
@@ -525,14 +488,6 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     // ============================================================
     // UKF MATHEMATICS (Unscented Transform)
     // ============================================================
-
-    private data class FilterState(
-        val x: DoubleArray,
-        val P: DoubleArray,
-        val xPred: DoubleArray,
-        val PPred: DoubleArray,
-        val dt: Double
-    )
 
     private fun predict(x: DoubleArray, P: DoubleArray, Q: DoubleArray, dt: Double): Pair<DoubleArray, DoubleArray> {
         // Generate Sigma Points
@@ -592,8 +547,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             Pzz += Wc[i] * dz * dz
         }
         Pzz += R
-
-        if (Pzz < 1e-6) return // Singularity check
+        val pzzSafe = max(Pzz, 1e-6)
 
         // Cross Covariance Pxz
         val Pxz = DoubleArray(n)
@@ -607,8 +561,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
         // Kalman Gain
         val K = DoubleArray(n)
-        K[0] = Pxz[0] / Pzz
-        K[1] = Pxz[1] / Pzz
+        K[0] = Pxz[0] / pzzSafe
+        K[1] = Pxz[1] / pzzSafe
 
         // Update State
         val innovation = z - zPred
@@ -618,10 +572,10 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         x[1] = x[1].coerceIn(-5.0, 5.0) // Clamp rate physics
 
         // Update Covariance
-        P[0] = PPred[0] - K[0] * Pzz * K[0]
-        P[1] = PPred[1] - K[0] * Pzz * K[1]
-        P[2] = PPred[2] - K[1] * Pzz * K[0]
-        P[3] = PPred[3] - K[1] * Pzz * K[1]
+        P[0] = PPred[0] - K[0] * pzzSafe * K[0]
+        P[1] = PPred[1] - K[0] * pzzSafe * K[1]
+        P[2] = PPred[2] - K[1] * pzzSafe * K[0]
+        P[3] = PPred[3] - K[1] * pzzSafe * K[1]
         
         P[0] = max(P[0], 0.1)
         P[3] = max(P[3], 0.001)
@@ -717,11 +671,10 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             val smoothed = gv.smoothed
             if (smoothed == null || !smoothed.isFinite()) {
                 gv.smoothed = gv.value.coerceIn(MIN_VALID_BG, MAX_VALID_BG)
-                if (gv.trendArrow == null) gv.trendArrow = TrendArrow.FLAT
+                gv.trendArrow = TrendArrow.FLAT
                 return@forEach
             }
             gv.smoothed = smoothed.coerceIn(MIN_VALID_BG, MAX_VALID_BG)
-            if (gv.trendArrow == null) gv.trendArrow = TrendArrow.FLAT
         }
     }
 
@@ -749,8 +702,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private fun shouldResetLearning(currentTimestamp: Long): Boolean {
         if (resetRequested.getAndSet(false)) return true
         if (lastProcessedTimestamp == 0L) return true
-        val diff = (currentTimestamp - lastProcessedTimestamp) / 60000.0
-        if (diff < 0 || diff > 1440) return true
+        val diffMinutes = (currentTimestamp - lastProcessedTimestamp) / 60000.0
+        if (diffMinutes < 0) return false
+        if (diffMinutes > 1440) return true
         return false
     }
 
@@ -758,46 +712,28 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         learnedR = R_INIT
         innovations.clear()
         rawInnovationVariance.clear()
-        sensorSessionId++
         lastAdaptiveSmoothingQualityTier = null
         lastQualitySnapshot = null
         aapsLogger.info(LTag.GLUCOSE, "HybridSmoothing: Learning Reset. R=$R_INIT")
         savePersistedParameters()
     }
 
-    private fun subscribeToSensorChanges() {
-        sensorChangeJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                persistenceLayer.observeChanges(TE::class.java)
-                    .debounce(SENSOR_CHANGE_DEBOUNCE_SECONDS * 1000)
-                    .collect { 
-                        checkForSensorChange()
-                    }
-            } catch (t: Exception) {
-                aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: sensor subscription error", t)
-            }
+    private suspend fun loadInitialSensorChangeFromDb() {
+        val events = persistenceLayer.getTherapyEventDataFromTime(System.currentTimeMillis() - 30L * 24 * 3600 * 1000, false)
+        val latest = events.asSequence().filter { it.type == TE.Type.SENSOR_CHANGE }.maxByOrNull { it.timestamp }
+        if (latest != null && latest.timestamp > lastSensorChangeTimestamp) {
+            lastSensorChangeTimestamp = latest.timestamp
+            resetRequested.set(true)
         }
     }
 
-    private fun loadLastSensorChange() {
-        loadSensorChangeJob?.cancel()
-        loadSensorChangeJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                val events = persistenceLayer.getTherapyEventDataFromTime(System.currentTimeMillis() - 30L*24*3600*1000, false)
-                val latest = events.asSequence().filter { it.type == TE.Type.SENSOR_CHANGE }.maxByOrNull { it.timestamp }
-
-                if (latest != null && latest.timestamp > lastSensorChangeTimestamp) {
-                    lastSensorChangeTimestamp = latest.timestamp
-                    resetRequested.set(true)
-                }
-            } catch (t: Exception) {
-                aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: loadLastSensorChange error", t)
-            }
-        }
-    }
-    
     private fun checkForSensorChange() {
-        loadLastSensorChange()
+        sensorBackfillJob?.cancel()
+        sensorBackfillJob = smoothingScope.launch {
+            if (!config.awaitInitialized(30_000L)) return@launch
+            runCatching { loadInitialSensorChangeFromDb() }
+                .onFailure { t -> aapsLogger.error(LTag.GLUCOSE, "AdaptiveSmoothing: loadLastSensorChange error", t) }
+        }
     }
 
     private companion object {

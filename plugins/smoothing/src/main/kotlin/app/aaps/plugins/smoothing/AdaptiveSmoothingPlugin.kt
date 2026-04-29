@@ -21,6 +21,8 @@ import app.aaps.core.interfaces.smoothing.Smoothing
 import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.core.ui.compose.icons.IcStats
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.DoubleNonKey
+import app.aaps.core.keys.LongNonKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.interfaces.sharedPreferences.SP
 import java.util.ArrayDeque
@@ -685,17 +687,17 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     private fun loadPersistedParameters() {
         try {
-            learnedR = sp.getDouble("ukf_learned_r", R_INIT)
-            lastProcessedTimestamp = sp.getLong("ukf_last_processed_timestamp", 0L)
-            lastSensorChangeTimestamp = sp.getLong("ukf_sensor_change_timestamp", 0L)
+            learnedR = sp.getDouble(DoubleNonKey.UkfLearnedR.key, R_INIT)
+            lastProcessedTimestamp = sp.getLong(LongNonKey.UkfLastProcessedTimestamp.key, LongNonKey.UkfLastProcessedTimestamp.defaultValue)
+            lastSensorChangeTimestamp = sp.getLong(LongNonKey.UkfSensorChangeTimestamp.key, LongNonKey.UkfSensorChangeTimestamp.defaultValue)
         } catch (e: Exception) { learnedR = R_INIT }
     }
 
     private fun savePersistedParameters() {
         try {
-            sp.putDouble("ukf_learned_r", learnedR)
-            sp.putLong("ukf_last_processed_timestamp", lastProcessedTimestamp)
-            sp.putLong("ukf_sensor_change_timestamp", lastSensorChangeTimestamp)
+            sp.putDouble(DoubleNonKey.UkfLearnedR.key, learnedR)
+            sp.putLong(LongNonKey.UkfLastProcessedTimestamp.key, lastProcessedTimestamp)
+            sp.putLong(LongNonKey.UkfSensorChangeTimestamp.key, lastSensorChangeTimestamp)
         } catch (e: Exception) { }
     }
 

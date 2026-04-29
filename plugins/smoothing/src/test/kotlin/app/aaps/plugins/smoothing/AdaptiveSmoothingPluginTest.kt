@@ -9,6 +9,8 @@ import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.DoubleNonKey
+import app.aaps.core.keys.LongNonKey
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.emptyFlow
@@ -31,9 +33,9 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
 
     @BeforeEach
     fun setUpPlugin() {
-        whenever(sp.getDouble(eq("ukf_learned_r"), any())).thenReturn(25.0)
-        whenever(sp.getLong(eq("ukf_last_processed_timestamp"), any())).thenReturn(0L)
-        whenever(sp.getLong(eq("ukf_sensor_change_timestamp"), any())).thenReturn(0L)
+        whenever(sp.getDouble(eq(DoubleNonKey.UkfLearnedR.key), any())).thenReturn(25.0)
+        whenever(sp.getLong(eq(LongNonKey.UkfLastProcessedTimestamp.key), any())).thenReturn(0L)
+        whenever(sp.getLong(eq(LongNonKey.UkfSensorChangeTimestamp.key), any())).thenReturn(0L)
 
         whenever(persistenceLayer.observeChanges(eq(TE::class.java))).thenReturn(emptyFlow())
         whenever(config.appInitialized).thenReturn(true)

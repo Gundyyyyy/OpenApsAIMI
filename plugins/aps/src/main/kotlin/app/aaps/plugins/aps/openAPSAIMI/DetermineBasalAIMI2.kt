@@ -4361,7 +4361,19 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val effectiveTbrRate = tbrRate.coerceAtMost(modeTbrLimit)
             
             // ✅ TBR PERMANENTE — 🛡️ Increased to 30m for pump compatibility
-            setTempBasal(effectiveTbrRate, 30, profile, rT, currenttemp, overrideSafetyLimits = overrideSafety, adaptiveMultiplier = 1.0)
+            // Meal legacy modes need an immediate pre-emptive TBR.
+            // Use exact path to avoid dynamic controller reshaping at mode start.
+            setTempBasal(
+                effectiveTbrRate,
+                30,
+                profile,
+                rT,
+                currenttemp,
+                overrideSafetyLimits = overrideSafety,
+                forceExact = true,
+                adaptiveMultiplier = 1.0
+            )
+            consoleLog.add("MEAL_TBR_FORCE_EXACT rate=${"%.2f".format(effectiveTbrRate)}U/h duration=30m")
             val deltaTag = if (delta > 0f) "+%.1f".format(delta) else "%.1f".format(delta)
             consoleLog.add("📈 MEAL_TBR [${runtime/60}m]: BG=${bg.toInt()} Δ=$deltaTag → ${"%.2f".format(effectiveTbrRate)}U/h (30m) 🛡️anti-resist")
         }

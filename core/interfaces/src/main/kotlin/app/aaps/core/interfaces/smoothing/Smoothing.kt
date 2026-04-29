@@ -12,7 +12,7 @@ interface Smoothing {
      *
      * @return new List with smoothed values (smoothed values are stored in [InMemoryGlucoseValue.smoothed])
      */
-    fun smooth(
+    suspend fun smooth(
         data: MutableList<InMemoryGlucoseValue>,
         context: SmoothingContext = SmoothingContext.NONE
     ): MutableList<InMemoryGlucoseValue>

@@ -6,6 +6,8 @@ import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.keys.DoubleNonKey
+import app.aaps.core.keys.LongNonKey
 import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
@@ -29,9 +31,9 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
 
     @BeforeEach
     fun setUpPlugin() {
-        whenever(sp.getDouble(eq("ukf_learned_r"), any())).thenReturn(25.0)
-        whenever(sp.getLong(eq("ukf_last_processed_timestamp"), any())).thenReturn(0L)
-        whenever(sp.getLong(eq("ukf_sensor_change_timestamp"), any())).thenReturn(0L)
+        whenever(sp.getDouble(eq(DoubleNonKey.UkfLearnedR.key), any())).thenReturn(25.0)
+        whenever(sp.getLong(eq(LongNonKey.UkfLastProcessedTimestamp.key), any())).thenReturn(0L)
+        whenever(sp.getLong(eq(LongNonKey.UkfSensorChangeTimestamp.key), any())).thenReturn(0L)
 
         whenever(persistenceLayer.observeChanges(eq(TE::class.java))).thenReturn(emptyFlow())
 
@@ -59,7 +61,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
             90.0, 158.0, 95.0, 150.0, 100.0, 145.0
         )
 
-        val smoothed = plugin.smooth(series, SmoothingContext.NONE)
+        val smoothed = runBlocking { plugin.smooth(series, SmoothingContext.NONE) }
 
         val rawStd = stdDev(smoothed.map { it.value })
         val smoothStd = stdDev(smoothed.map { it.smoothed!! })
@@ -80,7 +82,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
             72.0, 54.0, 112.0, 118.0, 121.0, 119.0
         )
 
-        val smoothed = plugin.smooth(series, SmoothingContext.NONE)
+        val smoothed = runBlocking { plugin.smooth(series, SmoothingContext.NONE) }
         val rawMin = smoothed.minOf { it.value }
         val smoothAtRawMin = smoothed.first { it.value == rawMin }.smoothed!!
 
@@ -104,7 +106,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
         }
         sparse.reverse()
 
-        val smoothed = plugin.smooth(sparse, SmoothingContext.NONE)
+        val smoothed = runBlocking { plugin.smooth(sparse, SmoothingContext.NONE) }
 
         assertThat(smoothed.all { it.smoothed!!.isFinite() }).isTrue()
         assertThat(smoothed.maxOf { abs(it.smoothed!! - it.value) }).isLessThan(25.0)
@@ -116,7 +118,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
             102.0, 105.0, 111.0, 124.0, 146.0, 171.0, 198.0, 226.0, 244.0, 255.0
         )
 
-        val smoothed = plugin.smooth(series, SmoothingContext.NONE)
+        val smoothed = runBlocking { plugin.smooth(series, SmoothingContext.NONE) }
         val newest = smoothed.first()
 
         assertThat(newest.value).isEqualTo(255.0)

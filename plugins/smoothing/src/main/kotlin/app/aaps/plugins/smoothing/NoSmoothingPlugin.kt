@@ -28,7 +28,7 @@ class NoSmoothingPlugin @Inject constructor(
     aapsLogger, rh
 ), Smoothing {
 
-    override fun smooth(
+    override suspend fun smooth(
         data: MutableList<InMemoryGlucoseValue>,
         @Suppress("UNUSED_PARAMETER") context: SmoothingContext
     ): MutableList<InMemoryGlucoseValue> = data

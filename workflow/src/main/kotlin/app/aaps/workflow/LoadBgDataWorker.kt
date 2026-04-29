@@ -3,6 +3,7 @@ package app.aaps.workflow
 import android.content.Context
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import app.aaps.core.data.iob.InMemoryGlucoseValue
 import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.aps.AutosensDataStore
 import app.aaps.core.interfaces.db.PersistenceLayer
@@ -51,10 +52,12 @@ class LoadBgDataWorker(
         val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
         val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob
         val smoothingContext = SmoothingContext(cachedTotalIobUnits = bolusIob + basalIob)
+        val workingCopy: MutableList<InMemoryGlucoseValue> = synchronized(dataLock) {
+            bucketedData?.map { it.copy(smoothed = null) }?.toMutableList()
+        } ?: return
+        val smoothed = activePlugin.activeSmoothing.smooth(workingCopy, smoothingContext)
         synchronized(dataLock) {
-            bucketedData?.let {
-                bucketedData = activePlugin.activeSmoothing.smooth(it, smoothingContext)
-            }
+            bucketedData = smoothed
         }
     }
 

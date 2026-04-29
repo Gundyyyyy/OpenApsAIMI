@@ -17,6 +17,8 @@ import app.aaps.core.interfaces.smoothing.Smoothing
 import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.core.ui.compose.icons.IcStats
 import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.keys.DoubleNonKey
+import app.aaps.core.keys.LongNonKey
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -31,7 +33,6 @@ import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 /**
  * Adaptive UKF smoothing plugin.
@@ -162,7 +163,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     // MAIN SMOOTHING LOOP
     // ============================================================
 
-    override fun smooth(
+    override suspend fun smooth(
         data: MutableList<InMemoryGlucoseValue>,
         context: SmoothingContext
     ): MutableList<InMemoryGlucoseValue> {
@@ -180,7 +181,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             val previousTimestamp = lastProcessedTimestamp
             lastProcessedTimestamp = data[0].timestamp
 
-            val cachedIobTotalU = context.cachedTotalIobUnits ?: runBlocking(Dispatchers.IO) {
+            val cachedIobTotalU = context.cachedTotalIobUnits ?: run {
                 val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
                 val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob
                 bolusIob + basalIob
@@ -357,7 +358,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         // Heuristic Delta (Raw) 
         val rawDelta = valCur - valOld1
         
-        // IOB Safety (current IOB; same for all points — was previously re-fetched per point via runBlocking)
+        // IOB Safety (current IOB; same for all points in this pass)
         val iob = cachedIobTotalU
 
         // Night
@@ -593,17 +594,17 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     private fun loadPersistedParameters() {
         try {
-            learnedR = sp.getDouble("ukf_learned_r", R_INIT)
-            lastProcessedTimestamp = sp.getLong("ukf_last_processed_timestamp", 0L)
-            lastSensorChangeTimestamp = sp.getLong("ukf_sensor_change_timestamp", 0L)
+            learnedR = sp.getDouble(DoubleNonKey.UkfLearnedR.key, R_INIT)
+            lastProcessedTimestamp = sp.getLong(LongNonKey.UkfLastProcessedTimestamp.key, LongNonKey.UkfLastProcessedTimestamp.defaultValue)
+            lastSensorChangeTimestamp = sp.getLong(LongNonKey.UkfSensorChangeTimestamp.key, LongNonKey.UkfSensorChangeTimestamp.defaultValue)
         } catch (e: Exception) { learnedR = R_INIT }
     }
 
     private fun savePersistedParameters() {
         try {
-            sp.putDouble("ukf_learned_r", learnedR)
-            sp.putLong("ukf_last_processed_timestamp", lastProcessedTimestamp)
-            sp.putLong("ukf_sensor_change_timestamp", lastSensorChangeTimestamp)
+            sp.putDouble(DoubleNonKey.UkfLearnedR.key, learnedR)
+            sp.putLong(LongNonKey.UkfLastProcessedTimestamp.key, lastProcessedTimestamp)
+            sp.putLong(LongNonKey.UkfSensorChangeTimestamp.key, lastSensorChangeTimestamp)
         } catch (e: Exception) { }
     }
 

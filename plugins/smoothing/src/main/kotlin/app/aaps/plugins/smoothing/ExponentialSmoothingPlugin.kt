@@ -31,7 +31,7 @@ class ExponentialSmoothingPlugin @Inject constructor(
 ), Smoothing {
 
     @Suppress("LocalVariableName")
-    override fun smooth(
+    override suspend fun smooth(
         data: MutableList<InMemoryGlucoseValue>,
         @Suppress("UNUSED_PARAMETER") context: SmoothingContext
     ): MutableList<InMemoryGlucoseValue> {

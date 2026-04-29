@@ -5,6 +5,7 @@ import app.aaps.core.data.model.SourceSensor
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.smoothing.Smoothing
+import app.aaps.core.interfaces.smoothing.SmoothingContext
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -12,12 +13,12 @@ import org.junit.jupiter.api.Test
 class DashboardCoherentGlucoseTest {
 
     private val preferGs = object : Smoothing {
-        override fun smooth(data: MutableList<InMemoryGlucoseValue>) = data
+        override suspend fun smooth(data: MutableList<InMemoryGlucoseValue>, context: SmoothingContext) = data
         override fun preferDashboardGlucoseFromGlucoseStatus(): Boolean = true
     }
 
     private val preferLastBg = object : Smoothing {
-        override fun smooth(data: MutableList<InMemoryGlucoseValue>) = data
+        override suspend fun smooth(data: MutableList<InMemoryGlucoseValue>, context: SmoothingContext) = data
         override fun preferDashboardGlucoseFromGlucoseStatus(): Boolean = false
     }
 

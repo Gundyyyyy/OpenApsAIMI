@@ -10,6 +10,7 @@ import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.smoothing.Smoothing
+import app.aaps.core.interfaces.smoothing.SmoothingContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.max
@@ -178,7 +179,10 @@ class ExponentialSmoothingPlugin @Inject constructor(
     */
 
     @Suppress("LocalVariableName")
-    override fun smooth(data: MutableList<InMemoryGlucoseValue>): MutableList<InMemoryGlucoseValue> {
+    override suspend fun smooth(
+        data: MutableList<InMemoryGlucoseValue>,
+        @Suppress("UNUSED_PARAMETER") context: SmoothingContext
+    ): MutableList<InMemoryGlucoseValue> {
         val sizeRecords = data.size
         val o1_sBG: ArrayList<Double> = ArrayList() // Premier ordre de lissage
         val o2_sBG: ArrayList<Double> = ArrayList() // Second ordre de lissage

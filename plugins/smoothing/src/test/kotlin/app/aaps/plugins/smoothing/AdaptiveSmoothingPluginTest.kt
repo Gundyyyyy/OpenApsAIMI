@@ -7,15 +7,18 @@ import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
 import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.DoubleNonKey
+import app.aaps.core.keys.LongNonKey
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mock
 import org.mockito.kotlin.any
-import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
 import kotlin.math.abs
@@ -30,22 +33,25 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
 
     @BeforeEach
     fun setUpPlugin() {
-        whenever(sp.getDouble(eq("ukf_learned_r"), any())).thenReturn(25.0)
-        whenever(sp.getLong(eq("ukf_last_processed_timestamp"), any())).thenReturn(0L)
-        whenever(sp.getLong(eq("ukf_sensor_change_timestamp"), any())).thenReturn(0L)
+        whenever(sp.getDouble(eq(DoubleNonKey.UkfLearnedR.key), any())).thenReturn(25.0)
+        whenever(sp.getLong(eq(LongNonKey.UkfLastProcessedTimestamp.key), any())).thenReturn(0L)
+        whenever(sp.getLong(eq(LongNonKey.UkfSensorChangeTimestamp.key), any())).thenReturn(0L)
 
         whenever(persistenceLayer.observeChanges(eq(TE::class.java))).thenReturn(emptyFlow())
-        whenever { persistenceLayer.getTherapyEventDataFromTime(any(), any()) } doReturn emptyList()
-
-        whenever { iobCobCalculator.calculateIobFromBolus() } doReturn IobTotal(time = 0L, iob = 0.2)
-        whenever { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended() } doReturn IobTotal(time = 0L, iob = 0.2)
+        whenever(config.appInitialized).thenReturn(true)
         whenever(preferences.get(BooleanKey.OApsAIMInight)).thenReturn(true)
+
+        runBlocking {
+            whenever(persistenceLayer.getTherapyEventDataFromTime(any(), any())).thenReturn(emptyList())
+            whenever(iobCobCalculator.calculateIobFromBolus()).thenReturn(IobTotal(time = 0L, iob = 0.2))
+            whenever(iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended()).thenReturn(IobTotal(time = 0L, iob = 0.2))
+        }
 
         plugin = AdaptiveSmoothingPlugin(
             aapsLogger = aapsLogger,
             rh = rh,
             rxBus = rxBus,
-            aapsSchedulers = aapsSchedulers,
+            config = config,
             persistenceLayer = persistenceLayer,
             sp = sp,
             iobCobCalculator = iobCobCalculator,
@@ -60,7 +66,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
             90.0, 158.0, 95.0, 150.0, 100.0, 145.0
         )
 
-        val smoothed = plugin.smooth(series)
+        val smoothed = runBlocking { plugin.smooth(series, SmoothingContext.NONE) }
 
         val rawStd = stdDev(smoothed.map { it.value })
         val smoothStd = stdDev(smoothed.map { it.smoothed!! })
@@ -72,15 +78,17 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
 
     @Test
     fun `compression low artifact is blocked when drop is implausible and low iob`() {
-        whenever { iobCobCalculator.calculateIobFromBolus() } doReturn IobTotal(time = 0L, iob = 0.1)
-        whenever { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended() } doReturn IobTotal(time = 0L, iob = 0.1)
+        runBlocking {
+            whenever(iobCobCalculator.calculateIobFromBolus()).thenReturn(IobTotal(time = 0L, iob = 0.1))
+            whenever(iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended()).thenReturn(IobTotal(time = 0L, iob = 0.1))
+        }
 
         val series = cgmSeries(
             118.0, 116.0, 115.0, 112.0, 108.0, 104.0,
             72.0, 54.0, 112.0, 118.0, 121.0, 119.0
         )
 
-        val smoothed = plugin.smooth(series)
+        val smoothed = runBlocking { plugin.smooth(series, SmoothingContext.NONE) }
         val snapshot = plugin.lastAdaptiveSmoothingQualitySnapshot()
 
         val rawMin = smoothed.minOf { it.value }
@@ -109,7 +117,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
         }
         sparse.reverse()
 
-        val smoothed = plugin.smooth(sparse)
+        val smoothed = runBlocking { plugin.smooth(sparse, SmoothingContext.NONE) }
 
         assertThat(smoothed.all { it.smoothed!!.isFinite() }).isTrue()
         assertThat(smoothed.maxOf { abs(it.smoothed!! - it.value) }).isLessThan(25.0)
@@ -122,7 +130,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
             102.0, 105.0, 111.0, 124.0, 146.0, 171.0, 198.0, 226.0, 244.0, 255.0
         )
 
-        val smoothed = plugin.smooth(series)
+        val smoothed = runBlocking { plugin.smooth(series, SmoothingContext.NONE) }
         val newest = smoothed.first()
 
         assertThat(newest.value).isEqualTo(255.0)
@@ -142,7 +150,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
                 value = bg
             )
         }.toMutableList()
-        values.reverse() // plugin expects newest -> oldest
+        values.reverse()
         return values
     }
 

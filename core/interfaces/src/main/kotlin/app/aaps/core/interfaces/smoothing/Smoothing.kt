@@ -9,14 +9,18 @@ interface Smoothing {
      * Smooth values in List
      *
      * @param data  input glucose values ([0] to be the most recent one)
+     * @param context optional hints (IOB cache, etc.); plugins may ignore if unused
      *
      * @return new List with smoothed values (smoothed values are stored in [InMemoryGlucoseValue.smoothed])
      */
-    fun smooth(data: MutableList<InMemoryGlucoseValue>): MutableList<InMemoryGlucoseValue>
+    suspend fun smooth(
+        data: MutableList<InMemoryGlucoseValue>,
+        context: SmoothingContext = SmoothingContext.NONE
+    ): MutableList<InMemoryGlucoseValue>
 
     /**
      * Optional: last adaptive-smoothing quality snapshot (non-null only for plugins that support it).
-     * Updated synchronously during [smooth] on the worker thread.
+     * Updated when [smooth] completes (same coroutine as the caller).
      */
     fun lastAdaptiveSmoothingQualitySnapshot(): AdaptiveSmoothingQualitySnapshot? = null
 

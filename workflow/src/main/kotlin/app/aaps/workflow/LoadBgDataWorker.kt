@@ -11,6 +11,7 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
+import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventBucketedDataCreated
 import app.aaps.core.interfaces.utils.DateUtil
@@ -48,14 +49,17 @@ class LoadBgDataWorker(
     }
 
     /**
-     * Lissage hors du verrou [AutosensDataStore.dataLock] : copie défensive, traitement, puis assignation.
-     * Évite de bloquer le thread UI (ex. [AutosensDataStore.lastBg]) pendant tout le UKF + IOB.
+     * Lissage hors du verrou [AutosensDataStore.dataLock] : IOB puis copie défensive, traitement, assignation.
+     * L’IOB est calculé en suspend avant toute copie pour éviter du travail lourd inutile pendant [smooth].
      */
-    private fun AutosensDataStore.smoothData(activePlugin: ActivePlugin) {
+    private suspend fun AutosensDataStore.smoothData(activePlugin: ActivePlugin, iobCobCalculator: IobCobCalculator) {
+        val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
+        val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob
+        val smoothingContext = SmoothingContext(cachedTotalIobUnits = bolusIob + basalIob)
         val workingCopy: MutableList<InMemoryGlucoseValue> = synchronized(dataLock) {
             bucketedData?.map { it.copy(smoothed = null) }?.toMutableList()
         } ?: return
-        val smoothed = activePlugin.activeSmoothing.smooth(workingCopy)
+        val smoothed = activePlugin.activeSmoothing.smooth(workingCopy, smoothingContext)
         synchronized(dataLock) {
             bucketedData = smoothed
         }
@@ -67,7 +71,7 @@ class LoadBgDataWorker(
             ?: return Result.failure(workDataOf("Error" to "missing input data"))
 
         data.iobCobCalculator.ads.loadBgData(data.end, persistenceLayer, aapsLogger, dateUtil)
-        data.iobCobCalculator.ads.smoothData(activePlugin)
+        data.iobCobCalculator.ads.smoothData(activePlugin, data.iobCobCalculator)
         rxBus.send(EventBucketedDataCreated())
         data.iobCobCalculator.clearCache()
         return Result.success()

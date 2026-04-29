@@ -25,7 +25,10 @@ class AutodriveAuditor @Inject constructor() {
         safeCommand: app.aaps.plugins.aps.openAPSAIMI.autodrive.models.AutoDriveCommand
     ): String {
         val sb = StringBuilder()
-        
+
+        if (state.applyHypoRecoveryRaDampening) {
+            sb.append("🛡️ Post-hypo (Ra amorti) | ")
+        }
         if (state.bgVelocity > 1.5) sb.append("🚀 Montée Rapide")
         else if (state.bgVelocity < -1.5) sb.append("📉 Chute Rapide")
         

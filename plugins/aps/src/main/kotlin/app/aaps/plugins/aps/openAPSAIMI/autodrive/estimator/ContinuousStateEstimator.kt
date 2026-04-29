@@ -68,8 +68,16 @@ class ContinuousStateEstimator @Inject constructor(
         val isLowActivity = actualState.steps < 200
         val isDawnGuardActive = isDawnWindow && isLowActivity && (actualState.cob < 0.1)
 
+        // 🛡️ POST-HYPO RECOVERY GUARD (rescue-carbs rebound vs meal absorption)
+        // Wired from DetermineBasalAIMI2: min BG < 70 in last 75 min, no meal modes / COB / recent carb estimate.
+        val isHypoRecoveryGuard = actualState.applyHypoRecoveryRaDampening
+
         // 3. Matrice de Bruit de Processus Q & Matrice de Mesure R
-        val rVariance = if (isDawnGuardActive) 10.0 else 2.0 // Scepticisme CGM élevé au réveil
+        val rVariance = when {
+            isDawnGuardActive -> 10.0
+            isHypoRecoveryGuard -> 8.0
+            else -> 2.0
+        }
         
         // 🚀 DYNAMIC MANEUVER DETECTION (Phase 11 - Agile Tracking)
         // confirmation par combinedDelta si > 2.0 ou uamConfidence > 0.5
@@ -85,8 +93,13 @@ class ContinuousStateEstimator @Inject constructor(
         val uamBoost = if (actualState.uamConfidence > 0.7) 1.5 else 1.0
         val finalBaseQ = baseQ * uamBoost
 
-        // Sous Dawn Guard, on divise par 2.5 (x0.4) la vitesse à laquelle l'IA accepte que c'est un repas
-        val qRa = if (isDawnGuardActive && innovation > 0) finalBaseQ * 0.4 else finalBaseQ 
+        // Sous Dawn Guard ou post-hypo: réduire l'acceptation d'une montée comme "repas" (symétrie d'intention).
+        val qRa = when {
+            isDawnGuardActive && isHypoRecoveryGuard && innovation > 0 -> finalBaseQ * 0.25
+            isHypoRecoveryGuard && innovation > 0 -> finalBaseQ * 0.25
+            isDawnGuardActive && innovation > 0 -> finalBaseQ * 0.4
+            else -> finalBaseQ
+        }
         
         // 4. Prédiction de Covariance (P_k|k-1)
         pRa += qRa
@@ -101,7 +114,11 @@ class ContinuousStateEstimator @Inject constructor(
         // 7. Règles physiologiques d'Écrêtage (Clipping)
         // On limite le maximum de Ra possible (Vitesse d'absorption) pendant le Dawn Guard
         val baseMaxRa = (actualState.patientWeightKg / 10.0) * 1.5
-        val maxBiologicalRa = if (isDawnGuardActive) baseMaxRa * 0.5 else baseMaxRa // Cap Ra 50% plus bas
+        val maxBiologicalRa = when {
+            isHypoRecoveryGuard -> baseMaxRa * 0.3
+            isDawnGuardActive -> baseMaxRa * 0.5
+            else -> baseMaxRa
+        }
         estimatedRa = estimatedRa.coerceIn(0.0, maxBiologicalRa)
 
         // Désamorçage rapide (Decay)
@@ -117,7 +134,7 @@ class ContinuousStateEstimator @Inject constructor(
 
         aapsLogger.debug(
             LTag.APS,
-            "👽 [PSE UKF] dBG_attendu=${expectedNaturalDelta.format(2)} | dBG_vrai=${actualState.bgVelocity.format(2)} (G6?=$isG6) | Innov=${innovation.format(2)} || 🍽️ Ra_estimé = ${estimatedRa.format(2)} mg/dL/min"
+            "👽 [PSE UKF] dBG_attendu=${expectedNaturalDelta.format(2)} | dBG_vrai=${actualState.bgVelocity.format(2)} (G6?=$isG6) | Innov=${innovation.format(2)} | hypoRec=$isHypoRecoveryGuard || 🍽️ Ra_estimé = ${estimatedRa.format(2)} mg/dL/min"
         )
 
         // Renvoie l'état enrichi avec le modèle de digestion fantôme calculé

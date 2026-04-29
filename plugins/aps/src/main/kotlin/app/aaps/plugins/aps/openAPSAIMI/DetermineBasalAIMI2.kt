@@ -587,6 +587,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         private var lastSmbTimestampMem: Long = 0L
         /** Glycémie (mg/dL) au-dessus de laquelle la basale peut corriger malgré sport / contexte activité (SMB toujours off). */
         const val EXERCISE_BASAL_RESUME_BG_MGDL: Double = 220.0
+
+        /** Fenêtre pour [minBgInLastMinutes] : min BG &lt; 70 dans cette durée → amortissement Ra post-hypo (AutoDrive V3). */
+        private const val AUTODRIVE_POST_HYPO_MIN_BG_LOOKBACK_MINUTES = 75
     }
 
     private var internalLastSmbMillis: Long
@@ -1223,6 +1226,28 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
         return recentBGs
     }
+
+    /**
+     * Minimum recalculated BG (mg/dL) over bucketed data in [0, lookbackMinutes].
+     * Used for AutoDrive post-hypo rescue rebound guard (companion: AUTODRIVE_POST_HYPO_MIN_BG_LOOKBACK_MINUTES).
+     * Returns a high sentinel if no valid points.
+     */
+    private fun minBgInLastMinutes(lookbackMinutes: Int): Double {
+        val data = iobCobCalculator.ads.getBucketedDataTableCopy() ?: return 200.0
+        if (data.isEmpty()) return 200.0
+        val nowTimestamp = data.first().timestamp
+        val cutoff = nowTimestamp - lookbackMinutes * 60_000L
+        var minVal = Double.MAX_VALUE
+        for (i in data.indices) {
+            val row = data[i]
+            if (row.timestamp < cutoff) continue
+            if (row.value <= 39 || row.filledGap) continue
+            val v = row.recalculated
+            if (v < minVal) minVal = v
+        }
+        return if (minVal == Double.MAX_VALUE) 200.0 else minVal
+    }
+
     fun appendCompactLog(
         reason: StringBuilder,
         peakTime: Double,
@@ -5652,6 +5677,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             if (autodriveEngine != null) {
                 try {
                     val snapshot = physioAdapter.getLatestSnapshot()
+                    val recentEstCarbsT3c = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+                    val recentEstTimeT3c = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime).toLong()
+                    val estAgeMinT3c =
+                        if (recentEstTimeT3c > 0L) (System.currentTimeMillis() - recentEstTimeT3c) / 60000.0
+                        else Double.MAX_VALUE
+                    val hasRecentMealEstT3c = recentEstCarbsT3c > 10.0 && estAgeMinT3c in 0.0..45.0
+                    val applyHypoRecoveryRaT3c = minBgInLastMinutes(AUTODRIVE_POST_HYPO_MIN_BG_LOOKBACK_MINUTES) < 70.0 &&
+                        mealData.mealCOB < 0.1 &&
+                        !(mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime || hasRecentMealEstT3c)
                     val t3cShadowState = app.aaps.plugins.aps.openAPSAIMI.autodrive.models.AutoDriveState.createSafe(
                         bg = glucose_status.glucose,
                         bgVelocity = (shortAvgDeltaAdj.toDouble() / 5.0),
@@ -5668,7 +5702,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                         sourceSensor = glucose_status.sourceSensor,
                         maxIOB = this.maxIob,
                         maxSMB = this.maxSMB,
-                        highBgMaxSMB = this.maxSMBHB
+                        highBgMaxSMB = this.maxSMBHB,
+                        applyHypoRecoveryRaDampening = applyHypoRecoveryRaT3c
                     )
                     autodriveEngine.setShadowMode(true)
                     autodriveEngine.setIsActive(false)
@@ -6219,6 +6254,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     variableSensitivity.toDouble() / 10000.0
                 }
 
+                val autodriveMealSignals = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime ||
+                    mealData.mealCOB >= 0.1 || hasRecentMealEstimate
+                val applyHypoRecoveryRaDampening = minBgInLastMinutes(AUTODRIVE_POST_HYPO_MIN_BG_LOOKBACK_MINUTES) < 70.0 && !autodriveMealSignals
+
                 val adState = app.aaps.plugins.aps.openAPSAIMI.autodrive.models.AutoDriveState.createSafe(
                     bg = glucose_status.glucose,
                     bgVelocity = (shortAvgDeltaAdj.toDouble() / 5.0),
@@ -6238,7 +6277,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     maxSMB = this.maxSMB,
                     highBgMaxSMB = this.maxSMBHB,
                     combinedDelta = combinedDelta.toDouble(),
-                    uamConfidence = AimiUamHandler.confidenceOrZero()
+                    uamConfidence = AimiUamHandler.confidenceOrZero(),
+                    applyHypoRecoveryRaDampening = applyHypoRecoveryRaDampening
                 )
 
             // 🤖 Hardware-Awareness Logging

@@ -35,6 +35,9 @@ package app.aaps.plugins.aps.openAPSAIMI.autodrive.models
  * @property maxIOB Maximum allowed IOB safety limit.
  * @property maxSMB Maximum allowed SMB units for standard scenarios.
  * @property highBgMaxSMB Maximum allowed SMB units specifically for high BG corrections.
+ * @property combinedDelta Filtered combined delta (maneuver confirmation).
+ * @property uamConfidence UAM confidence in [0, 1].
+ * @property applyHypoRecoveryRaDampening If true, PSE damps meal-like Ra after recent hypo without meal context.
  */
 data class AutoDriveState(
     val bg: Double,
@@ -55,7 +58,8 @@ data class AutoDriveState(
     val maxSMB: Double = 1.0,
     val highBgMaxSMB: Double = 2.0,
     val combinedDelta: Double = 0.0,
-    val uamConfidence: Double = 0.0
+    val uamConfidence: Double = 0.0,
+    val applyHypoRecoveryRaDampening: Boolean = false
 ) {
     init {
         require(bg in 30.0..600.0) { "BG out of safe bounds: $bg" }
@@ -93,7 +97,8 @@ data class AutoDriveState(
             maxSMB: Double = 1.0,
             highBgMaxSMB: Double = 2.0,
             combinedDelta: Double = 0.0,
-            uamConfidence: Double = 0.0
+            uamConfidence: Double = 0.0,
+            applyHypoRecoveryRaDampening: Boolean = false
         ): AutoDriveState {
             return try {
                 AutoDriveState(
@@ -115,7 +120,8 @@ data class AutoDriveState(
                     maxSMB = maxSMB.coerceAtLeast(0.0),
                     highBgMaxSMB = highBgMaxSMB.coerceAtLeast(0.0),
                     combinedDelta = combinedDelta,
-                    uamConfidence = uamConfidence.coerceIn(0.0, 1.0)
+                    uamConfidence = uamConfidence.coerceIn(0.0, 1.0),
+                    applyHypoRecoveryRaDampening = applyHypoRecoveryRaDampening
                 )
             } catch (e: Exception) {
                 AutoDriveState(

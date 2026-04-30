@@ -4,9 +4,13 @@ import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Singleton
 
 /**
@@ -29,6 +33,9 @@ class AIMIDatabaseStepsProviderMTR @Inject constructor(
     private val persistenceLayer: PersistenceLayer,
     private val aapsLogger: AAPSLogger
 ) : AIMIStepsProviderMTR {
+    private val stepsRef = AtomicReference<List<app.aaps.core.data.model.SC>>(emptyList())
+    private val stepsRefreshInFlight = AtomicBoolean(false)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     companion object {
         private const val SOURCE_NAME = "Database"
@@ -42,9 +49,7 @@ class AIMIDatabaseStepsProviderMTR @Inject constructor(
         val searchStartMs = windowStartMs - SEARCH_WINDOW_BUFFER_MS // Add buffer for delayed data
         
         return try {
-            val allStepsCounts = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getStepsCountFromTimeToTime(searchStartMs, nowMs)
-            }
+            val allStepsCounts = stepsCached(searchStartMs, nowMs)
             
             if (allStepsCounts.isEmpty()) {
                 aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] No steps data in DB for {$windowMinutes}min window")
@@ -83,9 +88,7 @@ class AIMIDatabaseStepsProviderMTR @Inject constructor(
         return try {
             val now = System.currentTimeMillis()
             val searchStart = now - 210 * 60 * 1000L // Last 3.5 hours
-            val allSteps = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getStepsCountFromTimeToTime(searchStart, now)
-            }
+            val allSteps = stepsCached(searchStart, now)
             
             allSteps.maxOfOrNull { it.timestamp } ?: 0L
         } catch (e: Exception) {
@@ -107,4 +110,22 @@ class AIMIDatabaseStepsProviderMTR @Inject constructor(
     override fun sourceName(): String = SOURCE_NAME
     
     override fun priority(): Int = PRIORITY
+
+    private fun stepsCached(start: Long, end: Long): List<app.aaps.core.data.model.SC> {
+        refreshStepsAsync(start, end)
+        return stepsRef.get()
+    }
+
+    private fun refreshStepsAsync(start: Long, end: Long) {
+        if (!stepsRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                stepsRef.set(persistenceLayer.getStepsCountFromTimeToTime(start, end))
+            } catch (_: Exception) {
+                stepsRef.set(emptyList())
+            } finally {
+                stepsRefreshInFlight.set(false)
+            }
+        }
+    }
 }

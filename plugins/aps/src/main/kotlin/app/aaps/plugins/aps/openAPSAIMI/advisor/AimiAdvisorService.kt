@@ -1,9 +1,16 @@
 package app.aaps.plugins.aps.openAPSAIMI.advisor
 
 import android.content.Context
+import androidx.collection.LongSparseArray
+import app.aaps.core.data.model.TDD
 import app.aaps.core.interfaces.profile.EffectiveProfile
+import app.aaps.core.interfaces.stats.TIR
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.openAPSAIMI.advisor.data.AdvisorHistoryRepository
@@ -57,6 +64,21 @@ class AimiAdvisorService {
     private val rh: app.aaps.core.interfaces.resources.ResourceHelper?
     private val aapsLogger: app.aaps.core.interfaces.logging.AAPSLogger?
     private val pluginManager: app.aaps.plugins.aps.openAPSAIMI.plugins.AimiPluginManager
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val profileRef = AtomicReference<EffectiveProfile?>(null)
+    private val profileRefreshInFlight = AtomicBoolean(false)
+    private val orefRef = AtomicReference<OrefAnalysisReport?>(null)
+    private val orefRefreshInFlight = AtomicBoolean(false)
+    private val bgReadingsRef = AtomicReference<List<Double>>(emptyList())
+    private val bgReadingsRefreshInFlight = AtomicBoolean(false)
+    private val tirRangeRef = AtomicReference<Any?>(null)
+    private val tir54Ref = AtomicReference<Any?>(null)
+    private val tir250Ref = AtomicReference<Any?>(null)
+    private val tir140Ref = AtomicReference<Any?>(null)
+    private val tddRef = AtomicReference<Any?>(null)
+    private val tddTodayRef = AtomicReference<Any?>(null)
+    private val tirRefreshInFlight = AtomicBoolean(false)
+    private val tddRefreshInFlight = AtomicBoolean(false)
 
     // Constructor injection for dependencies
     constructor(
@@ -117,19 +139,13 @@ class AimiAdvisorService {
         val orefWindowDays = periodDays.toLong().coerceIn(1, OrefLocalPipeline.MAX_HISTORY_DAYS_FOR_MEMORY)
         val personalOrefMl = preferences?.get(BooleanKey.OApsAIMIAdvisorPersonalOrefMl) == true
         val orefInsight = if (persistenceLayer != null) {
-            runBlocking(Dispatchers.IO) {
-                try {
-                    OrefLocalPipeline(persistenceLayer).run(
-                        profileSnapshot = context.profile,
-                        windowDays = orefWindowDays,
-                        assetContext = assetContext,
-                        personalMlEnabled = personalOrefMl,
-                    )
-                } catch (t: Throwable) {
-                    aapsLogger?.error(app.aaps.core.interfaces.logging.LTag.APS, "OrefLocalPipeline failed", t)
-                    null
-                }
-            }
+            refreshOrefAsync(
+                profile = context.profile,
+                windowDays = orefWindowDays,
+                assetContext = assetContext,
+                personalMlEnabled = personalOrefMl
+            )
+            orefRef.get()
         } else null
 
         val recommendations = generateRecommendations(context, history, orefInsight).toMutableList()
@@ -172,7 +188,8 @@ class AimiAdvisorService {
         val metrics = calculateMetrics(periodDays)
 
         // 2. Snapshot Profile
-        val profile = runBlocking(Dispatchers.IO) { profileFunction.getProfile() }
+        refreshProfileAsync()
+        val profile = profileRef.get()
         val profileSnapshot = if (profile != null) {
             val totalBasalCalc = (0 until 24).sumOf { h -> profile.getBasal((h * 3600).toLong()) }
             val dia = (profile as? EffectiveProfile)?.iCfg?.dia ?: 5.0
@@ -243,7 +260,7 @@ class AimiAdvisorService {
         return if (totalDuration > 0) totalWeightedValue / totalDuration else 0.0
     }
 
-    private fun calculateMetrics(days: Int): AdvisorMetrics = runBlocking(Dispatchers.IO) {
+    private fun calculateMetrics(days: Int): AdvisorMetrics {
         // Fallback defaults
         var tir70_180 = 0.65
         var tir70_140 = 0.40
@@ -261,7 +278,7 @@ class AimiAdvisorService {
         if (tirCalculator != null) {
             try {
                 // Main Range (70-180)
-                val tirs = tirCalculator.calculate(days.toLong(), 70.0, 180.0)
+                val tirs = tirCalculateCached(days.toLong(), 70.0, 180.0, tirRangeRef)
                 val avgTir = tirCalculator.averageTIR(tirs)
                 
                 if (avgTir != null) {
@@ -271,21 +288,21 @@ class AimiAdvisorService {
                 }
 
                 // Very Low (<54) - Calculate with low=54
-                val tirs54 = tirCalculator.calculate(days.toLong(), 54.0, 180.0)
+                val tirs54 = tirCalculateCached(days.toLong(), 54.0, 180.0, tir54Ref)
                 val avg54 = tirCalculator.averageTIR(tirs54)
                 if (avg54 != null) {
                     timeBelow54 = (avg54.belowPct() ?: 0.0) / 100.0
                 }
                 
                 // Very High (>250) - Calculate with high=250
-                val tirs250 = tirCalculator.calculate(days.toLong(), 70.0, 250.0)
+                val tirs250 = tirCalculateCached(days.toLong(), 70.0, 250.0, tir250Ref)
                 val avg250 = tirCalculator.averageTIR(tirs250)
                 if (avg250 != null) {
                     timeAbove250 = (avg250.abovePct() ?: 0.0) / 100.0
                 }
 
                 // Tight Range (70-140)
-                val tirs140 = tirCalculator.calculate(days.toLong(), 70.0, 140.0)
+                val tirs140 = tirCalculateCached(days.toLong(), 70.0, 140.0, tir140Ref)
                 val avg140 = tirCalculator.averageTIR(tirs140)
                 if (avg140 != null) {
                     tir70_140 = (avg140.inRangePct() ?: 0.0) / 100.0
@@ -320,7 +337,7 @@ class AimiAdvisorService {
         // 2. Calculate Real TDD
         if (tddCalculator != null) {
             try {
-                val tdds = tddCalculator.calculate(days.toLong(), true)
+                val tdds = tddCalculateCached(days.toLong())
                 val avgTdd = tddCalculator.averageTDD(tdds)
                 
                 if (avgTdd != null) {
@@ -330,7 +347,7 @@ class AimiAdvisorService {
                     }
                 }
                 
-                val today = tddCalculator.calculateToday()
+                val today = tddTodayCached()
                 if (today != null) {
                     todayTdd = today.totalAmount
                 }
@@ -346,7 +363,10 @@ class AimiAdvisorService {
                 // Fetch BG readings directly for the period
                 val now = System.currentTimeMillis()
                 val fromTime = now - (days * 24 * 3600 * 1000L)
-                val bgReadings = persistenceLayer.getBgReadingsDataFromTimeToTime(fromTime, now, ascending = false)
+                refreshBgReadingsAsync(fromTime, now)
+                val bgReadings = bgReadingsRef.get().map { value ->
+                    object { val v = value }
+                }
                 
                 android.util.Log.d("AIMI_ADVISOR", "📊 Mean BG calculation: fetched ${bgReadings.size} BG readings")
                 
@@ -355,7 +375,7 @@ class AimiAdvisorService {
                 } else {
                     // Extract valid glucose values (GV objects have .value property)
                     val bgValues = bgReadings
-                        .map { it.value }
+                        .map { it.v }
                         .filter { it > 30.0 } // Filter out noise
                     
                     if (bgValues.isNotEmpty()) {
@@ -373,7 +393,7 @@ class AimiAdvisorService {
             android.util.Log.w("AIMI_ADVISOR", "⚠️ PersistenceLayer is null, cannot calculate mean BG. Using fallback $meanBg")
         }
 
-        AdvisorMetrics(
+        return AdvisorMetrics(
             periodLabel = "Last $days days",
             tir70_180 = tir70_180,
             tir70_140 = tir70_140,
@@ -896,7 +916,8 @@ class AimiAdvisorService {
 
     fun generateBasalProfileProposal(periodDays: Int = 7): BasalProfileProposal {
         val metrics = calculateMetrics(periodDays)
-        val profile = profileFunction?.let { runBlocking(Dispatchers.IO) { it.getProfile() } }
+        refreshProfileAsync()
+        val profile = profileRef.get()
         if (profile == null) {
             return BasalProfileProposal(
                 generatedAt = System.currentTimeMillis(),
@@ -1050,18 +1071,13 @@ class AimiAdvisorService {
             val now = System.currentTimeMillis()
             val fromTime = now - (periodDays * 24 * 3600 * 1000L)
             
-            val bgReadings = try {
-                runBlocking(Dispatchers.IO) {
-                    persistenceLayer.getBgReadingsDataFromTimeToTime(fromTime, now, false)
-                }.map { it.value }
-                    .filter { it > 30.0 }
-            } catch (e: Exception) {
-                emptyList<Double>()
-            }
+            refreshBgReadingsAsync(fromTime, now)
+            val bgReadings = bgReadingsRef.get()
             
             // 2. Build Context
             val metrics = calculateMetrics(periodDays)
-            val profile = profileFunction?.let { runBlocking(Dispatchers.IO) { it.getProfile() } }
+            refreshProfileAsync()
+            val profile = profileRef.get()
             val isf = profile?.getIsfMgdlTimeFromMidnight(0) ?: 40.0 // Default or specific logic needed to get specific ISF
             
             // Dummy Physio Manager (No access to instance here easily without DI)
@@ -1124,6 +1140,110 @@ class AimiAdvisorService {
 
         } catch (e: Exception) {
             return "{ \"error\": \"${e.message}\" }"
+        }
+    }
+
+    private fun tirCalculateCached(
+        days: Long,
+        low: Double,
+        high: Double,
+        cacheRef: AtomicReference<Any?>
+    ): LongSparseArray<TIR> {
+        val calculator = tirCalculator
+        if (calculator != null && tirRefreshInFlight.compareAndSet(false, true)) {
+            ioScope.launch {
+                try {
+                    cacheRef.set(calculator.calculate(days, low, high))
+                } catch (_: Exception) {
+                    cacheRef.set(null)
+                } finally {
+                    tirRefreshInFlight.set(false)
+                }
+            }
+        }
+        @Suppress("UNCHECKED_CAST")
+        return cacheRef.get() as? LongSparseArray<TIR> ?: LongSparseArray()
+    }
+
+    private fun tddCalculateCached(days: Long): LongSparseArray<TDD>? {
+        val calculator = tddCalculator
+        if (calculator != null && tddRefreshInFlight.compareAndSet(false, true)) {
+            ioScope.launch {
+                try {
+                    tddRef.set(calculator.calculate(days, true))
+                    tddTodayRef.set(calculator.calculateToday())
+                } catch (_: Exception) {
+                    tddRef.set(null)
+                    tddTodayRef.set(null)
+                } finally {
+                    tddRefreshInFlight.set(false)
+                }
+            }
+        }
+        @Suppress("UNCHECKED_CAST")
+        return tddRef.get() as? LongSparseArray<TDD>
+    }
+
+    private fun tddTodayCached(): TDD? {
+        @Suppress("UNCHECKED_CAST")
+        return tddTodayRef.get() as? TDD
+    }
+
+    private fun refreshProfileAsync() {
+        val pf = profileFunction ?: return
+        if (!profileRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                profileRef.set(pf.getProfile())
+            } catch (_: Exception) {
+                profileRef.set(null)
+            } finally {
+                profileRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun refreshOrefAsync(
+        profile: AimiProfileSnapshot,
+        windowDays: Long,
+        assetContext: Context?,
+        personalMlEnabled: Boolean,
+    ) {
+        val pl = persistenceLayer ?: return
+        if (!orefRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                orefRef.set(
+                    OrefLocalPipeline(pl).run(
+                        profileSnapshot = profile,
+                        windowDays = windowDays,
+                        assetContext = assetContext,
+                        personalMlEnabled = personalMlEnabled,
+                    )
+                )
+            } catch (_: Throwable) {
+                orefRef.set(null)
+            } finally {
+                orefRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun refreshBgReadingsAsync(fromTime: Long, toTime: Long) {
+        val pl = persistenceLayer ?: return
+        if (!bgReadingsRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                bgReadingsRef.set(
+                    pl.getBgReadingsDataFromTimeToTime(fromTime, toTime, ascending = false)
+                        .map { it.value }
+                        .filter { it > 30.0 }
+                )
+            } catch (_: Exception) {
+                bgReadingsRef.set(emptyList())
+            } finally {
+                bgReadingsRefreshInFlight.set(false)
+            }
         }
     }
 }

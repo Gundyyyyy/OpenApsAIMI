@@ -92,10 +92,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
 import app.aaps.plugins.aps.openAPSAIMI.ISF.IsfBlender
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.IsfFusion
@@ -189,6 +189,11 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
         super.onStart()
         preferences.registerPreferences(app.aaps.plugins.aps.openAPSAIMI.keys.AimiLongKey::class.java)
         preferences.registerPreferences(app.aaps.plugins.aps.openAPSAIMI.keys.AimiStringKey::class.java)
+        // Prewarm Therapy snapshot cache at plugin start to avoid first-loop default flags.
+        aimiPluginIoScope.launch {
+            runCatching { Therapy(persistenceLayer).updateStatesBasedOnTherapyEvents() }
+                .onFailure { t -> aapsLogger.error(LTag.APS, "❌ Failed to prewarm Therapy snapshot", t) }
+        }
 
         // 🏃 Start AIMI Steps Manager (Health Connect + Phone Sensor sync)
         try {
@@ -332,6 +337,8 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     // état EMA persistant (clé Prefs à créer si tu veux le garder entre runs)
     private var tddEma: Double? = null
     private val TDD_EMA_ALPHA = 0.2 // ou pref
+    @Volatile private var cachedCannulaSiteAgeDays: Float = 0f
+    private val cannulaSiteRefreshInFlight = AtomicBoolean(false)
 
 
     // Recrée les bornes de la fusion ISF depuis les préférences (mêmes clés que PkPdIntegration)
@@ -349,19 +356,27 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
      * Same window as main AIMI loop site logic (7 days of therapy events).
      */
     private fun computeCannulaSiteAgeDays(): Float {
-        val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)
-        return try {
-            val siteChanges = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getTherapyEventDataFromTime(fromTime, TE.Type.CANNULA_CHANGE, true)
+        refreshCannulaSiteAgeAsync()
+        return cachedCannulaSiteAgeDays
+    }
+
+    private fun refreshCannulaSiteAgeAsync() {
+        if (!cannulaSiteRefreshInFlight.compareAndSet(false, true)) return
+        aimiPluginIoScope.launch {
+            try {
+                val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)
+                val siteChanges = persistenceLayer.getTherapyEventDataFromTime(fromTime, TE.Type.CANNULA_CHANGE, true)
+                cachedCannulaSiteAgeDays = if (siteChanges.isNotEmpty()) {
+                    val latestChangeTimestamp = siteChanges.last().timestamp
+                    ((System.currentTimeMillis() - latestChangeTimestamp).toFloat() / (1000f * 60f * 60f * 24f))
+                } else {
+                    0f
+                }
+            } catch (_: Exception) {
+                cachedCannulaSiteAgeDays = 0f
+            } finally {
+                cannulaSiteRefreshInFlight.set(false)
             }
-            if (siteChanges.isNotEmpty()) {
-                val latestChangeTimestamp = siteChanges.last().timestamp
-                ((System.currentTimeMillis() - latestChangeTimestamp).toFloat() / (1000f * 60f * 60f * 24f))
-            } else {
-                0f
-            }
-        } catch (_: Exception) {
-            0f
         }
     }
 
@@ -448,15 +463,16 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
             return cached?.let { it * multiplier }
         }
 
-        val sensitivity = runBlocking(Dispatchers.IO) { calculateVariableIsf(start) }
-
+        val cached = synchronized(dynIsfCacheLock) {
+            if (dynIsfCache.size() == 0) null else dynIsfCache.valueAt(dynIsfCache.size() - 1)
+        }
+        aimiPluginIoScope.launch { runCatching { calculateVariableIsf(start) } }
         profiler.log(
             LTag.APS,
-            "getIsfMgdl() ${sensitivity.first} ${sensitivity.second} ${dateUtil.dateAndTimeAndSecondsString(start)} $caller",
+            "getIsfMgdl() CACHE $cached ${dateUtil.dateAndTimeAndSecondsString(start)} $caller",
             start
         )
-
-        return sensitivity.second?.let { it * multiplier }
+        return cached?.let { it * multiplier }
     }
 
     override fun getAverageIsfMgdl(timestamp: Long, caller: String): Double? {

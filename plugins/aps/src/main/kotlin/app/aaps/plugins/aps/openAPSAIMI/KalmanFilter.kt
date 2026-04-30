@@ -6,7 +6,10 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.keys.interfaces.Preferences
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.max
@@ -64,19 +67,38 @@ class KalmanISFCalculator(
         processVariance = 10.0,
         measurementVariance = 1.0
     )
+    @Volatile private var cachedTdd7Days: Double? = null
+    @Volatile private var cachedTdd2Days: Double? = null
+    @Volatile private var cachedTdd1Day: Double? = null
+    private val tddRefreshInFlight = AtomicBoolean(false)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private fun computeEffectiveTDD(): Double {
         val tdd7P = preferences.get(DoubleKey.OApsAIMITDD7)
-        val tdd7D = tddCalculator.averageTDD(
-            runBlocking(Dispatchers.IO) { tddCalculator.calculate(7, allowMissingDays = false) }
-        )?.data?.totalAmount ?: tdd7P
-        val tdd2Days = tddCalculator.averageTDD(
-            runBlocking(Dispatchers.IO) { tddCalculator.calculate(2, allowMissingDays = false) }
-        )?.data?.totalAmount ?: tdd7P
-        val tddDaily = tddCalculator.averageTDD(
-            runBlocking(Dispatchers.IO) { tddCalculator.calculate(1, allowMissingDays = false) }
-        )?.data?.totalAmount ?: tdd7P
+        refreshTddAsync()
+        val tdd7D = cachedTdd7Days ?: tdd7P
+        val tdd2Days = cachedTdd2Days ?: tdd7P
+        val tddDaily = cachedTdd1Day ?: tdd7P
         return (0.2 * tdd7D) + (0.4 * tdd2Days) + (0.4 * tddDaily)
+    }
+
+    private fun refreshTddAsync() {
+        if (!tddRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                cachedTdd7Days = tddCalculator.averageTDD(
+                    tddCalculator.calculate(7, allowMissingDays = false)
+                )?.data?.totalAmount
+                cachedTdd2Days = tddCalculator.averageTDD(
+                    tddCalculator.calculate(2, allowMissingDays = false)
+                )?.data?.totalAmount
+                cachedTdd1Day = tddCalculator.averageTDD(
+                    tddCalculator.calculate(1, allowMissingDays = false)
+                )?.data?.totalAmount
+            } finally {
+                tddRefreshInFlight.set(false)
+            }
+        }
     }
 
     private fun computeRawISF(glucose: Double): Double {

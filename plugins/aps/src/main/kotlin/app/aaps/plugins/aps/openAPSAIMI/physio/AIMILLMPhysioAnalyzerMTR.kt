@@ -4,8 +4,12 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.StringKey
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -41,6 +45,9 @@ class AIMILLMPhysioAnalyzerMTR @Inject constructor(
     private val aapsLogger: AAPSLogger,
     private val context: android.content.Context
 ) {
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lastNarrativeRef = AtomicReference("")
+    private val analysisInFlight = AtomicBoolean(false)
     
     companion object {
         private const val TAG = "LLMPhysioAnalyzer"
@@ -131,9 +138,21 @@ class AIMILLMPhysioAnalyzerMTR @Inject constructor(
             return ""
         }
         
-        return try {
-            runBlocking(Dispatchers.IO) {
-                withTimeout(TIMEOUT_MS) {
+        refreshNarrativeAsync(provider, apiKey, features, baseline, context)
+        return lastNarrativeRef.get()
+    }
+
+    private fun refreshNarrativeAsync(
+        provider: String,
+        apiKey: String,
+        features: PhysioFeaturesMTR,
+        baseline: PhysioBaselineMTR,
+        context: PhysioContextMTR
+    ) {
+        if (!analysisInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                val result = withTimeout(TIMEOUT_MS) {
                     withContext(Dispatchers.IO) {
                         when (provider) {
                             "gpt4" -> analyzeWithGPT(features, baseline, context, apiKey)
@@ -147,10 +166,13 @@ class AIMILLMPhysioAnalyzerMTR @Inject constructor(
                         }
                     }
                 }
+                lastNarrativeRef.set(result)
+            } catch (e: Exception) {
+                aapsLogger.warn(LTag.APS, "[$TAG] LLM analysis failed", e)
+                lastNarrativeRef.set("")
+            } finally {
+                analysisInFlight.set(false)
             }
-        } catch (e: Exception) {
-            aapsLogger.warn(LTag.APS, "[$TAG] LLM analysis failed", e)
-            "" // Return empty - not critical
         }
     }
     

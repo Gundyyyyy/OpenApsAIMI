@@ -2,7 +2,6 @@ package app.aaps.plugins.aps.openAPSAIMI.steps
 
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
@@ -107,33 +106,6 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
     override fun sourceName(): String = SOURCE_NAME
     
     override fun priority(): Int = PRIORITY
-    
-    /**
-     * Fetches steps from Health Connect for a specific time window.
-     * 
-     * @param windowMinutes Duration of the window (5, 10, 15, 30, 60, 180)
-     * @param now End timestamp of the window
-     * @return Total step count in the window
-     */
-    private fun fetchStepsFromHealthConnect(windowMinutes: Int, now: Instant): Int {
-        val client = healthConnectClient ?: return 0
-        
-        val endTime = now
-        val startTime = now.minusSeconds((windowMinutes * 60).toLong())
-        
-        aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Querying Health Connect: $startTime to $endTime ({$windowMinutes}min)")
-        
-        return try {
-            val request = ReadRecordsRequest(
-                recordType = StepsRecord::class,
-                timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
-            )
-            // NOTE: this method is now called from IO coroutine only.
-            0.also { _ -> request }
-        } catch (_: Exception) {
-            0
-        }
-    }
 
     private fun refreshAvailabilityAsync(now: Long) {
         if (!availabilityRefreshInFlight.compareAndSet(false, true)) return

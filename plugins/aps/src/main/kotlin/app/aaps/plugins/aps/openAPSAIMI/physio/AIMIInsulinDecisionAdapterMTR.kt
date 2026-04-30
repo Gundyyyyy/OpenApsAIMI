@@ -7,11 +7,15 @@ import app.aaps.core.data.model.TE
 import app.aaps.plugins.aps.openAPSAIMI.physio.gate.CosineTrajectoryGate
 import app.aaps.plugins.aps.openAPSAIMI.physio.GateInput
 import app.aaps.plugins.aps.openAPSAIMI.physio.KernelType
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 💉 AIMI Insulin Decision Adapter - MTR Implementation
@@ -41,6 +45,11 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
     private val relevanceGate: CosineTrajectoryGate, // 🌀 Relevance Gate (Trajectory Filter)
     private val aapsLogger: AAPSLogger
 ) {
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val hypoEventsRef = AtomicReference<List<TE>>(emptyList())
+    private val hypoEventsRefreshInFlight = AtomicBoolean(false)
+    private val activityRef = AtomicReference(RealTimeActivity(0, 0))
+    private val activityRefreshInFlight = AtomicBoolean(false)
     @Volatile
     private var lastDecisionTrace: PhysioDecisionTraceMTR? = null
     
@@ -419,13 +428,8 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
         
         // Check therapy events for hypo treatments
         try {
-            val events = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getTherapyEventDataFromTime(
-                    now - RECENT_HYPO_WINDOW_MS,
-                    TE.Type.NOTE,
-                    ascending = false
-                )
-            }
+            refreshHypoEventsAsync(now)
+            val events = hypoEventsRef.get()
             val hypoEvents = events.filter { event ->
                 event.note?.contains("hypo", ignoreCase = true) == true ||
                 event.note?.contains("hypoglycemia", ignoreCase = true) == true
@@ -458,11 +462,45 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
      * This bypasses the 15-min cache to allow real-time reactivity in the loop
      */
     fun getRealTimeActivity(): RealTimeActivity {
-         // Graceful fallback if repo fail (returns 0)
-         val (steps, hr) = runBlocking(Dispatchers.IO) {
-             dataRepository.fetchStepsData(0) to dataRepository.fetchLastHeartRate()
-         }
-         return RealTimeActivity(steps, hr)
+         refreshActivityAsync()
+         return activityRef.get()
+    }
+
+    private fun refreshHypoEventsAsync(now: Long) {
+        if (!hypoEventsRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                hypoEventsRef.set(
+                    persistenceLayer.getTherapyEventDataFromTime(
+                        now - RECENT_HYPO_WINDOW_MS,
+                        TE.Type.NOTE,
+                        ascending = false
+                    )
+                )
+            } catch (_: Exception) {
+                hypoEventsRef.set(emptyList())
+            } finally {
+                hypoEventsRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun refreshActivityAsync() {
+        if (!activityRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                activityRef.set(
+                    RealTimeActivity(
+                        stepsToday = dataRepository.fetchStepsData(0),
+                        heartRate = dataRepository.fetchLastHeartRate()
+                    )
+                )
+            } catch (_: Exception) {
+                activityRef.set(RealTimeActivity(0, 0))
+            } finally {
+                activityRefreshInFlight.set(false)
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════

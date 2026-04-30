@@ -5,8 +5,12 @@ import app.aaps.core.data.model.TDD
 import app.aaps.core.interfaces.stats.TIR
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.stats.TirCalculator
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Per-[determine_basal] invocation caches for suspend stats calls ([runBlocking]).
@@ -40,6 +44,13 @@ internal class DetermineBasalInvocationCaches {
 
     private var cachedTir65180Seq: Long = -1L
     private var cachedTir65180: LongSparseArray<TIR>? = null
+    private val tdd24Ref = AtomicReference<Double?>(null)
+    private val tdd1DayRef = AtomicReference<LongSparseArray<TDD>?>(null)
+    private val tir1DayRef = AtomicReference<LongSparseArray<TIR>?>(null)
+    private val tdd24InFlight = AtomicBoolean(false)
+    private val tdd1DayInFlight = AtomicBoolean(false)
+    private val tir1DayInFlight = AtomicBoolean(false)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun beginInvocation() {
         synchronized(lock) {
@@ -52,8 +63,8 @@ internal class DetermineBasalInvocationCaches {
             if (cachedTdd24hSeq == invocationSeq) {
                 return cachedTdd24hTotalAmount
             }
-            val result = runBlocking(Dispatchers.IO) { tddCalculator.calculateDaily(-24, 0) }
-            val total = result?.totalAmount
+            refreshTdd24hAsync(tddCalculator)
+            val total = tdd24Ref.get()
             cachedTdd24hTotalAmount = total
             cachedTdd24hSeq = invocationSeq
             return total
@@ -65,7 +76,8 @@ internal class DetermineBasalInvocationCaches {
             if (cachedTdd1DaySparseSeq == invocationSeq) {
                 return cachedTdd1DaySparse
             }
-            val r = runBlocking(Dispatchers.IO) { tddCalculator.calculate(1, allowMissingDays = false) }
+            refreshTdd1DayAsync(tddCalculator)
+            val r = tdd1DayRef.get()
             cachedTdd1DaySparse = r
             cachedTdd1DaySparseSeq = invocationSeq
             return r
@@ -78,7 +90,8 @@ internal class DetermineBasalInvocationCaches {
                 return cachedTir65180!!
             }
         }
-        val r = runBlocking(Dispatchers.IO) { tirCalculator.calculate(1, 65.0, 180.0) }
+        refreshTir1DayAsync(tirCalculator)
+        val r = tir1DayRef.get() ?: LongSparseArray()
         synchronized(lock) {
             cachedTir65180 = r
             cachedTir65180Seq = invocationSeq
@@ -90,6 +103,40 @@ internal class DetermineBasalInvocationCaches {
         synchronized(lock) {
             cachedTir65180 = result
             cachedTir65180Seq = invocationSeq
+        }
+        tir1DayRef.set(result)
+    }
+
+    private fun refreshTdd24hAsync(tddCalculator: TddCalculator) {
+        if (!tdd24InFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                tdd24Ref.set(tddCalculator.calculateDaily(-24, 0)?.totalAmount)
+            } finally {
+                tdd24InFlight.set(false)
+            }
+        }
+    }
+
+    private fun refreshTdd1DayAsync(tddCalculator: TddCalculator) {
+        if (!tdd1DayInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                tdd1DayRef.set(tddCalculator.calculate(1, allowMissingDays = false))
+            } finally {
+                tdd1DayInFlight.set(false)
+            }
+        }
+    }
+
+    private fun refreshTir1DayAsync(tirCalculator: TirCalculator) {
+        if (!tir1DayInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                tir1DayRef.set(tirCalculator.calculate(1, 65.0, 180.0))
+            } finally {
+                tir1DayInFlight.set(false)
+            }
         }
     }
 }

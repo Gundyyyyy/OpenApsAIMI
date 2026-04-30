@@ -17,7 +17,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 🎛️ AIMI Physiological Manager - MTR Implementation
@@ -47,6 +49,7 @@ class AIMIPhysioManagerMTR @Inject constructor(
     private val sp: SP,
     private val aapsLogger: AAPSLogger
 ) {
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     companion object {
         private const val TAG = "PhysioManager"
@@ -90,15 +93,13 @@ class AIMIPhysioManagerMTR @Inject constructor(
         // Schedule periodic updates
         schedulePeriodicWork()
 
-        Thread {
+        ioScope.launch {
             try {
-                runBlocking(Dispatchers.IO) {
-                    pipelineWatchdog.runCheckAndRecover()
-                }
+                pipelineWatchdog.runCheckAndRecover()
             } catch (e: Exception) {
                 aapsLogger.warn(LTag.APS, "[$TAG] Initial pipeline watchdog failed: ${e.message}")
             }
-        }.start()
+        }
 
         isRunning.set(true)
         
@@ -251,15 +252,13 @@ class AIMIPhysioManagerMTR @Inject constructor(
         
         aapsLogger.info(LTag.APS, "[$TAG] 🔄 Manual update requested")
         
-        Thread {
+        ioScope.launch {
             try {
-                runBlocking(Dispatchers.IO) {
-                    performUpdate(daysBack = 7, runLLM = true)
-                }
+                performUpdate(daysBack = 7, runLLM = true)
             } catch (e: Exception) {
                 aapsLogger.error(LTag.APS, "[$TAG] Manual update failed", e)
             }
-        }.start()
+        }
         
         return true
     }

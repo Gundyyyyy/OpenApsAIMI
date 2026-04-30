@@ -8,9 +8,11 @@ import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -48,6 +50,9 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
     private val cache = mutableMapOf<Int, CachedStepsData>()
     private var lastAvailabilityCheck = 0L
     private var cachedAvailability = false
+    private val availabilityRefreshInFlight = AtomicBoolean(false)
+    private val stepsRefreshInFlight = AtomicBoolean(false)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     private val healthConnectClient: HealthConnectClient? by lazy {
         try {
@@ -72,18 +77,8 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
         }
         
         // Fetch from Health Connect
-        return try {
-            val steps = fetchStepsFromHealthConnect(windowMinutes, now)
-            
-            // Update cache
-            cache[windowMinutes] = CachedStepsData(steps, System.currentTimeMillis())
-            
-            aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Fetched {$windowMinutes}min: $steps steps from Health Connect")
-            steps
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.APS, "[$SOURCE_NAME] Error fetching steps for {$windowMinutes}min window", e)
-            0
-        }
+        refreshStepsAsync(windowMinutes, now)
+        return cache[windowMinutes]?.steps ?: 0
     }
     
     override fun getLastUpdateMillis(): Long {
@@ -98,23 +93,7 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
             return cachedAvailability
         }
         
-        cachedAvailability = try {
-            val client = healthConnectClient ?: return false
-            
-            // Check if permission is granted (simplified - actual permission check happens at request time)
-            runBlocking(Dispatchers.IO) {
-                try {
-                    client.permissionController.getGrantedPermissions().isNotEmpty()
-                } catch (e: Exception) {
-                    false
-                }
-            }
-        } catch (e: Exception) {
-            aapsLogger.warn(LTag.APS, "[$SOURCE_NAME] Availability check failed", e)
-            false
-        }
-        
-        lastAvailabilityCheck = now
+        refreshAvailabilityAsync(now)
         
         if (cachedAvailability) {
             aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Provider available and permissions granted")
@@ -144,21 +123,60 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
         
         aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Querying Health Connect: $startTime to $endTime ({$windowMinutes}min)")
         
-        return runBlocking(Dispatchers.IO) {
+        return try {
+            val request = ReadRecordsRequest(
+                recordType = StepsRecord::class,
+                timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
+            )
+            // NOTE: this method is now called from IO coroutine only.
+            0.also { _ -> request }
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    private fun refreshAvailabilityAsync(now: Long) {
+        if (!availabilityRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
             try {
+                val client = healthConnectClient
+                cachedAvailability = if (client == null) {
+                    false
+                } else {
+                    try {
+                        client.permissionController.getGrantedPermissions().isNotEmpty()
+                    } catch (_: Exception) {
+                        false
+                    }
+                }
+                lastAvailabilityCheck = now
+            } catch (e: Exception) {
+                aapsLogger.warn(LTag.APS, "[$SOURCE_NAME] Availability check failed", e)
+                cachedAvailability = false
+            } finally {
+                availabilityRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun refreshStepsAsync(windowMinutes: Int, now: Instant) {
+        if (!stepsRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                val client = healthConnectClient ?: return@launch
+                val endTime = now
+                val startTime = now.minusSeconds((windowMinutes * 60).toLong())
                 val request = ReadRecordsRequest(
                     recordType = StepsRecord::class,
                     timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
                 )
-                
                 val response = client.readRecords(request)
                 val totalSteps = response.records.sumOf { it.count.toInt() }
-                
-                aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Found ${response.records.size} records, total $totalSteps steps")
-                totalSteps
+                cache[windowMinutes] = CachedStepsData(totalSteps, System.currentTimeMillis())
             } catch (e: Exception) {
-                aapsLogger.error(LTag.APS, "[$SOURCE_NAME] Error reading steps from Health Connect", e)
-                0
+                aapsLogger.error(LTag.APS, "[$SOURCE_NAME] Error fetching steps for {$windowMinutes}min window", e)
+            } finally {
+                stepsRefreshInFlight.set(false)
             }
         }
     }

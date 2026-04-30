@@ -7,8 +7,12 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
 import java.io.FileWriter
@@ -38,6 +42,11 @@ class UnifiedReactivityLearner @Inject constructor(
     private val log: AAPSLogger,
     private val storageHelper: AimiStorageHelper
 ) {
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val bg24hRef = AtomicReference<List<Double>>(emptyList())
+    private val bg2hRef = AtomicReference<List<Double>>(emptyList())
+    private val bg24hRefreshInFlight = AtomicBoolean(false)
+    private val bg2hRefreshInFlight = AtomicBoolean(false)
     
     companion object {
         private const val ANALYSIS_INTERVAL_MS = 30 * 60 * 1000L  // 30 minutes
@@ -135,16 +144,8 @@ class UnifiedReactivityLearner @Inject constructor(
         val start = now - (24 * 60 * 60 * 1000L)
         
         try {
-            val bgReadingsList = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getBgReadingsDataFromTime(start, ascending = false)
-            }
-
-            val bgReadings = bgReadingsList
-                .mapNotNull { gv ->
-                    // GV type a la propriété 'value' de type Double
-                    val value = gv.value
-                    if (value > 39.0) value else null
-                }
+            refreshBg24hAsync(start)
+            val bgReadings = bg24hRef.get()
             
             if (bgReadings.isEmpty() || bgReadings.size < 12) {
                 log.warn(LTag.APS, "UnifiedReactivityLearner: Pas assez de données BG (${bgReadings.size})")
@@ -405,12 +406,8 @@ class UnifiedReactivityLearner @Inject constructor(
         val start = now - (2 * 60 * 60 * 1000L)  // 2 hours
         
         try {
-            val bgReadingsList = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getBgReadingsDataFromTime(start, ascending = false)
-            }
-
-            val bgReadings = bgReadingsList
-                .mapNotNull { gv -> if (gv.value > 39.0) gv.value else null }
+            refreshBg2hAsync(start)
+            val bgReadings = bg2hRef.get()
             
             if (bgReadings.isEmpty() || bgReadings.size < 6) {
                 return null  // Need at least 30 min of data
@@ -453,6 +450,36 @@ class UnifiedReactivityLearner @Inject constructor(
         } catch (e: Exception) {
             log.error(LTag.APS, "UnifiedReactivityLearner: Error in 2h analysis", e)
             return null
+        }
+    }
+
+    private fun refreshBg24hAsync(start: Long) {
+        if (!bg24hRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                val values = persistenceLayer.getBgReadingsDataFromTime(start, ascending = false)
+                    .mapNotNull { gv -> gv.value.takeIf { it > 39.0 } }
+                bg24hRef.set(values)
+            } catch (_: Exception) {
+                bg24hRef.set(emptyList())
+            } finally {
+                bg24hRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun refreshBg2hAsync(start: Long) {
+        if (!bg2hRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                val values = persistenceLayer.getBgReadingsDataFromTime(start, ascending = false)
+                    .mapNotNull { gv -> gv.value.takeIf { it > 39.0 } }
+                bg2hRef.set(values)
+            } catch (_: Exception) {
+                bg2hRef.set(emptyList())
+            } finally {
+                bg2hRefreshInFlight.set(false)
+            }
         }
     }
     

@@ -8,6 +8,7 @@ import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.UE
+import app.aaps.core.data.model.SC
 import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.AutosensResult
 import app.aaps.core.interfaces.aps.CurrentTemp
@@ -98,13 +99,17 @@ import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.collections.asSequence
 import app.aaps.core.interfaces.profile.EffectiveProfile
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
@@ -393,6 +398,29 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
     
     private var adaptiveMult: Double = 1.0
+    @Volatile private var cachedPumpAgeDays: Float = 0f
+    private val pumpAgeRefreshInFlight = AtomicBoolean(false)
+    @Volatile private var cachedLastSmb: BS? = null
+    private val lastSmbRefreshInFlight = AtomicBoolean(false)
+    private val tirWarmupSnapshotRef = AtomicReference<TirWarmupSnapshot?>(null)
+    private val tirWarmupRefreshInFlight = AtomicBoolean(false)
+    private val carbContextSnapshotRef = AtomicReference<CarbContextSnapshot?>(null)
+    private val carbContextRefreshInFlight = AtomicBoolean(false)
+    private val tdd2DaysRef = AtomicReference<Float?>(null)
+    private val tdd2DaysRefreshInFlight = AtomicBoolean(false)
+    private val stepsSnapshotRef = AtomicReference<List<SC>>(emptyList())
+    private val stepsRefreshInFlight = AtomicBoolean(false)
+    private val heartRatesSnapshotRef = AtomicReference<List<HR>>(emptyList())
+    private val heartRatesRefreshInFlight = AtomicBoolean(false)
+    private val tempBasalsSnapshotRef = AtomicReference<List<TB>>(emptyList())
+    private val tempBasalsRefreshInFlight = AtomicBoolean(false)
+    private val bolusSnapshotRef = AtomicReference<List<BS>>(emptyList())
+    private val bolusRefreshInFlight = AtomicBoolean(false)
+    @Volatile private var cachedEffectiveProfile: EffectiveProfile? = null
+    private val effectiveProfileRefreshInFlight = AtomicBoolean(false)
+    private val trajectoryHistoryRef = AtomicReference<List<app.aaps.plugins.aps.openAPSAIMI.trajectory.PhaseSpaceState>>(emptyList())
+    private val trajectoryHistoryRefreshInFlight = AtomicBoolean(false)
+    private val determineIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** Latest CGM noise from the current determine_basal invocation (for basal governance context). */
     private var lastLoopCgmNoise: Double = 0.0
@@ -409,18 +437,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         BasalHistoryUtils.installHistoryProvider(
             BasalHistoryUtils.FetcherProvider(
                 fetcher = { fromMillis: Long ->
-                    // Récupère les TBR depuis 'fromMillis', puis trie DESC par timestamp
-                    val raws: List<TB> = try {
-                        if (Looper.myLooper() == Looper.getMainLooper()) {
-                            emptyList()
-                        } else {
-                            runBlocking(Dispatchers.IO) {
-                                persistenceLayer.getTemporaryBasalsStartingFromTime(fromMillis, ascending = false)
-                            }
-                        }
-                    } catch (t: Throwable) {
-                        emptyList()
-                    }
+                    refreshTempBasalsAsync(fromMillis)
+                    val raws: List<TB> = tempBasalsSnapshotRef.get()
 
                     raws.asSequence()
                         .filter { it.timestamp > 0L && it.timestamp >= fromMillis }
@@ -435,6 +453,348 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
     private val EPS_FALL = 0.3      // mg/dL/5min : seuil de baisse
     private val EPS_ACC  = 0.2      // mg/dL/5min : seuil d'écart short vs long
+
+    private fun pumpAgeDaysCached(): Float {
+        refreshPumpAgeAsync()
+        return cachedPumpAgeDays
+    }
+
+    private fun refreshPumpAgeAsync() {
+        if (!pumpAgeRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)
+                val siteChanges = persistenceLayer.getTherapyEventDataFromTime(fromTime, TE.Type.CANNULA_CHANGE, true)
+                cachedPumpAgeDays = if (siteChanges.isNotEmpty()) {
+                    val latestChangeTimestamp = siteChanges.last().timestamp
+                    ((System.currentTimeMillis() - latestChangeTimestamp).toFloat() / (1000f * 60f * 60f * 24f))
+                } else {
+                    0f
+                }
+            } catch (_: Exception) {
+                cachedPumpAgeDays = 0f
+            } finally {
+                pumpAgeRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun latestSmbCached(): BS? {
+        refreshLatestSmbAsync()
+        return cachedLastSmb
+    }
+
+    private fun refreshLatestSmbAsync() {
+        if (!lastSmbRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                cachedLastSmb = persistenceLayer.getNewestBolusOfType(BS.Type.SMB)
+            } catch (_: Exception) {
+                cachedLastSmb = null
+            } finally {
+                lastSmbRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun latestTirWarmupSnapshot(): TirWarmupSnapshot {
+        refreshTirWarmupAsync()
+        return tirWarmupSnapshotRef.get() ?: TirWarmupSnapshot()
+    }
+
+    private fun refreshTirWarmupAsync() {
+        if (!tirWarmupRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                val tir1Day = tirCalculator.calculate(1, 65.0, 180.0)
+                determineBasalInvocationCaches.storeTir65180FromWarmup(tir1Day)
+                tirWarmupSnapshotRef.set(
+                    TirWarmupSnapshot(
+                        tir1DayAbove = tirCalculator.averageTIR(tir1Day)?.abovePct() ?: 0.0,
+                        tir1DayInRange = tirCalculator.averageTIR(tir1Day)?.inRangePct() ?: 0.0,
+                        currentTirLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.belowPct() ?: 0.0,
+                        currentTirRange = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.inRangePct() ?: 0.0,
+                        currentTirAbove = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.abovePct() ?: 0.0,
+                        lastHourTirLow = tirCalculator.averageTIR(tirCalculator.calculateHour(80.0, 140.0))?.belowPct() ?: 0.0,
+                        lastHourTirAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(72.0, 140.0))?.abovePct(),
+                        lastHourTirLow100 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 140.0))?.belowPct() ?: 0.0,
+                        lastHourTirAbove170 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 170.0))?.abovePct() ?: 0.0,
+                        lastHourTirAbove120 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 120.0))?.abovePct() ?: 0.0,
+                        tirBasal3InRange = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.inRangePct(),
+                        tirBasal3Below = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.belowPct(),
+                        tirBasal3Above = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.abovePct(),
+                        tirBasalHourAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(65.0, 100.0))?.abovePct(),
+                    )
+                )
+            } catch (_: Exception) {
+                tirWarmupSnapshotRef.set(TirWarmupSnapshot())
+            } finally {
+                tirWarmupRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun latestCarbContextSnapshot(nowMs: Long, mealDataLastCarbTime: Long, cobNow: Float): CarbContextSnapshot {
+        refreshCarbContextAsync(nowMs, mealDataLastCarbTime, cobNow)
+        return carbContextSnapshotRef.get() ?: CarbContextSnapshot(
+            lastCarbTimestamp = mealDataLastCarbTime.takeIf { it > 0L } ?: nowMs - TimeUnit.DAYS.toMillis(1),
+            lastCarbAgeMin = 0,
+            futureCarbs = 0.0f,
+            effectiveCob = cobNow,
+            recentNotes = emptyList(),
+        )
+    }
+
+    private fun refreshCarbContextAsync(nowMs: Long, mealDataLastCarbTime: Long, cobNow: Float) {
+        if (!carbContextRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                var lastCarbTimestamp = mealDataLastCarbTime
+                val oneDayAgoIfNotFound = nowMs - TimeUnit.DAYS.toMillis(1)
+                if (lastCarbTimestamp == 0L) {
+                    lastCarbTimestamp = persistenceLayer.getMostRecentCarbByDate() ?: oneDayAgoIfNotFound
+                }
+                val ageMin = ((nowMs - lastCarbTimestamp) / (60 * 1000)).toInt()
+                val future = persistenceLayer.getFutureCob().toFloat()
+                val effectiveCob = if (ageMin < 15 && cobNow == 0.0f) {
+                    persistenceLayer.getMostRecentCarbAmount()?.toFloat() ?: 0.0f
+                } else {
+                    cobNow
+                }
+                val recentNotesLocal = persistenceLayer.getUserEntryDataFromTime(nowMs - TimeUnit.HOURS.toMillis(4))
+                carbContextSnapshotRef.set(
+                    CarbContextSnapshot(
+                        lastCarbTimestamp = lastCarbTimestamp,
+                        lastCarbAgeMin = ageMin,
+                        futureCarbs = future,
+                        effectiveCob = effectiveCob,
+                        recentNotes = recentNotesLocal,
+                    )
+                )
+            } catch (_: Exception) {
+                carbContextSnapshotRef.set(
+                    CarbContextSnapshot(
+                        lastCarbTimestamp = mealDataLastCarbTime.takeIf { it > 0L } ?: nowMs - TimeUnit.DAYS.toMillis(1),
+                        lastCarbAgeMin = 0,
+                        futureCarbs = 0.0f,
+                        effectiveCob = cobNow,
+                        recentNotes = emptyList(),
+                    )
+                )
+            } finally {
+                carbContextRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private data class TirWarmupSnapshot(
+        val tir1DayAbove: Double = 0.0,
+        val tir1DayInRange: Double = 0.0,
+        val currentTirLow: Double = 0.0,
+        val currentTirRange: Double = 0.0,
+        val currentTirAbove: Double = 0.0,
+        val lastHourTirLow: Double = 0.0,
+        val lastHourTirAbove: Double? = null,
+        val lastHourTirLow100: Double = 0.0,
+        val lastHourTirAbove170: Double = 0.0,
+        val lastHourTirAbove120: Double = 0.0,
+        val tirBasal3InRange: Double? = null,
+        val tirBasal3Below: Double? = null,
+        val tirBasal3Above: Double? = null,
+        val tirBasalHourAbove: Double? = null,
+    )
+
+    private data class CarbContextSnapshot(
+        val lastCarbTimestamp: Long,
+        val lastCarbAgeMin: Int,
+        val futureCarbs: Float,
+        val effectiveCob: Float,
+        val recentNotes: List<UE>,
+    )
+
+    private fun tdd2DaysCached(tdd7P: Double): Float {
+        refreshTdd2DaysAsync()
+        val cached = tdd2DaysRef.get()
+        if (cached == null || cached == 0.0f || cached < tdd7P.toFloat()) return tdd7P.toFloat()
+        return cached
+    }
+
+    private fun refreshTdd2DaysAsync() {
+        if (!tdd2DaysRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                val tdd2 = tddCalculator.averageTDD(tddCalculator.calculate(2, allowMissingDays = false))
+                    ?.data?.totalAmount?.toFloat() ?: 0.0f
+                tdd2DaysRef.set(tdd2)
+            } catch (_: Exception) {
+                tdd2DaysRef.set(null)
+            } finally {
+                tdd2DaysRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun stepsCountsCached(now: Long): List<SC> {
+        refreshStepsAsync(now)
+        return stepsSnapshotRef.get()
+    }
+
+    private fun refreshStepsAsync(now: Long) {
+        if (!stepsRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                val start = now - 210 * 60 * 1000
+                stepsSnapshotRef.set(persistenceLayer.getStepsCountFromTimeToTime(start, now))
+            } catch (_: Exception) {
+                stepsSnapshotRef.set(emptyList())
+            } finally {
+                stepsRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun heartRatesCached(now: Long): List<HR> {
+        refreshHeartRatesAsync(now)
+        return heartRatesSnapshotRef.get()
+    }
+
+    private fun refreshHeartRatesAsync(now: Long) {
+        if (!heartRatesRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                val start = now - 200 * 60 * 1000
+                heartRatesSnapshotRef.set(persistenceLayer.getHeartRatesFromTimeToTime(start, now))
+            } catch (_: Exception) {
+                heartRatesSnapshotRef.set(emptyList())
+            } finally {
+                heartRatesRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun refreshTempBasalsAsync(fromMillis: Long) {
+        if (!tempBasalsRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                tempBasalsSnapshotRef.set(
+                    persistenceLayer.getTemporaryBasalsStartingFromTime(fromMillis, ascending = false)
+                )
+            } catch (_: Exception) {
+                tempBasalsSnapshotRef.set(emptyList())
+            } finally {
+                tempBasalsRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun bolusesFromTimeCached(startTime: Long, ascending: Boolean): List<BS> {
+        refreshBolusesAsync(startTime, ascending)
+        val cached = bolusSnapshotRef.get()
+        return if (ascending) {
+            cached.filter { it.timestamp >= startTime }.sortedBy { it.timestamp }
+        } else {
+            cached.filter { it.timestamp >= startTime }.sortedByDescending { it.timestamp }
+        }
+    }
+
+    private fun refreshBolusesAsync(startTime: Long, ascending: Boolean) {
+        if (!bolusRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                bolusSnapshotRef.set(persistenceLayer.getBolusesFromTime(startTime, ascending))
+            } catch (_: Exception) {
+                bolusSnapshotRef.set(emptyList())
+            } finally {
+                bolusRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun effectiveProfileCached(time: Long): EffectiveProfile? {
+        refreshEffectiveProfileAsync(time)
+        return cachedEffectiveProfile
+    }
+
+    private fun refreshEffectiveProfileAsync(time: Long) {
+        if (!effectiveProfileRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                cachedEffectiveProfile = profileFunction.getProfile(time)
+            } catch (_: Exception) {
+                cachedEffectiveProfile = null
+            } finally {
+                effectiveProfileRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun trajectoryHistoryCached(
+        currentTime: Long,
+        bg: Double,
+        delta: Double,
+        bgacc: Double,
+        iobActivityNow: Double,
+        iob: Float,
+        insulinActionState: app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActionState,
+        lastBolusAgeMinutes: Double,
+        cob: Float,
+        profile: OapsProfileAimi,
+    ): List<app.aaps.plugins.aps.openAPSAIMI.trajectory.PhaseSpaceState> {
+        refreshTrajectoryHistoryAsync(
+            currentTime = currentTime,
+            bg = bg,
+            delta = delta,
+            bgacc = bgacc,
+            iobActivityNow = iobActivityNow,
+            iob = iob,
+            insulinActionState = insulinActionState,
+            lastBolusAgeMinutes = lastBolusAgeMinutes,
+            cob = cob,
+            profile = profile,
+        )
+        return trajectoryHistoryRef.get()
+    }
+
+    private fun refreshTrajectoryHistoryAsync(
+        currentTime: Long,
+        bg: Double,
+        delta: Double,
+        bgacc: Double,
+        iobActivityNow: Double,
+        iob: Float,
+        insulinActionState: app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActionState,
+        lastBolusAgeMinutes: Double,
+        cob: Float,
+        profile: OapsProfileAimi,
+    ) {
+        if (!trajectoryHistoryRefreshInFlight.compareAndSet(false, true)) return
+        determineIoScope.launch {
+            try {
+                val effectiveProfile = cachedEffectiveProfile ?: profileFunction.getProfile(currentTime)
+                cachedEffectiveProfile = effectiveProfile
+                trajectoryHistoryRef.set(
+                    trajectoryHistoryProvider.buildHistory(
+                        nowMillis = currentTime,
+                        historyMinutes = 90,
+                        currentBg = bg,
+                        currentDelta = delta,
+                        currentAccel = bgacc,
+                        insulinActivityNow = iobActivityNow,
+                        iobNow = iob.toDouble(),
+                        pkpdStage = insulinActionState.activityStage,
+                        timeSinceLastBolus = if (lastBolusAgeMinutes.isFinite()) lastBolusAgeMinutes.toInt() else 120,
+                        cobNow = cob.toDouble(),
+                        effectiveProfile = effectiveProfile,
+                        historicalInsulinPeakMinutes = profile.peakTime.toInt().coerceAtLeast(35),
+                    )
+                )
+            } catch (_: Exception) {
+                trajectoryHistoryRef.set(emptyList())
+            } finally {
+                trajectoryHistoryRefreshInFlight.set(false)
+            }
+        }
+    }
     private var lateFatRiseFlag: Boolean = false
     // — Hystérèse anti-pompage —
     private val HYPO_RELEASE_MARGIN   = 5.0      // mg/dL au-dessus du seuil
@@ -1275,11 +1635,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private fun getBolusesFromTimeCached(startTime: Long, ascending: Boolean): List<BS> {
         val key = startTime to ascending
         return bolusQueryCache.getOrPut(key) {
-            if (Looper.myLooper() == Looper.getMainLooper()) {
-                emptyList()
-            } else {
-                runBlocking(Dispatchers.IO) { persistenceLayer.getBolusesFromTime(startTime, ascending) }
-            }
+            bolusesFromTimeCached(startTime, ascending)
         }
     }
 
@@ -4694,24 +5050,19 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         if (trajectoryFlagEnabled) {
             try {
-                val (effectiveProfileForTrajectory, trajectoryHistory) = runBlocking(Dispatchers.IO) {
-                    val effectiveProfile: EffectiveProfile? = try {
-                        profileFunction.getProfile(currentTime)
-                    } catch (_: Exception) {
-                        null
-                    }
-                    val history = trajectoryHistoryProvider.buildHistory(
-                        nowMillis = currentTime, historyMinutes = 90, currentBg = bg,
-                        currentDelta = delta, currentAccel = bgacc,
-                        insulinActivityNow = iobActivityNow, iobNow = iob.toDouble(),
-                        pkpdStage = insulinActionState.activityStage,
-                        timeSinceLastBolus = if (lastBolusAgeMinutes.isFinite()) lastBolusAgeMinutes.toInt() else 120,
-                        cobNow = cob.toDouble(),
-                        effectiveProfile = effectiveProfile,
-                        historicalInsulinPeakMinutes = profile.peakTime.toInt().coerceAtLeast(35),
-                    )
-                    effectiveProfile to history
-                }
+                val effectiveProfileForTrajectory: EffectiveProfile? = effectiveProfileCached(currentTime)
+                val trajectoryHistory = trajectoryHistoryCached(
+                    currentTime = currentTime,
+                    bg = bg,
+                    delta = delta,
+                    bgacc = bgacc,
+                    iobActivityNow = iobActivityNow,
+                    iob = iob,
+                    insulinActionState = insulinActionState,
+                    lastBolusAgeMinutes = lastBolusAgeMinutes,
+                    cob = cob,
+                    profile = profile,
+                )
                 
                 // 2. Run Trajectory Analysis (The "Insight" Gate)
                 val stableOrbit = app.aaps.plugins.aps.openAPSAIMI.trajectory.StableOrbit.fromProfile(targetBg, profile.current_basal)
@@ -5266,21 +5617,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var windowSinceDoseInt = 0
         var carbsActiveForPkpd = 0.0
         // On définit fromTime pour couvrir une longue période (par exemple, les 7 derniers jours)
-        val fromTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)
-// Récupération des événements de changement de cannule
-        val siteChanges = runBlocking(Dispatchers.IO) {
-            persistenceLayer.getTherapyEventDataFromTime(fromTime, TE.Type.CANNULA_CHANGE, true)
-        }
-
-// Calcul de l'âge du site en jours
-        val pumpAgeDays: Float = if (siteChanges.isNotEmpty()) {
-            // On suppose que la liste est triée par ordre décroissant (le plus récent en premier)
-            val latestChangeTimestamp = siteChanges.last().timestamp
-            ((System.currentTimeMillis() - latestChangeTimestamp).toFloat() / (1000 * 60 * 60 * 24))
-        } else {
-            // Si aucun changement n'est enregistré, vous pouvez définir une valeur par défaut
-            0f
-        }
+        val pumpAgeDays: Float = pumpAgeDaysCached()
         val effectiveDiaH = pkpdRuntime?.params?.diaHrs
             ?: profile.dia   // → ou ton DIA ajusté SI PKPD est désactivé
 
@@ -5410,7 +5747,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val dayOfWeek = calendarInstance[Calendar.DAY_OF_WEEK]
         val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
         this.bg = glucoseStatus.glucose
-        val getlastBolusSMB = runBlocking(Dispatchers.IO) { persistenceLayer.getNewestBolusOfType(BS.Type.SMB) }
+        val getlastBolusSMB = latestSmbCached()
         val lastBolusSMBTime = getlastBolusSMB?.timestamp ?: 0L
         //val lastBolusSMBMinutes = lastBolusSMBTime / 60000
         this.lastBolusSMBUnit = getlastBolusSMB?.amount?.toFloat() ?: 0.0F
@@ -5499,44 +5836,35 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var tirbasal3B: Double? = null
         var tirbasal3A: Double? = null
         var tirbasalhAP: Double? = null
-        runBlocking(Dispatchers.IO) {
-            val tir1Day = tirCalculator.calculate(1, 65.0, 180.0)
-            determineBasalInvocationCaches.storeTir65180FromWarmup(tir1Day)
-            this@DetermineBasalaimiSMB2.tir1DAYabove = tirCalculator.averageTIR(tir1Day)?.abovePct()!!
-            tir1DAYIR = tirCalculator.averageTIR(tir1Day)?.inRangePct()!!
-            this@DetermineBasalaimiSMB2.currentTIRLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.belowPct()!!
-            this@DetermineBasalaimiSMB2.currentTIRRange = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.inRangePct()!!
-            this@DetermineBasalaimiSMB2.currentTIRAbove = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.abovePct()!!
-            this@DetermineBasalaimiSMB2.lastHourTIRLow = tirCalculator.averageTIR(tirCalculator.calculateHour(80.0, 140.0))?.belowPct()!!
-            lastHourTIRAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(72.0, 140.0))?.abovePct()
-            this@DetermineBasalaimiSMB2.lastHourTIRLow100 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 140.0))?.belowPct()!!
-            this@DetermineBasalaimiSMB2.lastHourTIRabove170 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 170.0))?.abovePct()!!
-            this@DetermineBasalaimiSMB2.lastHourTIRabove120 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 120.0))?.abovePct()!!
-            val tir3 = tirCalculator.calculate(3, 65.0, 120.0)
-            tirbasal3IR = tirCalculator.averageTIR(tir3)?.inRangePct()
-            tirbasal3B = tirCalculator.averageTIR(tir3)?.belowPct()
-            tirbasal3A = tirCalculator.averageTIR(tir3)?.abovePct()
-            tirbasalhAP = tirCalculator.averageTIR(tirCalculator.calculateHour(65.0, 100.0))?.abovePct()
-        }
+        val tirSnapshot = latestTirWarmupSnapshot()
+        this.tir1DAYabove = tirSnapshot.tir1DayAbove
+        tir1DAYIR = tirSnapshot.tir1DayInRange
+        this.currentTIRLow = tirSnapshot.currentTirLow
+        this.currentTIRRange = tirSnapshot.currentTirRange
+        this.currentTIRAbove = tirSnapshot.currentTirAbove
+        this.lastHourTIRLow = tirSnapshot.lastHourTirLow
+        lastHourTIRAbove = tirSnapshot.lastHourTirAbove
+        this.lastHourTIRLow100 = tirSnapshot.lastHourTirLow100
+        this.lastHourTIRabove170 = tirSnapshot.lastHourTirAbove170
+        this.lastHourTIRabove120 = tirSnapshot.lastHourTirAbove120
+        tirbasal3IR = tirSnapshot.tirBasal3InRange
+        tirbasal3B = tirSnapshot.tirBasal3Below
+        tirbasal3A = tirSnapshot.tirBasal3Above
+        tirbasalhAP = tirSnapshot.tirBasalHourAbove
         //this.enablebasal = preferences.get(BooleanKey.OApsAIMIEnableBasal)
         this.now = System.currentTimeMillis()
         automateDeletionIfBadDay(tir1DAYIR.toInt())
 
         this.weekend = if (dayOfWeek == Calendar.SUNDAY || dayOfWeek == Calendar.SATURDAY) 1 else 0
         var lastCarbTimestamp = mealData.lastCarbTime
-        val fourHoursAgo = now - 4 * 60 * 60 * 1000
-        val oneDayAgoIfNotFound = now - 24 * 60 * 60 * 1000
-        runBlocking(Dispatchers.IO) {
-            if (lastCarbTimestamp.toInt() == 0) {
-                lastCarbTimestamp = persistenceLayer.getMostRecentCarbByDate() ?: oneDayAgoIfNotFound
-            }
-            this@DetermineBasalaimiSMB2.lastCarbAgeMin = ((now - lastCarbTimestamp) / (60 * 1000)).toInt()
-            this@DetermineBasalaimiSMB2.futureCarbs = persistenceLayer.getFutureCob().toFloat()
-            if (this@DetermineBasalaimiSMB2.lastCarbAgeMin < 15 && cob == 0.0f) {
-                this@DetermineBasalaimiSMB2.cob = persistenceLayer.getMostRecentCarbAmount()?.toFloat() ?: 0.0f
-            }
-            this@DetermineBasalaimiSMB2.recentNotes = persistenceLayer.getUserEntryDataFromTime(fourHoursAgo)
+        val carbSnapshot = latestCarbContextSnapshot(nowMs = now, mealDataLastCarbTime = lastCarbTimestamp, cobNow = cob)
+        lastCarbTimestamp = carbSnapshot.lastCarbTimestamp
+        this.lastCarbAgeMin = carbSnapshot.lastCarbAgeMin
+        this.futureCarbs = carbSnapshot.futureCarbs
+        if (this.lastCarbAgeMin < 15 && cob == 0.0f) {
+            this.cob = carbSnapshot.effectiveCob
         }
+        this.recentNotes = carbSnapshot.recentNotes
 
         this.tags0to60minAgo = parseNotes(0, 60)
         this.tags60to120minAgo = parseNotes(60, 120)
@@ -6023,10 +6351,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // tdd7Days already hoisted to start of function
         this.tdd7DaysPerHour = (tdd7Days / 24).toFloat()
 
-        var tdd2Days = tddCalculator.averageTDD(
-            runBlocking(Dispatchers.IO) { tddCalculator.calculate(2, allowMissingDays = false) }
-        )?.data?.totalAmount?.toFloat() ?: 0.0f
-        if (tdd2Days == 0.0f || tdd2Days < tdd7P) tdd2Days = tdd7P.toFloat()
+        var tdd2Days = tdd2DaysCached(tdd7P)
         this.tdd2DaysPerHour = tdd2Days / 24
 
         var tddDaily = tddCalculator.averageTDD(
@@ -6665,9 +6990,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // Robust Steps Retrieval (Matches HR logic)
             // Search window: 210 mins to cover 180min + delays
             val stepsSearchStart = now - 210 * 60 * 1000
-            val allStepsCounts = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getStepsCountFromTimeToTime(stepsSearchStart, now)
-            }
+            val allStepsCounts = stepsCountsCached(now)
 
             if (allStepsCounts.isNotEmpty()) {
                 val lastSteps = allStepsCounts.maxByOrNull { it.timestamp }
@@ -6713,10 +7036,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Efficient robust Heart Rate retrieval (One query for all windows + fallback)
         try {
             // Search window: 200 mins to cover the 180min avg + buffer for overlapping records
-            val searchStart = now - 200 * 60 * 1000
-            val allHeartRates = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getHeartRatesFromTimeToTime(searchStart, now)
-            }
+            val allHeartRates = heartRatesCached(now)
 
             // Debug info for the user/screenshot
             if (allHeartRates.isNotEmpty()) {
@@ -8422,13 +8742,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     // Extract reason tags from finalResult.reason
                     val reasonTags = finalResult.reason.toString().split(". ").map { it.trim() }
 
-                    val auditorEffectiveProfile: EffectiveProfile? = runBlocking(Dispatchers.IO) {
-                        try {
-                            profileFunction.getProfile(dateUtil.now())
-                        } catch (_: Exception) {
-                            null
-                        }
-                    }
+                    val auditorEffectiveProfile: EffectiveProfile? = effectiveProfileCached(dateUtil.now())
                     
                     // Call auditor (async)
                     auditorOrchestrator.auditDecision(

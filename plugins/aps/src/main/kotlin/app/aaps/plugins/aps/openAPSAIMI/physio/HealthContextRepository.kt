@@ -5,10 +5,14 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.plugins.aps.openAPSAIMI.steps.StepsResult
 import app.aaps.plugins.aps.openAPSAIMI.steps.UnifiedActivityProviderMTR
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 🏥 Health Context Repository
@@ -36,6 +40,11 @@ class HealthContextRepository @Inject constructor(
 
     // In-memory cache of the last valid snapshot
     private var lastSnapshot: HealthContextSnapshot = HealthContextSnapshot.EMPTY
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val sleepRef = AtomicReference<Any?>(null)
+    private val hrvRef = AtomicReference<List<Any>>(emptyList())
+    private val rhrRef = AtomicReference<List<Any>>(emptyList())
+    private val refreshInFlight = AtomicBoolean(false)
     
     /**
      * Fetches and builds the current Health Snapshot.
@@ -43,9 +52,13 @@ class HealthContextRepository @Inject constructor(
      */
     fun fetchSnapshot(): HealthContextSnapshot {
         // 1. Fetch Basic Data (HC)
-        val sleepData = runBlocking(Dispatchers.IO) { hcRepo.fetchSleepData() }
-        val hrvList = runBlocking(Dispatchers.IO) { hcRepo.fetchHRVData(1) } // Last 24h
-        val rhrList = runBlocking(Dispatchers.IO) { hcRepo.fetchMorningRHR(7) }
+        refreshCoreDataAsync()
+        @Suppress("UNCHECKED_CAST")
+        val sleepData = sleepRef.get() as? SleepDataMTR
+        @Suppress("UNCHECKED_CAST")
+        val hrvList = hrvRef.get() as List<HRVDataMTR> // Last 24h
+        @Suppress("UNCHECKED_CAST")
+        val rhrList = rhrRef.get() as List<RHRDataMTR>
         
         // 2. Fetch Real-Time Data (Unified Provider: Watch > Phone > HC)
         val steps5Result = unifiedProvider.getStepsTotalSince(System.currentTimeMillis() - 5 * 60 * 1000)
@@ -114,11 +127,25 @@ class HealthContextRepository @Inject constructor(
     
     // For Daily Worker: Force heavy refresh
     fun forceHeavyRefresh() {
-        runBlocking(Dispatchers.IO) {
-            hcRepo.fetchSleepData()
-            hcRepo.fetchMorningRHR(7)
-            hcRepo.fetchHRVData(7)
-        }
+        refreshCoreDataAsync(daysHrv = 7, force = true)
         fetchSnapshot()
+    }
+
+    private fun refreshCoreDataAsync(daysHrv: Int = 1, force: Boolean = false) {
+        if (!force && !refreshInFlight.compareAndSet(false, true)) return
+        if (force) refreshInFlight.set(true)
+        ioScope.launch {
+            try {
+                sleepRef.set(hcRepo.fetchSleepData())
+                hrvRef.set(hcRepo.fetchHRVData(daysHrv))
+                rhrRef.set(hcRepo.fetchMorningRHR(7))
+            } catch (_: Exception) {
+                sleepRef.set(null)
+                hrvRef.set(emptyList())
+                rhrRef.set(emptyList())
+            } finally {
+                refreshInFlight.set(false)
+            }
+        }
     }
 }

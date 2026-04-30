@@ -10,8 +10,10 @@ import java.util.Timer
 import java.util.TimerTask
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 📱 AIMI Phone Steps Sync Service - MTR Implementation
@@ -33,6 +35,7 @@ class AIMIPhoneStepsSyncServiceMTR @Inject constructor(
     private val sp: SP,
     private val aapsLogger: AAPSLogger
 ) {
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     companion object {
         private const val TAG = "PhoneStepsSync"
@@ -110,7 +113,7 @@ class AIMIPhoneStepsSyncServiceMTR @Inject constructor(
                     device = SOURCE_DEVICE
                 )
                 
-                runBlocking(Dispatchers.IO) {
+                ioScope.launch {
                     try {
                         persistenceLayer.insertOrUpdateStepsCount(sc)
                         aapsLogger.debug(

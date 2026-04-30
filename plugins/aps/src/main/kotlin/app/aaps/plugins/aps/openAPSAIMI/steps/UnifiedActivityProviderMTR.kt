@@ -7,10 +7,14 @@ import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 🎛️ Unified Activity Provider - MTR Implementation
@@ -39,6 +43,11 @@ class UnifiedActivityProviderMTR @Inject constructor(
 
     @Volatile
     private var latestHrCache: HrResult? = null
+    private val stepsRecordsRef = AtomicReference<List<SC>>(emptyList())
+    private val hrRecordsRef = AtomicReference<List<HR>>(emptyList())
+    private val stepsRefreshInFlight = AtomicBoolean(false)
+    private val hrRefreshInFlight = AtomicBoolean(false)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     companion object {
         private const val TAG = "ActivityProvider"
@@ -81,9 +90,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
             // Fetch all records in window
             // Note: getStepsCountFromTimeToTime returns list ordered by ?? Usually time.
             // We'll sort descending to be safe.
-            val records = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getStepsCountFromTimeToTime(start, now)
-            }.sortedByDescending { it.timestamp }
+            val records = stepsRecordsCached(start, now).sortedByDescending { it.timestamp }
                 
             if (records.isEmpty()) return null
             
@@ -128,9 +135,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
         val now = System.currentTimeMillis()
 
         return try {
-            val records = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getStepsCountFromTimeToTime(startMs, now)
-            }.sortedBy { it.timestamp } // zeitlich vorwärts
+            val records = stepsRecordsCached(startMs, now).sortedBy { it.timestamp } // zeitlich vorwärts
 
             if (records.isEmpty()) return null
 
@@ -188,9 +193,7 @@ class UnifiedActivityProviderMTR @Inject constructor(
         val start = now - windowMs
         
         try {
-            val records = runBlocking(Dispatchers.IO) {
-                persistenceLayer.getHeartRatesFromTimeToTime(start, now)
-            }.sortedByDescending { it.timestamp }
+            val records = heartRatesCached(start, now).sortedByDescending { it.timestamp }
                 
             if (records.isEmpty()) return null
             
@@ -251,5 +254,41 @@ class UnifiedActivityProviderMTR @Inject constructor(
         if (records.isEmpty()) return null
         // Prefer 5-minute rows when available (true interval signal for AIMI activity gating).
         return records.firstOrNull { it.duration in 299_000L..301_000L } ?: records.first()
+    }
+
+    private fun stepsRecordsCached(start: Long, end: Long): List<SC> {
+        refreshStepsAsync(start, end)
+        return stepsRecordsRef.get()
+    }
+
+    private fun refreshStepsAsync(start: Long, end: Long) {
+        if (!stepsRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                stepsRecordsRef.set(persistenceLayer.getStepsCountFromTimeToTime(start, end))
+            } catch (_: Exception) {
+                stepsRecordsRef.set(emptyList())
+            } finally {
+                stepsRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun heartRatesCached(start: Long, end: Long): List<HR> {
+        refreshHeartRatesAsync(start, end)
+        return hrRecordsRef.get()
+    }
+
+    private fun refreshHeartRatesAsync(start: Long, end: Long) {
+        if (!hrRefreshInFlight.compareAndSet(false, true)) return
+        ioScope.launch {
+            try {
+                hrRecordsRef.set(persistenceLayer.getHeartRatesFromTimeToTime(start, end))
+            } catch (_: Exception) {
+                hrRecordsRef.set(emptyList())
+            } finally {
+                hrRefreshInFlight.set(false)
+            }
+        }
     }
 }

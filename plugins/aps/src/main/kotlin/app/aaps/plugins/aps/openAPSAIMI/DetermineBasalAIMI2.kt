@@ -861,7 +861,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     private val csvfile = File(externalDir, "oapsaimiML2_records.csv")
     private val csvfile2 = File(externalDir, "oapsaimi2_records.csv")
     private val appExternalFallbackDir = File(context.getExternalFilesDir(null), "AAPS")
-    private val hormonitorStudyExporter by lazy { AimiHormonitorStudyExporterMTR(context, aapsLogger) }
+    private val hormonitorStudyExporter by lazy { AimiHormonitorStudyExporterMTR(context, aapsLogger, preferences) }
     private var csvPrimaryStorageDeniedLogged = false
     private val pkpdIntegration = PkPdIntegration(preferences)
     //private val tempFile = File(externalDir, "temp.csv")
@@ -5242,6 +5242,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         microBolusAllowed: Boolean, currentTime: Long, flatBGsDetected: Boolean, dynIsfMode: Boolean, uiInteraction: UiInteraction,
         extraDebug: String = "" // 🌀 Extensible Debug Channel (e.g. Cosine Gate)
     ): RT = AimiLoopTelemetry.traceDetermineBasalTick(
+        preferences = preferences,
         wallClockMs = currentTime,
         onTickEnd = { tickId, startedWallMs, endedWallMs ->
             try {
@@ -5256,6 +5257,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
         },
         onTickAbort = { tickId, startedWallMs, endedWallMs, error ->
+            determineBasalInvocationCaches.abandonInvocationAfterUnhandledError()
             try {
                 hormonitorStudyExporter.recordLoopTickAborted(
                     tickId = tickId,

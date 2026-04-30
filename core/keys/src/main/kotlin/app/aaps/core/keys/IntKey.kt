@@ -308,6 +308,8 @@ enum class IntKey(
     OApsAIMIKickerMaxMin(key = "OApsAIMIKickerMaxMin", 30, 10, 60), // durée max du “kick” plateau (min)
     OApsAIMIZeroResumeMin(key = "OApsAIMIZeroResumeMin", 10,  5, 30), // délai avant micro-reprise (minutes à 0)
     OApsAIMIZeroResumeMax(key = "OApsAIMIZeroResumeMax", 30, 10, 60), // durée max de la micro-reprise
+    /** Seconds without loop_tick_end after a tick pulse; used by the loop blackbox watchdog (60–600). */
+    OApsAIMIIntratickStallSeconds("key_aimi_intratick_stall_seconds", 180, 60, 600),
     // --- AI Decision Auditor ---
     AimiAuditorMaxPerHour("aimi_auditor_max_per_hour", 12, 1, 30),  // Max audits per hour
     AimiAuditorTimeoutSeconds("aimi_auditor_timeout_seconds", 120, 30, 300),  // API timeout (seconds)

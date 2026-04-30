@@ -64,6 +64,16 @@ internal class DetermineBasalInvocationCaches {
         }
     }
 
+    /**
+     * Call when [determine_basal] exits via uncaught exception after [beginInvocation].
+     * Bumps the sequence so async stats work from a failed tick cannot be mistaken for the next pass.
+     */
+    fun abandonInvocationAfterUnhandledError() {
+        synchronized(lock) {
+            invocationSeq++
+        }
+    }
+
     fun getTdd24hTotalAmountCached(tddCalculator: TddCalculator): Double? {
         return getTdd24hTotalAmountState(tddCalculator).valueOrNull()
     }

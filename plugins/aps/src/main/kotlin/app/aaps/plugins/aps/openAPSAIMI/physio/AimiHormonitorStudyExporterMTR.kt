@@ -6,6 +6,9 @@ import android.os.SystemClock
 import android.provider.Settings
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.interfaces.Preferences
 import java.io.File
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -107,7 +110,8 @@ data class HormonitorDecisionEventMTR(
 
 class AimiHormonitorStudyExporterMTR(
     private val context: Context,
-    private val aapsLogger: AAPSLogger
+    private val aapsLogger: AAPSLogger,
+    private val preferences: Preferences
 ) {
     companion object {
         private const val SCHEMA_VERSION = "1.0.0"
@@ -129,8 +133,6 @@ class AimiHormonitorStudyExporterMTR(
         private const val WATCHDOG_INTERVAL_MS = 45_000L
         /** No loop pulse for this long → write stall warning (typical loop 5 min; avoid false positives). */
         private const val LOOP_STALL_THRESHOLD_MS = 600_000L
-        /** Pulse received with tick_id but no matching [recordLoopTickEnd] for this long → intra-tick stall. */
-        private const val INTRA_TICK_STALL_THRESHOLD_MS = 180_000L
     }
 
     @Volatile
@@ -179,6 +181,21 @@ class AimiHormonitorStudyExporterMTR(
         startLoopWatchdog()
     }
 
+    private fun isLoopBlackboxFileEnabled(): Boolean =
+        preferences.get(BooleanKey.OApsAIMILoopBlackboxFileEnabled)
+
+    private fun intratickStallThresholdMs(): Long {
+        val sec = preferences.get(IntKey.OApsAIMIIntratickStallSeconds).coerceIn(60, 600)
+        return sec * 1000L
+    }
+
+    private fun appendLoopBlackboxLine(line: String) {
+        if (!isLoopBlackboxFileEnabled()) return
+        val target = File(sharedDir, BLACKBOX_FILE_NAME)
+        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
+        appendJsonlSafely(target, fallback, line)
+    }
+
     /**
      * Called at the start of each AIMI determine_basal pass (wall clock).
      * Writes a JSONL pulse and feeds the stall watchdog (post-mortem blackbox).
@@ -195,9 +212,7 @@ class AimiHormonitorStudyExporterMTR(
             if (tickId > 0L) put("tick_id", tickId)
             put("uptime_ms", SystemClock.uptimeMillis())
         }.toString()
-        val target = File(sharedDir, BLACKBOX_FILE_NAME)
-        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
-        appendJsonlSafely(target, fallback, line)
+        appendLoopBlackboxLine(line)
     }
 
     /** Phase transition inside the current tick (observe-only). */
@@ -218,9 +233,7 @@ class AimiHormonitorStudyExporterMTR(
             msSincePrevPhase?.let { put("ms_since_prev_phase", it) }
             put("uptime_ms", SystemClock.uptimeMillis())
         }.toString()
-        val target = File(sharedDir, BLACKBOX_FILE_NAME)
-        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
-        appendJsonlSafely(target, fallback, line)
+        appendLoopBlackboxLine(line)
     }
 
     /**
@@ -255,9 +268,7 @@ class AimiHormonitorStudyExporterMTR(
             if (!lastPhaseName.isNullOrEmpty()) put("last_phase", lastPhaseName)
             put("uptime_ms", SystemClock.uptimeMillis())
         }.toString()
-        val target = File(sharedDir, BLACKBOX_FILE_NAME)
-        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
-        appendJsonlSafely(target, fallback, line)
+        appendLoopBlackboxLine(line)
     }
 
     /** Emitted when a determine_basal pass completes; pairs with [recordLoopPulse]. */
@@ -280,9 +291,7 @@ class AimiHormonitorStudyExporterMTR(
             if (!lastPhaseName.isNullOrEmpty()) put("last_phase", lastPhaseName)
             put("uptime_ms", SystemClock.uptimeMillis())
         }.toString()
-        val target = File(sharedDir, BLACKBOX_FILE_NAME)
-        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
-        appendJsonlSafely(target, fallback, line)
+        appendLoopBlackboxLine(line)
     }
 
     fun export(event: HormonitorDecisionEventMTR) {
@@ -538,9 +547,10 @@ class AimiHormonitorStudyExporterMTR(
                 val pendingId = pendingTickEndId
                 val pendingPulseAt = pendingTickPulseWallMs
                 if (pendingId > 0L && pendingPulseAt > 0L) {
+                    val intraThreshold = intratickStallThresholdMs()
                     val intratickGap = now - pendingPulseAt
-                    if (intratickGap >= INTRA_TICK_STALL_THRESHOLD_MS &&
-                        now - lastIntratickStallWarningWallMs >= INTRA_TICK_STALL_THRESHOLD_MS
+                    if (intratickGap >= intraThreshold &&
+                        now - lastIntratickStallWarningWallMs >= intraThreshold
                     ) {
                         lastIntratickStallWarningWallMs = now
                         val line = JSONObject().apply {
@@ -549,17 +559,15 @@ class AimiHormonitorStudyExporterMTR(
                             put("tick_id", pendingId)
                             put("pulse_wall_ms", pendingPulseAt)
                             put("gap_ms", intratickGap)
-                            put("threshold_ms", INTRA_TICK_STALL_THRESHOLD_MS)
+                            put("threshold_ms", intraThreshold)
                             put("last_phase", lastReportedPhaseName)
                             put("uptime_ms", SystemClock.uptimeMillis())
                         }.toString()
-                        val target = File(sharedDir, BLACKBOX_FILE_NAME)
-                        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
-                        appendJsonlSafely(target, fallback, line)
+                        appendLoopBlackboxLine(line)
                         aapsLogger.warn(
                             LTag.APS,
                             "[$TAG] Blackbox: intra-tick stall tickId=$pendingId gap=${intratickGap}ms " +
-                                "(threshold=${INTRA_TICK_STALL_THRESHOLD_MS}ms phase=$lastReportedPhaseName). See $BLACKBOX_FILE_NAME"
+                                "(threshold=${intraThreshold}ms phase=$lastReportedPhaseName). See $BLACKBOX_FILE_NAME"
                         )
                         continue
                     }
@@ -578,9 +586,7 @@ class AimiHormonitorStudyExporterMTR(
                     put("threshold_ms", LOOP_STALL_THRESHOLD_MS)
                     put("uptime_ms", SystemClock.uptimeMillis())
                 }.toString()
-                val target = File(sharedDir, BLACKBOX_FILE_NAME)
-                val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
-                appendJsonlSafely(target, fallback, line)
+                appendLoopBlackboxLine(line)
                 aapsLogger.warn(
                     LTag.APS,
                     "[$TAG] Blackbox: no loop pulse for ${gap}ms (threshold=${LOOP_STALL_THRESHOLD_MS}ms). See $BLACKBOX_FILE_NAME"

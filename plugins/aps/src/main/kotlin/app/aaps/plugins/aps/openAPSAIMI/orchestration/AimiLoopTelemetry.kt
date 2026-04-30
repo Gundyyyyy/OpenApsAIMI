@@ -1,6 +1,8 @@
 package app.aaps.plugins.aps.openAPSAIMI.orchestration
 
 import app.aaps.core.interfaces.aps.RT
+import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.aps.openAPSAIMI.physio.AimiHormonitorStudyExporterMTR
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.collections.ArrayDeque
@@ -69,47 +71,58 @@ object AimiLoopTelemetry {
      * (no onTickEnd — avoids a false successful loop_tick_end line in the blackbox).
      */
     internal inline fun traceDetermineBasalTick(
+        preferences: Preferences,
         wallClockMs: Long,
         noinline onTickEnd: ((tickId: Long, startedWallMs: Long, endedWallMs: Long) -> Unit)? = null,
         noinline onTickAbort: ((tickId: Long, startedWallMs: Long, endedWallMs: Long, error: Throwable) -> Unit)? = null,
         block: () -> RT
     ): RT {
-        val id = tickSeq.incrementAndGet()
-        val previousActive = activeTickId
-        activeTickId = id
-        activeTickStartedWallMs = wallClockMs
-        lastPhaseMarkWallMs = 0L
-        appendRing("tick_start id=$id wall_ms=$wallClockMs")
-        var completedNormally = false
+        val exclusive = preferences.get(BooleanKey.OApsAIMILoopExclusiveInvocationEnabled)
+        if (exclusive) {
+            AimiLoopGate.acquireExclusive()
+        }
         try {
-            val result = block()
-            completedNormally = true
-            return result
-        } catch (t: Throwable) {
-            val endedWallMs = System.currentTimeMillis()
-            val errSimple = t::class.simpleName ?: "Throwable"
-            appendRing(
-                "tick_abort id=$id wall_ms=$endedWallMs duration_ms=${endedWallMs - wallClockMs} error=$errSimple"
-            )
+            val id = tickSeq.incrementAndGet()
+            val previousActive = activeTickId
+            activeTickId = id
+            activeTickStartedWallMs = wallClockMs
+            lastPhaseMarkWallMs = 0L
+            appendRing("tick_start id=$id wall_ms=$wallClockMs")
+            var completedNormally = false
             try {
-                onTickAbort?.invoke(id, wallClockMs, endedWallMs, t)
-            } catch (_: Throwable) {
-                // Never break the loop on telemetry.
-            }
-            throw t
-        } finally {
-            if (completedNormally) {
+                val result = block()
+                completedNormally = true
+                return result
+            } catch (t: Throwable) {
                 val endedWallMs = System.currentTimeMillis()
-                appendRing("tick_end id=$id wall_ms=$endedWallMs duration_ms=${endedWallMs - wallClockMs}")
+                val errSimple = t::class.simpleName ?: "Throwable"
+                appendRing(
+                    "tick_abort id=$id wall_ms=$endedWallMs duration_ms=${endedWallMs - wallClockMs} error=$errSimple"
+                )
                 try {
-                    onTickEnd?.invoke(id, wallClockMs, endedWallMs)
+                    onTickAbort?.invoke(id, wallClockMs, endedWallMs, t)
                 } catch (_: Throwable) {
                     // Never break the loop on telemetry.
                 }
+                throw t
+            } finally {
+                if (completedNormally) {
+                    val endedWallMs = System.currentTimeMillis()
+                    appendRing("tick_end id=$id wall_ms=$endedWallMs duration_ms=${endedWallMs - wallClockMs}")
+                    try {
+                        onTickEnd?.invoke(id, wallClockMs, endedWallMs)
+                    } catch (_: Throwable) {
+                        // Never break the loop on telemetry.
+                    }
+                }
+                activeTickId = previousActive
+                activeTickStartedWallMs = 0L
+                lastPhaseMarkWallMs = 0L
             }
-            activeTickId = previousActive
-            activeTickStartedWallMs = 0L
-            lastPhaseMarkWallMs = 0L
+        } finally {
+            if (exclusive) {
+                AimiLoopGate.releaseExclusive()
+            }
         }
     }
 

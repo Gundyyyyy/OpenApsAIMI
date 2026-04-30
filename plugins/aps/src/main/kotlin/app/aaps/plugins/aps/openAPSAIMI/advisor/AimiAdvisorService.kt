@@ -77,7 +77,10 @@ class AimiAdvisorService {
     private val tir140Ref = AtomicReference<Any?>(null)
     private val tddRef = AtomicReference<Any?>(null)
     private val tddTodayRef = AtomicReference<Any?>(null)
-    private val tirRefreshInFlight = AtomicBoolean(false)
+    private val tirRangeRefreshInFlight = AtomicBoolean(false)
+    private val tir54RefreshInFlight = AtomicBoolean(false)
+    private val tir250RefreshInFlight = AtomicBoolean(false)
+    private val tir140RefreshInFlight = AtomicBoolean(false)
     private val tddRefreshInFlight = AtomicBoolean(false)
 
     // Constructor injection for dependencies
@@ -1150,19 +1153,31 @@ class AimiAdvisorService {
         cacheRef: AtomicReference<Any?>
     ): LongSparseArray<TIR> {
         val calculator = tirCalculator
-        if (calculator != null && tirRefreshInFlight.compareAndSet(false, true)) {
+        val inFlight = when (cacheRef) {
+            tirRangeRef -> tirRangeRefreshInFlight
+            tir54Ref -> tir54RefreshInFlight
+            tir250Ref -> tir250RefreshInFlight
+            tir140Ref -> tir140RefreshInFlight
+            else -> tirRangeRefreshInFlight
+        }
+        if (calculator != null && inFlight.compareAndSet(false, true)) {
             ioScope.launch {
                 try {
                     cacheRef.set(calculator.calculate(days, low, high))
                 } catch (_: Exception) {
                     cacheRef.set(null)
                 } finally {
-                    tirRefreshInFlight.set(false)
+                    inFlight.set(false)
                 }
             }
         }
         @Suppress("UNCHECKED_CAST")
-        return cacheRef.get() as? LongSparseArray<TIR> ?: LongSparseArray()
+        val cached = cacheRef.get() as? LongSparseArray<TIR>
+        if (cached != null && cached.size() > 0) return cached
+
+        // Immediate synchronous fallback for Advisor availability:
+        // calculateDaily is non-suspend and prevents "TIR unavailable" during async warmup.
+        return calculator?.calculateDaily(low, high) ?: LongSparseArray()
     }
 
     private fun tddCalculateCached(days: Long): LongSparseArray<TDD>? {

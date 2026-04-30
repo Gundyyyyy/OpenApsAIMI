@@ -12,6 +12,13 @@ import java.util.Date
 import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 data class HormonitorDecisionEventMTR(
@@ -113,6 +120,8 @@ class AimiHormonitorStudyExporterMTR(
         private const val QA_MIN_TEMPORAL_COHERENCE = 0.99
         private const val QA_MAX_PENDING_DECISION_RATE = 0.01
         private const val QA_MAX_STALE_SNAPSHOT_RATE = 0.10
+        private const val STATE_PERSIST_INTERVAL_MS = 30_000L
+        private const val WRITE_QUEUE_CAPACITY = 512
     }
 
     @Volatile
@@ -121,6 +130,15 @@ class AimiHormonitorStudyExporterMTR(
     private var lastDailyEmitMs: Long = 0L
     @Volatile
     private var lastQaEmitMs: Long = 0L
+    @Volatile
+    private var lastStatePersistMs: Long = 0L
+
+    private val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val droppedWrites = AtomicLong(0)
+    private val writeQueue = Channel<WriteTask>(
+        capacity = WRITE_QUEUE_CAPACITY,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
 
     private val sharedDir = File(Environment.getExternalStorageDirectory().absolutePath + "/Documents/AAPS")
     private val appScopedDir = File(context.getExternalFilesDir(null), "AAPS")
@@ -129,6 +147,7 @@ class AimiHormonitorStudyExporterMTR(
 
     init {
         restoreDailyState()
+        startWriter()
     }
 
     fun export(event: HormonitorDecisionEventMTR) {
@@ -255,27 +274,14 @@ class AimiHormonitorStudyExporterMTR(
     }
 
     private fun appendJsonlSafely(primary: File, fallback: File, line: String) {
-        try {
-            appendLine(primary, line)
-        } catch (primaryError: Exception) {
-            if (!sharedStorageDeniedLogged) {
-                sharedStorageDeniedLogged = true
-                aapsLogger.warn(
-                    LTag.APS,
-                    "[$TAG] Study export denied on shared storage (${primary.absolutePath}). " +
-                        "Switching to app-scoped fallback (${fallback.absolutePath}). reason=${primaryError.message}"
-                )
-            }
-            try {
-                appendLine(fallback, line)
-            } catch (fallbackError: Exception) {
-                aapsLogger.error(
-                    LTag.APS,
-                    "[$TAG] Study export failed on both primary and fallback paths.",
-                    fallbackError
-                )
-            }
-        }
+        enqueueWrite(
+            WriteTask(
+                primary = primary,
+                fallback = fallback,
+                line = line,
+                mode = WriteMode.APPEND_LINE
+            )
+        )
     }
 
     private fun appendLine(file: File, line: String) {
@@ -333,12 +339,12 @@ class AimiHormonitorStudyExporterMTR(
     }
 
     private fun persistDailyState() {
+        val now = System.currentTimeMillis()
+        if (now - lastStatePersistMs < STATE_PERSIST_INTERVAL_MS) return
+        lastStatePersistMs = now
+
         val stateFile = File(appScopedDir, STATE_FILE_NAME)
         try {
-            if (!stateFile.exists()) {
-                stateFile.parentFile?.mkdirs()
-                stateFile.createNewFile()
-            }
             val countersJson = JSONObject()
             dailyCounters.forEach { (day, counters) ->
                 countersJson.put(day, JSONObject().apply {
@@ -368,10 +374,85 @@ class AimiHormonitorStudyExporterMTR(
                     }
                 })
             }
-            stateFile.writeText(root.toString())
+            enqueueWrite(
+                WriteTask(
+                    primary = stateFile,
+                    fallback = stateFile,
+                    line = root.toString(),
+                    mode = WriteMode.OVERWRITE
+                )
+            )
         } catch (_: Exception) {
             // Never break loop/export path on state persistence failures.
         }
+    }
+
+    private fun startWriter() {
+        writeScope.launch {
+            for (task in writeQueue) {
+                tryWrite(task)
+            }
+        }
+    }
+
+    private fun enqueueWrite(task: WriteTask) {
+        val accepted = writeQueue.trySend(task).isSuccess
+        if (!accepted) {
+            val dropped = droppedWrites.incrementAndGet()
+            if (dropped == 1L || dropped % 100L == 0L) {
+                aapsLogger.warn(
+                    LTag.APS,
+                    "[$TAG] Export queue saturated. Dropped writes=$dropped"
+                )
+            }
+        }
+    }
+
+    private fun tryWrite(task: WriteTask) {
+        try {
+            writeToFile(task.primary, task.line, task.mode)
+        } catch (primaryError: Exception) {
+            if (!sharedStorageDeniedLogged && task.primary != task.fallback) {
+                sharedStorageDeniedLogged = true
+                aapsLogger.warn(
+                    LTag.APS,
+                    "[$TAG] Study export denied on shared storage (${task.primary.absolutePath}). " +
+                        "Switching to app-scoped fallback (${task.fallback.absolutePath}). reason=${primaryError.message}"
+                )
+            }
+            try {
+                writeToFile(task.fallback, task.line, task.mode)
+            } catch (fallbackError: Exception) {
+                aapsLogger.error(
+                    LTag.APS,
+                    "[$TAG] Study export failed on both primary and fallback paths.",
+                    fallbackError
+                )
+            }
+        }
+    }
+
+    private fun writeToFile(file: File, payload: String, mode: WriteMode) {
+        if (!file.exists()) {
+            file.parentFile?.mkdirs()
+            file.createNewFile()
+        }
+        when (mode) {
+            WriteMode.APPEND_LINE -> file.appendText("$payload\n")
+            WriteMode.OVERWRITE -> file.writeText(payload)
+        }
+    }
+
+    private data class WriteTask(
+        val primary: File,
+        val fallback: File,
+        val line: String,
+        val mode: WriteMode,
+    )
+
+    private enum class WriteMode {
+        APPEND_LINE,
+        OVERWRITE,
     }
 
     private fun restoreDailyState() {

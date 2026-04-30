@@ -201,13 +201,58 @@ class AimiHormonitorStudyExporterMTR(
     }
 
     /** Phase transition inside the current tick (observe-only). */
-    fun recordLoopPhase(tickId: Long, phaseName: String, wallClockMs: Long) {
+    fun recordLoopPhase(
+        tickId: Long,
+        phaseName: String,
+        wallClockMs: Long,
+        msSinceTickStart: Long? = null,
+        msSincePrevPhase: Long? = null
+    ) {
         lastReportedPhaseName = phaseName
         val line = JSONObject().apply {
             put("type", "loop_phase")
             put("tick_id", tickId)
             put("phase", phaseName)
             put("wall_ms", wallClockMs)
+            msSinceTickStart?.let { put("ms_since_tick_start", it) }
+            msSincePrevPhase?.let { put("ms_since_prev_phase", it) }
+            put("uptime_ms", SystemClock.uptimeMillis())
+        }.toString()
+        val target = File(sharedDir, BLACKBOX_FILE_NAME)
+        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
+        appendJsonlSafely(target, fallback, line)
+    }
+
+    /**
+     * Uncaught exception escaped the tick body; clears pending tick watchdog state.
+     * Study pipelines should ignore unknown `type` or filter on this type for QA.
+     */
+    fun recordLoopTickAborted(
+        tickId: Long,
+        startedWallMs: Long,
+        endedWallMs: Long,
+        errorClass: String,
+        errorMessage: String,
+        lastPhaseName: String?
+    ) {
+        if (tickId > 0L && tickId == pendingTickEndId) {
+            pendingTickEndId = 0L
+            pendingTickPulseWallMs = 0L
+        }
+        val safeMessage = errorMessage.replace("\n", " ").take(500)
+        aapsLogger.warn(
+            LTag.APS,
+            "[$TAG] loop_tick_aborted tickId=$tickId phase=${lastPhaseName ?: "?"} $errorClass: $safeMessage"
+        )
+        val line = JSONObject().apply {
+            put("type", "loop_tick_aborted")
+            put("tick_id", tickId)
+            put("started_wall_ms", startedWallMs)
+            put("ended_wall_ms", endedWallMs)
+            put("duration_ms", (endedWallMs - startedWallMs).coerceAtLeast(0L))
+            put("error_class", errorClass)
+            put("error_message", safeMessage)
+            if (!lastPhaseName.isNullOrEmpty()) put("last_phase", lastPhaseName)
             put("uptime_ms", SystemClock.uptimeMillis())
         }.toString()
         val target = File(sharedDir, BLACKBOX_FILE_NAME)

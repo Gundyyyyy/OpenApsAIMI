@@ -5254,6 +5254,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             } catch (_: Throwable) {
                 // Never break determine_basal on telemetry.
             }
+        },
+        onTickAbort = { tickId, startedWallMs, endedWallMs, error ->
+            try {
+                hormonitorStudyExporter.recordLoopTickAborted(
+                    tickId = tickId,
+                    startedWallMs = startedWallMs,
+                    endedWallMs = endedWallMs,
+                    errorClass = error::class.simpleName ?: "Throwable",
+                    errorMessage = error.message ?: "",
+                    lastPhaseName = AimiLoopTelemetry.currentLoopPhase.name
+                )
+            } catch (_: Throwable) {
+                // Never break determine_basal on telemetry.
+            }
         }
     ) {
         determineBasalInvocationCaches.beginInvocation()

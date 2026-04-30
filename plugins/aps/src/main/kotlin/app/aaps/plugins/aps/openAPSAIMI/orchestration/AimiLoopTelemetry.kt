@@ -6,9 +6,8 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.collections.ArrayDeque
 
 /**
- * Phase A (observe-only): correlates a monotonic tick id with each [determine_basal] pass,
- * guarantees an end marker via [traceDetermineBasalTick] `finally`, and keeps a small in-memory
- * ring for debugging (no second watchdog; stall blackbox remains in the hormonitor exporter).
+ * Observe-only loop telemetry: tick id, phases, timing hints, and blackbox correlation
+ * (stall watchdog lives in the hormonitor study exporter).
  */
 object AimiLoopTelemetry {
 
@@ -20,52 +19,97 @@ object AimiLoopTelemetry {
     internal var activeTickId: Long = 0L
         private set
 
+    /** Wall clock at current tick start; 0 when idle. */
+    @Volatile
+    internal var activeTickStartedWallMs: Long = 0L
+        private set
+
     @Volatile
     internal var currentLoopPhase: AimiLoopPhase = AimiLoopPhase.BOOTSTRAP
         private set
+
+    private var lastPhaseMarkWallMs: Long = 0L
 
     private val ring = ArrayDeque<String>()
 
     /**
      * Records a coarse phase for the active tick (ring + optional blackbox JSONL).
+     * Adds [AimiHormonitorStudyExporterMTR.recordLoopPhase] timing fields when the wall anchor is set.
      */
     internal fun enterPhase(phase: AimiLoopPhase, blackbox: AimiHormonitorStudyExporterMTR?) {
         currentLoopPhase = phase
         val tickId = activeTickId
         val wall = System.currentTimeMillis()
-        appendRing("phase id=$tickId ${phase.name} wall_ms=$wall")
+        val tickStart = activeTickStartedWallMs
+        val msSinceTickStart = if (tickStart > 0L) wall - tickStart else null
+        val prev = lastPhaseMarkWallMs
+        val msSincePrevPhase = if (prev > 0L) wall - prev else null
+        lastPhaseMarkWallMs = wall
+        appendRing(
+            "phase id=$tickId ${phase.name} wall_ms=$wall " +
+                "ms_since_tick=${msSinceTickStart ?: -1} ms_since_prev_phase=${msSincePrevPhase ?: -1}"
+        )
         if (blackbox == null || tickId <= 0L) return
         try {
-            blackbox.recordLoopPhase(tickId, phase.name, wall)
+            blackbox.recordLoopPhase(
+                tickId = tickId,
+                phaseName = phase.name,
+                wallClockMs = wall,
+                msSinceTickStart = msSinceTickStart,
+                msSincePrevPhase = msSincePrevPhase
+            )
         } catch (_: Throwable) {
             // Never break determine_basal on telemetry.
         }
     }
 
     /**
-     * Wraps one full AIMI determine_basal pass. Non-local returns from [block] still run `finally`
-     * (Kotlin `inline` + `try`/`finally`), so tick end is always recorded.
+     * Wraps one full AIMI determine_basal pass. Non-local returns from [block] still run `finally`.
+     * On success: ring `tick_end` and onTickEnd. On failure: ring `tick_abort`, onTickAbort, then rethrows
+     * (no onTickEnd — avoids a false successful loop_tick_end line in the blackbox).
      */
     internal inline fun traceDetermineBasalTick(
         wallClockMs: Long,
         noinline onTickEnd: ((tickId: Long, startedWallMs: Long, endedWallMs: Long) -> Unit)? = null,
+        noinline onTickAbort: ((tickId: Long, startedWallMs: Long, endedWallMs: Long, error: Throwable) -> Unit)? = null,
         block: () -> RT
     ): RT {
         val id = tickSeq.incrementAndGet()
         val previousActive = activeTickId
         activeTickId = id
+        activeTickStartedWallMs = wallClockMs
+        lastPhaseMarkWallMs = 0L
         appendRing("tick_start id=$id wall_ms=$wallClockMs")
+        var completedNormally = false
         try {
-            return block()
-        } finally {
+            val result = block()
+            completedNormally = true
+            return result
+        } catch (t: Throwable) {
             val endedWallMs = System.currentTimeMillis()
-            appendRing("tick_end id=$id wall_ms=$endedWallMs duration_ms=${endedWallMs - wallClockMs}")
+            val errSimple = t::class.simpleName ?: "Throwable"
+            appendRing(
+                "tick_abort id=$id wall_ms=$endedWallMs duration_ms=${endedWallMs - wallClockMs} error=$errSimple"
+            )
             try {
-                onTickEnd?.invoke(id, wallClockMs, endedWallMs)
+                onTickAbort?.invoke(id, wallClockMs, endedWallMs, t)
             } catch (_: Throwable) {
                 // Never break the loop on telemetry.
             }
+            throw t
+        } finally {
+            if (completedNormally) {
+                val endedWallMs = System.currentTimeMillis()
+                appendRing("tick_end id=$id wall_ms=$endedWallMs duration_ms=${endedWallMs - wallClockMs}")
+                try {
+                    onTickEnd?.invoke(id, wallClockMs, endedWallMs)
+                } catch (_: Throwable) {
+                    // Never break the loop on telemetry.
+                }
+            }
             activeTickId = previousActive
+            activeTickStartedWallMs = 0L
+            lastPhaseMarkWallMs = 0L
         }
     }
 

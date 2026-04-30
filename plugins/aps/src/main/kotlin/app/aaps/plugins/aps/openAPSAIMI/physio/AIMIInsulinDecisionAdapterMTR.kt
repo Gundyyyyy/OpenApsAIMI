@@ -45,6 +45,8 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
     private val relevanceGate: CosineTrajectoryGate, // 🌀 Relevance Gate (Trajectory Filter)
     private val aapsLogger: AAPSLogger
 ) {
+    private val inflammationEstimator = InflammationLatentEstimatorMTR()
+    private val decisionOrchestratorShadow = AIMIDecisionOrchestratorShadowMTR()
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val hypoEventsRef = AtomicReference<List<TE>>(emptyList())
     private val hypoEventsRefreshInFlight = AtomicBoolean(false)
@@ -188,6 +190,7 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
         
         // 1. Calculate raw multipliers (Semantic + Tactical)
         val rawMultipliers = calculateRawMultipliers(snapshot, physioContext, currentBG, currentDelta)
+        val inflammationLatent = inflammationEstimator.estimate(physioContext, snapshot)
         
         // 2. 🌀 Physiological Relevance Filter (based on Cosine Similarity)
         // This gate determines if the current physiological state is "relevant" enough
@@ -230,6 +233,11 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
             source = "Semantic+Tactical+CGate",
             detailedReason = "🌀 CGate: ${gateOutcome.debug}" 
         )
+        val shadowOrchestrator = decisionOrchestratorShadow.compute(
+            rawMultipliers = rawMultipliers,
+            cgateIsfMultiplier = gateOutcome.effectiveSensitivityMultiplier,
+            inflammation = inflammationLatent,
+        )
         
         // 3. Apply HARD CAPS (Final Safety Net)
         val cappedMultipliers = applyHardCaps(modulatedMultipliers)
@@ -256,6 +264,8 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
             dataQuality = physioContext.features?.dataQuality ?: 0.0,
             sleepQualityScore = physioContext.features?.sleepQualityScore,
             multipliers = cappedMultipliers,
+            inflammationLatent = inflammationLatent,
+            shadowOrchestrator = shadowOrchestrator,
             vetoReason = null
         )
         
@@ -268,6 +278,8 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
         dataQuality: Double,
         sleepQualityScore: Double? = null,
         multipliers: PhysioMultipliersMTR,
+        inflammationLatent: InflammationLatentStateMTR = InflammationLatentStateMTR(),
+        shadowOrchestrator: AIMIDecisionOrchestratorShadowMTR.ShadowResult = AIMIDecisionOrchestratorShadowMTR.ShadowResult(),
         vetoReason: String?
     ) {
         lastDecisionTrace = PhysioDecisionTraceMTR(
@@ -280,6 +292,17 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
             basalFactor = multipliers.basalFactor,
             smbFactor = multipliers.smbFactor,
             reactivityFactor = multipliers.reactivityFactor,
+            inflammationLatentIndex = inflammationLatent.index,
+            inflammationConfidence = inflammationLatent.confidence,
+            inflammationTimescale = inflammationLatent.timescale.name,
+            inflammationDrivers = inflammationLatent.drivers,
+            shadowOrchestratorEnabled = shadowOrchestrator.enabled,
+            shadowBudgetedIsfFactor = shadowOrchestrator.budgetedIsfFactor,
+            shadowBudgetedBasalFactor = shadowOrchestrator.budgetedBasalFactor,
+            shadowBudgetedSmbFactor = shadowOrchestrator.budgetedSmbFactor,
+            shadowOverlapPenalty = shadowOrchestrator.overlapPenalty,
+            shadowContributions = shadowOrchestrator.contributions,
+            shadowNotes = shadowOrchestrator.notes,
             vetoReason = vetoReason,
             finalLoopDecisionType = null,
             source = multipliers.source
@@ -290,6 +313,8 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
                 "quality=${dataQuality.format(2)} isf=${multipliers.isfFactor.format(3)} " +
                 "basal=${multipliers.basalFactor.format(3)} smb=${multipliers.smbFactor.format(3)} " +
                 "sleepQ=${sleepQualityScore?.format(3) ?: "na"} " +
+                "inflam=${inflammationLatent.index.format(3)}(${inflammationLatent.timescale.name}) " +
+                "shadowSmb=${shadowOrchestrator.budgetedSmbFactor.format(3)} " +
                 "react=${multipliers.reactivityFactor.format(3)} " +
                 "veto=${vetoReason ?: "none"} source=${multipliers.source}"
         )

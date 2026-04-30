@@ -5512,7 +5512,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                      "PHYSIO_TRACE state=${trace.physioState} conf=${String.format("%.2f", trace.physioConfidence)} " +
                          "q=${String.format("%.2f", trace.physioDataQuality)} " +
                          "isf=${String.format("%.3f", trace.isfFactor)} basal=${String.format("%.3f", trace.basalFactor)} " +
-                         "smb=${String.format("%.3f", trace.smbFactor)} veto=${trace.vetoReason ?: "none"} " +
+                         "smb=${String.format("%.3f", trace.smbFactor)} " +
+                         "inflam=${String.format("%.3f", trace.inflammationLatentIndex)}(${trace.inflammationTimescale}) " +
+                         "shadow(smb=${String.format("%.3f", trace.shadowBudgetedSmbFactor)} ov=${String.format("%.3f", trace.shadowOverlapPenalty)}) " +
+                         "veto=${trace.vetoReason ?: "none"} " +
                          "loop=${trace.finalLoopDecisionType ?: "pending"}"
                  )
              }
@@ -8925,6 +8928,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     }
                 )
                 hormonitorStudyExporter.export(event)
+                hormonitorStudyExporter.exportShadowContributions(event)
                 hormonitorStudyExporter.exportDailyOutcomes(
                     event = event,
                     tirLowPct = currentTIRLow,

@@ -43,8 +43,10 @@ class UnifiedActivityProviderMTR @Inject constructor(
 
     @Volatile
     private var latestHrCache: HrResult? = null
-    private val stepsRecordsRef = AtomicReference<List<SC>>(emptyList())
-    private val hrRecordsRef = AtomicReference<List<HR>>(emptyList())
+    private data class StepsWindowCache(val start: Long, val end: Long, val rows: List<SC>)
+    private data class HrWindowCache(val start: Long, val end: Long, val rows: List<HR>)
+    private val stepsRecordsRef = AtomicReference<StepsWindowCache?>(null)
+    private val hrRecordsRef = AtomicReference<HrWindowCache?>(null)
     private val stepsRefreshInFlight = AtomicBoolean(false)
     private val hrRefreshInFlight = AtomicBoolean(false)
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -258,16 +260,23 @@ class UnifiedActivityProviderMTR @Inject constructor(
 
     private fun stepsRecordsCached(start: Long, end: Long): List<SC> {
         refreshStepsAsync(start, end)
-        return stepsRecordsRef.get()
+        val cached = stepsRecordsRef.get() ?: return emptyList()
+        return if (cached.start == start && cached.end == end) cached.rows else emptyList()
     }
 
     private fun refreshStepsAsync(start: Long, end: Long) {
         if (!stepsRefreshInFlight.compareAndSet(false, true)) return
         ioScope.launch {
             try {
-                stepsRecordsRef.set(persistenceLayer.getStepsCountFromTimeToTime(start, end))
+                stepsRecordsRef.set(
+                    StepsWindowCache(
+                        start = start,
+                        end = end,
+                        rows = persistenceLayer.getStepsCountFromTimeToTime(start, end)
+                    )
+                )
             } catch (_: Exception) {
-                stepsRecordsRef.set(emptyList())
+                stepsRecordsRef.set(StepsWindowCache(start, end, emptyList()))
             } finally {
                 stepsRefreshInFlight.set(false)
             }
@@ -276,16 +285,23 @@ class UnifiedActivityProviderMTR @Inject constructor(
 
     private fun heartRatesCached(start: Long, end: Long): List<HR> {
         refreshHeartRatesAsync(start, end)
-        return hrRecordsRef.get()
+        val cached = hrRecordsRef.get() ?: return emptyList()
+        return if (cached.start == start && cached.end == end) cached.rows else emptyList()
     }
 
     private fun refreshHeartRatesAsync(start: Long, end: Long) {
         if (!hrRefreshInFlight.compareAndSet(false, true)) return
         ioScope.launch {
             try {
-                hrRecordsRef.set(persistenceLayer.getHeartRatesFromTimeToTime(start, end))
+                hrRecordsRef.set(
+                    HrWindowCache(
+                        start = start,
+                        end = end,
+                        rows = persistenceLayer.getHeartRatesFromTimeToTime(start, end)
+                    )
+                )
             } catch (_: Exception) {
-                hrRecordsRef.set(emptyList())
+                hrRecordsRef.set(HrWindowCache(start, end, emptyList()))
             } finally {
                 hrRefreshInFlight.set(false)
             }

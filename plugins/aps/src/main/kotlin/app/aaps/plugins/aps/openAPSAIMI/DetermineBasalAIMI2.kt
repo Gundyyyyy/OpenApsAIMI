@@ -4,7 +4,9 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Environment
 import android.os.Looper
+import androidx.collection.LongSparseArray
 import app.aaps.core.data.model.BS
+import app.aaps.core.data.model.TDD
 import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.UE
@@ -23,6 +25,7 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
+import app.aaps.core.interfaces.stats.TIR
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.stats.TirCalculator
 import app.aaps.core.interfaces.utils.DateUtil
@@ -805,6 +808,40 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     /** Suspend stats caches for one [determine_basal] pass; see [DetermineBasalInvocationCaches]. */
     private val determineBasalInvocationCaches = DetermineBasalInvocationCaches()
     private val bolusQueryCache = mutableMapOf<Pair<Long, Boolean>, List<BS>>()
+
+    private fun logInvocationCacheState(tag: String, state: AsyncDataState<*>) {
+        val msg = when (state) {
+            is AsyncDataState.Fresh<*> -> "CACHE $tag=FRESH ageMs=${state.ageMs}"
+            is AsyncDataState.Stale<*> -> "CACHE $tag=STALE ageMs=${state.ageMs}"
+            is AsyncDataState.Missing -> "CACHE $tag=MISSING reason=${state.reason}"
+        }
+        consoleLog.add("📦 $msg")
+    }
+
+    /** TDD 24h from invocation cache; uses [fallback] when async data not yet available. */
+    private fun resolveTdd24hForLoop(fallback: Double = 30.0): Double {
+        val state = determineBasalInvocationCaches.getTdd24hTotalAmountState(tddCalculator)
+        logInvocationCacheState("TDD24H", state)
+        return state.valueOrNull() ?: fallback
+    }
+
+    /** For study export: null if cache missing (caller may omit field). */
+    private fun resolveTdd24hForExport(): Double? {
+        val state = determineBasalInvocationCaches.getTdd24hTotalAmountState(tddCalculator)
+        return state.valueOrNull()
+    }
+
+    private fun resolveTdd1DaySparseForAverage(): LongSparseArray<TDD>? {
+        val state = determineBasalInvocationCaches.getTddCalculate1DaySparseState(tddCalculator)
+        logInvocationCacheState("TDD1D_SPARSE", state)
+        return state.valueOrNull()
+    }
+
+    private fun resolveTir65180ForAverage(): LongSparseArray<TIR> {
+        val state = determineBasalInvocationCaches.getTirCalculate1Day65180State(tirCalculator)
+        logInvocationCacheState("TIR65180_1D", state)
+        return state.valueOrNull() ?: LongSparseArray()
+    }
 
     // État interne d’hystérèse
     private var lastHypoBlockAt: Long = 0L
@@ -2373,7 +2410,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         chainAfterRefractory = gatedUnits
 
          // 🔧 FIX 2: Adaptive AbsorptionGuard threshold (pediatric-safe)
-         val tdd24h = determineBasalInvocationCaches.getTdd24hTotalAmountCached(tddCalculator) ?: 30.0
+         val tdd24h = resolveTdd24hForLoop(30.0)
          val activityThreshold = (tdd24h / 24.0) * 0.15 // 15% of hourly TDD
          
         if (sinceBolus < 20.0 && iobActivityNow > activityThreshold && !isExplicitUserAction && !mealPriorityContext) {
@@ -5207,6 +5244,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         bolusQueryCache.clear()
         consoleError = mutableListOf()
         consoleLog = mutableListOf()
+        if (::aapsLogger.isInitialized) {
+            try {
+                hormonitorStudyExporter.recordLoopPulse(currentTime)
+            } catch (_: Throwable) {
+                // Never break determine_basal on telemetry.
+            }
+        }
         exerciseInsulinLockoutActive = false
         aimiContextActivityActive = false
         lastLoopCgmNoise = glucose_status.noise
@@ -6182,7 +6226,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             mealFlags = mealFlags
         )
         // tdd7P already hoisted to start of function
-        var tdd24Hrs = determineBasalInvocationCaches.getTdd24hTotalAmountCached(tddCalculator)?.toFloat() ?: 0.0f
+        val tdd24hStateForPkpd = determineBasalInvocationCaches.getTdd24hTotalAmountState(tddCalculator)
+        logInvocationCacheState("TDD24H_PKPD", tdd24hStateForPkpd)
+        var tdd24Hrs = tdd24hStateForPkpd.valueOrNull()?.toFloat() ?: 0.0f
         if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
         val bgTime = glucoseStatus.date
         val minAgo = round((systemTime - bgTime) / 60.0 / 1000.0, 1)
@@ -6358,7 +6404,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         this.tdd2DaysPerHour = tdd2Days / 24
 
         var tddDaily = tddCalculator.averageTDD(
-            determineBasalInvocationCaches.getTddCalculate1DaySparseCached(tddCalculator)
+            resolveTdd1DaySparseForAverage()
         )?.data?.totalAmount?.toFloat() ?: 0.0f
         if (tddDaily == 0.0f || tddDaily < tdd7P / 2) tddDaily = tdd7P.toFloat()
         this.tddPerHour = tddDaily / 24
@@ -8003,10 +8049,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.reason.append(context.getString(R.string.reason_eventual_bg, convertBG(eventualBG), convertBG(max_bg)))
         }
         val tdd24h = tddCalculator.averageTDD(
-            determineBasalInvocationCaches.getTddCalculate1DaySparseCached(tddCalculator)
+            resolveTdd1DaySparseForAverage()
         )?.data?.totalAmount ?: 0.0
         val tirInHypo = tirCalculator.averageTIR(
-            determineBasalInvocationCaches.getTirCalculate1Day65180Cached(tirCalculator)
+            resolveTir65180ForAverage()
         )?.belowPct() ?: 0.0
         val safetyDecision = safetyAdjustment(
             currentBG = glucoseStatus.glucose.toFloat(),
@@ -8934,7 +8980,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     tirLowPct = currentTIRLow,
                     tirInRangePct = currentTIRRange,
                     tirAbovePct = currentTIRAbove,
-                    tdd24hTotalU = determineBasalInvocationCaches.getTdd24hTotalAmountCached(tddCalculator),
+                    tdd24hTotalU = resolveTdd24hForExport(),
                     snapshotSource = latestSnapshot.source,
                     snapshotAgeSeconds = ((dateUtil.now() - latestSnapshot.timestamp) / 1000L).coerceAtLeast(0L),
                     snapshotConfidence = latestSnapshot.confidence
@@ -9207,7 +9253,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
      */
     private fun runDecisionFinalBasalNeuralStep(rT: RT, diag: DecisionFinalDiagSnapshot): Double {
         val eventual = (rT.eventualBG ?: lastEventualBgSnapshot)
-        val tdd24h = determineBasalInvocationCaches.getTdd24hTotalAmountCached(tddCalculator) ?: 30.0
+        val tdd24h = resolveTdd24hForLoop(30.0)
         val activityThreshold = (tdd24h / 24.0) * 0.15
         basalNeuralLearner.updateLearning(
             bgBefore = diag.bgValue,

@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.openAPSAIMI.physio
 
 import android.content.Context
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.Settings
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -18,6 +19,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -112,6 +115,7 @@ class AimiHormonitorStudyExporterMTR(
         private const val DAILY_FILE_NAME = "AIMI_HORMONITOR_daily_outcomes_v1.jsonl"
         private const val QA_FILE_NAME = "AIMI_HORMONITOR_dataset_qa_v1.jsonl"
         private const val SHADOW_FILE_NAME = "AIMI_HORMONITOR_shadow_contributions_v1.jsonl"
+        private const val BLACKBOX_FILE_NAME = "AIMI_HORMONITOR_loop_blackbox_v1.jsonl"
         private const val STATE_FILE_NAME = "AIMI_HORMONITOR_daily_state_v1.json"
         private const val TAG = "AimiHormonitorStudyExporterMTR"
         private const val DAILY_EMIT_INTERVAL_MS = 30L * 60L * 1000L
@@ -122,6 +126,9 @@ class AimiHormonitorStudyExporterMTR(
         private const val QA_MAX_STALE_SNAPSHOT_RATE = 0.10
         private const val STATE_PERSIST_INTERVAL_MS = 30_000L
         private const val WRITE_QUEUE_CAPACITY = 512
+        private const val WATCHDOG_INTERVAL_MS = 45_000L
+        /** No loop pulse for this long → write stall warning (typical loop 5 min; avoid false positives). */
+        private const val LOOP_STALL_THRESHOLD_MS = 600_000L
     }
 
     @Volatile
@@ -132,6 +139,12 @@ class AimiHormonitorStudyExporterMTR(
     private var lastQaEmitMs: Long = 0L
     @Volatile
     private var lastStatePersistMs: Long = 0L
+
+    @Volatile
+    private var lastLoopPulseWallMs: Long = 0L
+
+    @Volatile
+    private var lastStallWarningWallMs: Long = 0L
 
     private val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val droppedWrites = AtomicLong(0)
@@ -148,6 +161,23 @@ class AimiHormonitorStudyExporterMTR(
     init {
         restoreDailyState()
         startWriter()
+        startLoopWatchdog()
+    }
+
+    /**
+     * Called at the start of each AIMI determine_basal pass (wall clock).
+     * Writes a JSONL pulse and feeds the stall watchdog (post-mortem blackbox).
+     */
+    fun recordLoopPulse(wallClockMs: Long) {
+        lastLoopPulseWallMs = wallClockMs
+        val line = JSONObject().apply {
+            put("type", "loop_pulse")
+            put("wall_ms", wallClockMs)
+            put("uptime_ms", SystemClock.uptimeMillis())
+        }.toString()
+        val target = File(sharedDir, BLACKBOX_FILE_NAME)
+        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
+        appendJsonlSafely(target, fallback, line)
     }
 
     fun export(event: HormonitorDecisionEventMTR) {
@@ -391,6 +421,36 @@ class AimiHormonitorStudyExporterMTR(
         writeScope.launch {
             for (task in writeQueue) {
                 tryWrite(task)
+            }
+        }
+    }
+
+    private fun startLoopWatchdog() {
+        writeScope.launch {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                val last = lastLoopPulseWallMs
+                if (last <= 0L) continue
+                val now = System.currentTimeMillis()
+                val gap = now - last
+                if (gap < LOOP_STALL_THRESHOLD_MS) continue
+                if (now - lastStallWarningWallMs < LOOP_STALL_THRESHOLD_MS) continue
+                lastStallWarningWallMs = now
+                val line = JSONObject().apply {
+                    put("type", "watchdog_loop_stall")
+                    put("detected_wall_ms", now)
+                    put("last_loop_pulse_wall_ms", last)
+                    put("gap_ms", gap)
+                    put("threshold_ms", LOOP_STALL_THRESHOLD_MS)
+                    put("uptime_ms", SystemClock.uptimeMillis())
+                }.toString()
+                val target = File(sharedDir, BLACKBOX_FILE_NAME)
+                val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
+                appendJsonlSafely(target, fallback, line)
+                aapsLogger.warn(
+                    LTag.APS,
+                    "[$TAG] Blackbox: no loop pulse for ${gap}ms (threshold=${LOOP_STALL_THRESHOLD_MS}ms). See $BLACKBOX_FILE_NAME"
+                )
             }
         }
     }

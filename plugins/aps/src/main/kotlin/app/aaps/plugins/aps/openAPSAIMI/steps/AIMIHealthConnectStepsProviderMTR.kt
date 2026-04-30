@@ -94,7 +94,7 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
         }
         
         refreshAvailabilityAsync(now)
-        
+
         if (cachedAvailability) {
             aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Provider available and permissions granted")
         } else {
@@ -139,16 +139,7 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
         if (!availabilityRefreshInFlight.compareAndSet(false, true)) return
         ioScope.launch {
             try {
-                val client = healthConnectClient
-                cachedAvailability = if (client == null) {
-                    false
-                } else {
-                    try {
-                        client.permissionController.getGrantedPermissions().isNotEmpty()
-                    } catch (_: Exception) {
-                        false
-                    }
-                }
+                cachedAvailability = directAvailabilityCheck()
                 lastAvailabilityCheck = now
             } catch (e: Exception) {
                 aapsLogger.warn(LTag.APS, "[$SOURCE_NAME] Availability check failed", e)
@@ -156,6 +147,15 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
             } finally {
                 availabilityRefreshInFlight.set(false)
             }
+        }
+    }
+
+    private suspend fun directAvailabilityCheck(): Boolean {
+        val client = healthConnectClient ?: return false
+        return try {
+            client.permissionController.getGrantedPermissions().isNotEmpty()
+        } catch (_: Exception) {
+            false
         }
     }
 

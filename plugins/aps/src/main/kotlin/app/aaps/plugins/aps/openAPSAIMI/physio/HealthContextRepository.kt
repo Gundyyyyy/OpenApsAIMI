@@ -59,6 +59,12 @@ class HealthContextRepository @Inject constructor(
         val hrvList = hrvRef.get() as List<HRVDataMTR> // Last 24h
         @Suppress("UNCHECKED_CAST")
         val rhrList = rhrRef.get() as List<RHRDataMTR>
+
+        // Warmup guard: if async fetch has not produced core data yet, keep last valid
+        // snapshot instead of silently degrading to near-empty context.
+        if (sleepData == null && hrvList.isEmpty() && rhrList.isEmpty() && lastSnapshot.isValid) {
+            return lastSnapshot
+        }
         
         // 2. Fetch Real-Time Data (Unified Provider: Watch > Phone > HC)
         val steps5Result = unifiedProvider.getStepsTotalSince(System.currentTimeMillis() - 5 * 60 * 1000)
@@ -114,7 +120,8 @@ class HealthContextRepository @Inject constructor(
             source = "Merged(Unified+HC)",
             isValid = confidence > 0.3
         )
-        
+        if (!snapshot.isValid && lastSnapshot.isValid) return lastSnapshot
+
         lastSnapshot = snapshot
         return snapshot
     }

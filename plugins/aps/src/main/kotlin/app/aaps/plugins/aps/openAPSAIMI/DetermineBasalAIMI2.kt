@@ -62,6 +62,7 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
 import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
 import app.aaps.plugins.aps.openAPSAIMI.prediction.minPredictedAcrossCurves
 import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
+import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiLoopTelemetry
 import app.aaps.plugins.aps.openAPSAIMI.physio.AimiHormonitorStudyExporterMTR
 import app.aaps.plugins.aps.openAPSAIMI.physio.HormonitorDecisionEventMTR
 import app.aaps.plugins.aps.openAPSAIMI.physio.PhysioDecisionTraceMTR
@@ -5239,14 +5240,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         glucose_status: GlucoseStatusAIMI, currenttemp: CurrentTemp, iob_data_array: Array<IobTotal>, profile: OapsProfileAimi, autosens_data: AutosensResult, mealData: MealData,
         microBolusAllowed: Boolean, currentTime: Long, flatBGsDetected: Boolean, dynIsfMode: Boolean, uiInteraction: UiInteraction,
         extraDebug: String = "" // 🌀 Extensible Debug Channel (e.g. Cosine Gate)
-    ): RT {
+    ): RT = AimiLoopTelemetry.traceDetermineBasalTick(
+        wallClockMs = currentTime,
+        onTickEnd = { tickId, startedWallMs, endedWallMs ->
+            try {
+                hormonitorStudyExporter.recordLoopTickEnd(
+                    tickId = tickId,
+                    startedWallMs = startedWallMs,
+                    endedWallMs = endedWallMs
+                )
+            } catch (_: Throwable) {
+                // Never break determine_basal on telemetry.
+            }
+        }
+    ) {
         determineBasalInvocationCaches.beginInvocation()
         bolusQueryCache.clear()
         consoleError = mutableListOf()
         consoleLog = mutableListOf()
         if (::aapsLogger.isInitialized) {
             try {
-                hormonitorStudyExporter.recordLoopPulse(currentTime)
+                hormonitorStudyExporter.recordLoopPulse(currentTime, AimiLoopTelemetry.activeTickId)
             } catch (_: Throwable) {
                 // Never break determine_basal on telemetry.
             }

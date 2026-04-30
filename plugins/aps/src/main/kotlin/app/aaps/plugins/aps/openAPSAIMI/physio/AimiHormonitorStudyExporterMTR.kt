@@ -168,11 +168,27 @@ class AimiHormonitorStudyExporterMTR(
      * Called at the start of each AIMI determine_basal pass (wall clock).
      * Writes a JSONL pulse and feeds the stall watchdog (post-mortem blackbox).
      */
-    fun recordLoopPulse(wallClockMs: Long) {
+    fun recordLoopPulse(wallClockMs: Long, tickId: Long = 0L) {
         lastLoopPulseWallMs = wallClockMs
         val line = JSONObject().apply {
             put("type", "loop_pulse")
             put("wall_ms", wallClockMs)
+            if (tickId > 0L) put("tick_id", tickId)
+            put("uptime_ms", SystemClock.uptimeMillis())
+        }.toString()
+        val target = File(sharedDir, BLACKBOX_FILE_NAME)
+        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
+        appendJsonlSafely(target, fallback, line)
+    }
+
+    /** Emitted when a determine_basal pass completes; pairs with [recordLoopPulse]. */
+    fun recordLoopTickEnd(tickId: Long, startedWallMs: Long, endedWallMs: Long) {
+        val line = JSONObject().apply {
+            put("type", "loop_tick_end")
+            put("tick_id", tickId)
+            put("started_wall_ms", startedWallMs)
+            put("ended_wall_ms", endedWallMs)
+            put("duration_ms", (endedWallMs - startedWallMs).coerceAtLeast(0L))
             put("uptime_ms", SystemClock.uptimeMillis())
         }.toString()
         val target = File(sharedDir, BLACKBOX_FILE_NAME)

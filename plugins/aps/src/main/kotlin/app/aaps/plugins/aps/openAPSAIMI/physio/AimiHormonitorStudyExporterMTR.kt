@@ -104,6 +104,7 @@ class AimiHormonitorStudyExporterMTR(
         private const val FILE_NAME = "AIMI_HORMONITOR_event_stream_v1.jsonl"
         private const val DAILY_FILE_NAME = "AIMI_HORMONITOR_daily_outcomes_v1.jsonl"
         private const val QA_FILE_NAME = "AIMI_HORMONITOR_dataset_qa_v1.jsonl"
+        private const val SHADOW_FILE_NAME = "AIMI_HORMONITOR_shadow_contributions_v1.jsonl"
         private const val STATE_FILE_NAME = "AIMI_HORMONITOR_daily_state_v1.json"
         private const val TAG = "AimiHormonitorStudyExporterMTR"
         private const val DAILY_EMIT_INTERVAL_MS = 30L * 60L * 1000L
@@ -143,6 +144,38 @@ class AimiHormonitorStudyExporterMTR(
 
         val target = File(sharedDir, FILE_NAME)
         val fallback = File(appScopedDir, FILE_NAME)
+        appendJsonlSafely(target, fallback, payload)
+    }
+
+    fun exportShadowContributions(event: HormonitorDecisionEventMTR) {
+        val trace = event.physioTrace
+        val generatedAt = isoUtcNow()
+
+        val payload = JSONObject().apply {
+            put("dataset_id", stableDatasetId())
+            put("generated_at", generatedAt)
+            put("app_version", appVersion())
+            put("schema_version", SCHEMA_VERSION)
+            put("event_id", event.eventId)
+            put("timestamp", event.eventTimestamp)
+            put("trigger", event.trigger)
+            put("shadow_orchestrator_enabled", trace.shadowOrchestratorEnabled)
+            put("shadow_budgeted_isf_factor", trace.shadowBudgetedIsfFactor)
+            put("shadow_budgeted_basal_factor", trace.shadowBudgetedBasalFactor)
+            put("shadow_budgeted_smb_factor", trace.shadowBudgetedSmbFactor)
+            put("shadow_overlap_penalty", trace.shadowOverlapPenalty)
+            put("shadow_contributions", JSONObject(trace.shadowContributions))
+            put("shadow_notes", org.json.JSONArray(trace.shadowNotes))
+            put("inflammation_latent_index", trace.inflammationLatentIndex)
+            put("inflammation_confidence", trace.inflammationConfidence)
+            put("inflammation_timescale", trace.inflammationTimescale)
+            put("inflammation_drivers", org.json.JSONArray(trace.inflammationDrivers))
+            put("final_loop_decision_type", trace.finalLoopDecisionType ?: JSONObject.NULL)
+            put("source", trace.source)
+        }.toString()
+
+        val target = File(sharedDir, SHADOW_FILE_NAME)
+        val fallback = File(appScopedDir, SHADOW_FILE_NAME)
         appendJsonlSafely(target, fallback, payload)
     }
 

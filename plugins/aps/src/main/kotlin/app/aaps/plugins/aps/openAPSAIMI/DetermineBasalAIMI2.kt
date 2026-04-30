@@ -85,6 +85,7 @@ import app.aaps.plugins.aps.openAPSAIMI.smb.SmbInstructionExecutor
 import app.aaps.plugins.aps.openAPSAIMI.smb.computeMealHighIobDecision
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleFacade
 import app.aaps.plugins.aps.openAPSAIMI.comparison.AimiSmbComparator
+import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiTickContext
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleInfo
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCycleLearner
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCyclePreferences
@@ -315,6 +316,14 @@ private const val MEAL_ADVISOR_IOB_DISCOUNT_FACTOR = 0.7
  * Value of 0.25 means at least 25% of carb insulin requirement is delivered.
  */
 private const val MEAL_ADVISOR_MIN_CARB_COVERAGE = 0.25
+
+/** Bundles locals produced by [DetermineBasalaimiSMB2.runEarlyDetermineBasalStages]. */
+private data class AimiDetermineBasalEarlyTickState(
+    val originalProfile: OapsProfileAimi,
+    val isExplicitAdvisorRun: Boolean,
+    val tdd7P: Double,
+    val tdd7Days: Double
+)
 
 /**
  * 🛰️ DetermineBasalaimiSMB2
@@ -810,6 +819,49 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     /** Suspend stats caches for one [determine_basal] pass; see [DetermineBasalInvocationCaches]. */
     private val determineBasalInvocationCaches = DetermineBasalInvocationCaches()
     private val bolusQueryCache = mutableMapOf<Pair<Long, Boolean>, List<BS>>()
+
+    /**
+     * Phase 2: early orchestration — cache lifecycle, telemetry pulse, meal hydration,
+     * advisor/TDD bootstrap, profile snapshot, BOOTSTRAP phase marker.
+     */
+    private fun runEarlyDetermineBasalStages(ctx: AimiTickContext): AimiDetermineBasalEarlyTickState {
+        determineBasalInvocationCaches.beginInvocation()
+        bolusQueryCache.clear()
+        consoleError = mutableListOf()
+        consoleLog = mutableListOf()
+        if (::aapsLogger.isInitialized) {
+            try {
+                hormonitorStudyExporter.recordLoopPulse(ctx.currentTime, AimiLoopTelemetry.activeTickId)
+            } catch (_: Throwable) {
+                // Never break determine_basal on telemetry.
+            }
+        }
+        exerciseInsulinLockoutActive = false
+        aimiContextActivityActive = false
+        lastLoopCgmNoise = ctx.glucoseStatus.noise
+
+        if (ctx.extraDebug.isNotEmpty()) {
+            consoleLog.add(ctx.extraDebug)
+            consoleError.add(ctx.extraDebug)
+        }
+
+        hydrateMealDataIfTriggered(ctx.mealData)
+
+        val isExplicitAdvisorRun = preferences.get(BooleanKey.OApsAIMIMealAdvisorTrigger)
+        val tdd7P = preferences.get(DoubleKey.OApsAIMITDD7)
+        var tdd7Days = ctx.profile.TDD
+        if (tdd7Days == 0.0 || tdd7Days < tdd7P) tdd7Days = tdd7P
+
+        val originalProfile = ctx.profile.copy()
+        AimiLoopTelemetry.enterPhase(AimiLoopPhase.BOOTSTRAP, hormonitorStudyExporter)
+
+        return AimiDetermineBasalEarlyTickState(
+            originalProfile = originalProfile,
+            isExplicitAdvisorRun = isExplicitAdvisorRun,
+            tdd7P = tdd7P,
+            tdd7Days = tdd7Days
+        )
+    }
 
     private fun logInvocationCacheState(tag: String, state: AsyncDataState<*>) {
         val msg = when (state) {
@@ -5272,42 +5324,25 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
         }
     ) {
-        determineBasalInvocationCaches.beginInvocation()
-        bolusQueryCache.clear()
-        consoleError = mutableListOf()
-        consoleLog = mutableListOf()
-        if (::aapsLogger.isInitialized) {
-            try {
-                hormonitorStudyExporter.recordLoopPulse(currentTime, AimiLoopTelemetry.activeTickId)
-            } catch (_: Throwable) {
-                // Never break determine_basal on telemetry.
-            }
-        }
-        exerciseInsulinLockoutActive = false
-        aimiContextActivityActive = false
-        lastLoopCgmNoise = glucose_status.noise
-        
-        if (extraDebug.isNotEmpty()) {
-             // Append to log history AND consoleError for "Script Debug" visibility
-             consoleLog.add(extraDebug)
-             consoleError.add(extraDebug)
-        }
-
-        // 🚀 MEAL ADVISOR: Hydrate COB if Trigger is active (Fixes DB latency)
-        // Moved to helper to avoid VerifyError (Method too large/complex)
-        hydrateMealDataIfTriggered(mealData)
-
-        // Restore variable needed for later logic (Fix Unresolved Reference)
-        val isExplicitAdvisorRun = preferences.get(BooleanKey.OApsAIMIMealAdvisorTrigger)
-        val tdd7P = preferences.get(DoubleKey.OApsAIMITDD7)
-        var tdd7Days = profile.TDD
-        if (tdd7Days == 0.0 || tdd7Days < tdd7P) tdd7Days = tdd7P
-
-        // 🕵️ COMPARATOR: Capture Original Profile to avoid Bias
-        // AIMI modifies the profile (activity, pregnancy, autosens) in-flight.
-        // We want the comparator to run against the RAW profile.
-        val originalProfile = profile.copy()
-        AimiLoopTelemetry.enterPhase(AimiLoopPhase.BOOTSTRAP, hormonitorStudyExporter)
+        val ctx = AimiTickContext(
+            glucoseStatus = glucose_status,
+            currentTemp = currenttemp,
+            iobDataArray = iob_data_array,
+            profile = profile,
+            autosensData = autosens_data,
+            mealData = mealData,
+            microBolusAllowed = microBolusAllowed,
+            currentTime = currentTime,
+            flatBGsDetected = flatBGsDetected,
+            dynIsfMode = dynIsfMode,
+            uiInteraction = uiInteraction,
+            extraDebug = extraDebug
+        )
+        val early = runEarlyDetermineBasalStages(ctx)
+        val originalProfile = early.originalProfile
+        val isExplicitAdvisorRun = early.isExplicitAdvisorRun
+        val tdd7P = early.tdd7P
+        val tdd7Days = early.tdd7Days
 
         // 🤰 Gestational Autopilot Integration
         applyGestationalAutopilot(profile)

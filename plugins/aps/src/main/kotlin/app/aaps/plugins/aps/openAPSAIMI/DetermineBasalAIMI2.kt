@@ -62,6 +62,7 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
 import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
 import app.aaps.plugins.aps.openAPSAIMI.prediction.minPredictedAcrossCurves
 import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
+import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiLoopPhase
 import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiLoopTelemetry
 import app.aaps.plugins.aps.openAPSAIMI.physio.AimiHormonitorStudyExporterMTR
 import app.aaps.plugins.aps.openAPSAIMI.physio.HormonitorDecisionEventMTR
@@ -5247,7 +5248,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 hormonitorStudyExporter.recordLoopTickEnd(
                     tickId = tickId,
                     startedWallMs = startedWallMs,
-                    endedWallMs = endedWallMs
+                    endedWallMs = endedWallMs,
+                    lastPhaseName = AimiLoopTelemetry.currentLoopPhase.name
                 )
             } catch (_: Throwable) {
                 // Never break determine_basal on telemetry.
@@ -5289,7 +5291,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // AIMI modifies the profile (activity, pregnancy, autosens) in-flight.
         // We want the comparator to run against the RAW profile.
         val originalProfile = profile.copy()
-        
+        AimiLoopTelemetry.enterPhase(AimiLoopPhase.BOOTSTRAP, hormonitorStudyExporter)
+
         // 🤰 Gestational Autopilot Integration
         applyGestationalAutopilot(profile)
 
@@ -5380,7 +5383,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             consoleLog = consoleLog,
             consoleError = consoleError
         )
-        
+        AimiLoopTelemetry.enterPhase(AimiLoopPhase.CONTEXT, hormonitorStudyExporter)
+
         if (extraDebug.isNotEmpty()) {
              rT.reason.append("$extraDebug\n")
         }
@@ -6223,6 +6227,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val iobArray = iob_data_array
         val iob_data = iobArray[0]
         val mealFlags = MealFlags(mealTime, bfastTime, lunchTime, dinnerTime, highCarbTime)
+        AimiLoopTelemetry.enterPhase(AimiLoopPhase.SIGNAL_PREPARATION, hormonitorStudyExporter)
 
         // Heure du dernier bolus : iob_data est bien disponible ici
         val lastBolusTimeMs: Long? = iob_data.lastBolusTime.takeIf { it > 0L }
@@ -8220,6 +8225,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
         val allowMealHighIob = mealHighIobDecision.relax
         val mealHighIobDamping = mealHighIobDecision.damping
+        AimiLoopTelemetry.enterPhase(AimiLoopPhase.CORE_DECISION, hormonitorStudyExporter)
 
         if (iob_data.iob > maxIobLimit && !allowMealHighIob) {
             //rT.reason.append("IOB ${round(iob_data.iob, 2)} > maxIobLimit maxIobLimit")
@@ -8942,6 +8948,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 consoleError.add("Failed to save AIMI Decision JSON: ${e.message}")
             }
 
+            AimiLoopTelemetry.enterPhase(AimiLoopPhase.EXPORT, hormonitorStudyExporter)
             try {
                 val fallbackTrace = PhysioDecisionTraceMTR(
                     timestamp = dateUtil.now(),

@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.openAPSAIMI.orchestration
 
 import app.aaps.core.interfaces.aps.RT
+import app.aaps.plugins.aps.openAPSAIMI.physio.AimiHormonitorStudyExporterMTR
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.collections.ArrayDeque
 
@@ -19,7 +20,27 @@ object AimiLoopTelemetry {
     internal var activeTickId: Long = 0L
         private set
 
+    @Volatile
+    internal var currentLoopPhase: AimiLoopPhase = AimiLoopPhase.BOOTSTRAP
+        private set
+
     private val ring = ArrayDeque<String>()
+
+    /**
+     * Records a coarse phase for the active tick (ring + optional blackbox JSONL).
+     */
+    internal fun enterPhase(phase: AimiLoopPhase, blackbox: AimiHormonitorStudyExporterMTR?) {
+        currentLoopPhase = phase
+        val tickId = activeTickId
+        val wall = System.currentTimeMillis()
+        appendRing("phase id=$tickId ${phase.name} wall_ms=$wall")
+        if (blackbox == null || tickId <= 0L) return
+        try {
+            blackbox.recordLoopPhase(tickId, phase.name, wall)
+        } catch (_: Throwable) {
+            // Never break determine_basal on telemetry.
+        }
+    }
 
     /**
      * Wraps one full AIMI determine_basal pass. Non-local returns from [block] still run `finally`

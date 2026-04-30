@@ -129,6 +129,8 @@ class AimiHormonitorStudyExporterMTR(
         private const val WATCHDOG_INTERVAL_MS = 45_000L
         /** No loop pulse for this long → write stall warning (typical loop 5 min; avoid false positives). */
         private const val LOOP_STALL_THRESHOLD_MS = 600_000L
+        /** Pulse received with tick_id but no matching [recordLoopTickEnd] for this long → intra-tick stall. */
+        private const val INTRA_TICK_STALL_THRESHOLD_MS = 180_000L
     }
 
     @Volatile
@@ -145,6 +147,19 @@ class AimiHormonitorStudyExporterMTR(
 
     @Volatile
     private var lastStallWarningWallMs: Long = 0L
+
+    /** Latest tick that started ([recordLoopPulse] with tick_id) but not yet completed with [recordLoopTickEnd]. */
+    @Volatile
+    private var pendingTickEndId: Long = 0L
+
+    @Volatile
+    private var pendingTickPulseWallMs: Long = 0L
+
+    @Volatile
+    private var lastReportedPhaseName: String = ""
+
+    @Volatile
+    private var lastIntratickStallWarningWallMs: Long = 0L
 
     private val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val droppedWrites = AtomicLong(0)
@@ -170,6 +185,10 @@ class AimiHormonitorStudyExporterMTR(
      */
     fun recordLoopPulse(wallClockMs: Long, tickId: Long = 0L) {
         lastLoopPulseWallMs = wallClockMs
+        if (tickId > 0L) {
+            pendingTickEndId = tickId
+            pendingTickPulseWallMs = wallClockMs
+        }
         val line = JSONObject().apply {
             put("type", "loop_pulse")
             put("wall_ms", wallClockMs)
@@ -181,14 +200,39 @@ class AimiHormonitorStudyExporterMTR(
         appendJsonlSafely(target, fallback, line)
     }
 
+    /** Phase transition inside the current tick (observe-only). */
+    fun recordLoopPhase(tickId: Long, phaseName: String, wallClockMs: Long) {
+        lastReportedPhaseName = phaseName
+        val line = JSONObject().apply {
+            put("type", "loop_phase")
+            put("tick_id", tickId)
+            put("phase", phaseName)
+            put("wall_ms", wallClockMs)
+            put("uptime_ms", SystemClock.uptimeMillis())
+        }.toString()
+        val target = File(sharedDir, BLACKBOX_FILE_NAME)
+        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
+        appendJsonlSafely(target, fallback, line)
+    }
+
     /** Emitted when a determine_basal pass completes; pairs with [recordLoopPulse]. */
-    fun recordLoopTickEnd(tickId: Long, startedWallMs: Long, endedWallMs: Long) {
+    fun recordLoopTickEnd(
+        tickId: Long,
+        startedWallMs: Long,
+        endedWallMs: Long,
+        lastPhaseName: String? = null
+    ) {
+        if (tickId > 0L && tickId == pendingTickEndId) {
+            pendingTickEndId = 0L
+            pendingTickPulseWallMs = 0L
+        }
         val line = JSONObject().apply {
             put("type", "loop_tick_end")
             put("tick_id", tickId)
             put("started_wall_ms", startedWallMs)
             put("ended_wall_ms", endedWallMs)
             put("duration_ms", (endedWallMs - startedWallMs).coerceAtLeast(0L))
+            if (!lastPhaseName.isNullOrEmpty()) put("last_phase", lastPhaseName)
             put("uptime_ms", SystemClock.uptimeMillis())
         }.toString()
         val target = File(sharedDir, BLACKBOX_FILE_NAME)
@@ -445,9 +489,38 @@ class AimiHormonitorStudyExporterMTR(
         writeScope.launch {
             while (isActive) {
                 delay(WATCHDOG_INTERVAL_MS)
+                val now = System.currentTimeMillis()
+                val pendingId = pendingTickEndId
+                val pendingPulseAt = pendingTickPulseWallMs
+                if (pendingId > 0L && pendingPulseAt > 0L) {
+                    val intratickGap = now - pendingPulseAt
+                    if (intratickGap >= INTRA_TICK_STALL_THRESHOLD_MS &&
+                        now - lastIntratickStallWarningWallMs >= INTRA_TICK_STALL_THRESHOLD_MS
+                    ) {
+                        lastIntratickStallWarningWallMs = now
+                        val line = JSONObject().apply {
+                            put("type", "watchdog_intratick_stall")
+                            put("detected_wall_ms", now)
+                            put("tick_id", pendingId)
+                            put("pulse_wall_ms", pendingPulseAt)
+                            put("gap_ms", intratickGap)
+                            put("threshold_ms", INTRA_TICK_STALL_THRESHOLD_MS)
+                            put("last_phase", lastReportedPhaseName)
+                            put("uptime_ms", SystemClock.uptimeMillis())
+                        }.toString()
+                        val target = File(sharedDir, BLACKBOX_FILE_NAME)
+                        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
+                        appendJsonlSafely(target, fallback, line)
+                        aapsLogger.warn(
+                            LTag.APS,
+                            "[$TAG] Blackbox: intra-tick stall tickId=$pendingId gap=${intratickGap}ms " +
+                                "(threshold=${INTRA_TICK_STALL_THRESHOLD_MS}ms phase=$lastReportedPhaseName). See $BLACKBOX_FILE_NAME"
+                        )
+                        continue
+                    }
+                }
                 val last = lastLoopPulseWallMs
                 if (last <= 0L) continue
-                val now = System.currentTimeMillis()
                 val gap = now - last
                 if (gap < LOOP_STALL_THRESHOLD_MS) continue
                 if (now - lastStallWarningWallMs < LOOP_STALL_THRESHOLD_MS) continue

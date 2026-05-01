@@ -18,6 +18,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **Corps principal `determine_basal`** : la majorité des lectures d’entrée utilisent désormais `ctx` (IOB profiler, PKPD précoce, BYODA G6, tube advisor, branches MAXSMB pente/ plateau, T3c shadow + brittle return, préparation signal / autosens, Autodrive V3 gate + état, cibles autosens, recomput PKPD, comparateur SMB, WCycle learning, auditeur, finalisation `decisionCtx` ISF). Les paramètres bruts ne subsistent que pour construire `AimiTickContext` et dans d’autres méthodes de la classe.
 - **Harmonisation `ctx.currentTemp` / `ctx.mealData` / `ctx.microBolusAllowed` / `ctx.currentTime`** : tous les `setTempBasal` / `calculateRate` / comparaisons de TBR actif dans `determine_basal`, flux SMB (`enablesmb`, `finalizeAndCapSMB`, `executeSmbInstruction`), agrégats COB / pentes repas, NGR, moteur basal, PKPD meal path — sans toucher à `setTempBasal()` ni `applyLegacyMealModes()` (paramètres locaux inchangés).
 - **P2 (amorcé)** : **`bootstrapPhysiologyAfterEarlyTick(ctx, tdd7Days)`** — regroupe autopilot gestationnel, résumé physiologique / IOB précoce, multiplicateurs basaux harmonisés, flag « confirmed high rise », module thyroïde ; appelé depuis `determine_basal` juste après `runEarlyDetermineBasalStages`.
+- **P2 (suite)** : **`AimiTickDecisionRtBootstrap`** + **`buildDecisionContextInitRtSosAndFlatShadow(ctx)`** — construction `AimiDecisionContext`, `RT` initial, phase CONTEXT, raison `extraDebug`, SOS global, `logLearnersHealth`, reset WCycle / `lastProfile`, et **`flatBGsDetected` local** (override delta) ; `lastProfile` aligné sur **`ctx.profile`** (même référence que le paramètre `profile`).
 
 ### Branche / build
 - Travail sur `feature/aimi-phase2-tick-context`.
@@ -34,7 +35,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 | Priorité | Tâche | Risque |
 |----------|--------|--------|
 | P1 | Finition : revue des commentaires dupliqués / obsolètes ; pas de changement fonctionnel attendu | Très faible |
-| P2 | Poursuivre **étapes nommées** après `bootstrapPhysiology…` : ex. bloc `AimiDecisionContext` + SOS + `flatBGsDetected` local + init `RT` + `CONTEXT` (une extraction à la fois) | Moyen |
+| P2 | Poursuivre **étapes nommées** : ex. bloc post-`flatBGsDetected` (activité RT, reset maxSMB, snapshot physio, `decisionCtx` physio, `InsulinActionProfiler`) ou PKPD précoce / G6 (une extraction à la fois) | Moyen |
 | P3 | Introduire une **pipeline** typée (sealed `AimiTickPhase` ou séquence de stages) derrière la même API publique `determine_basal` | Plus élevé — à valider |
 | P4 | Tests unitaires ciblés sur bootstrap + shadow flat (golden logs ou snapshots limités) | Dépend de la faisabilité dans le module |
 

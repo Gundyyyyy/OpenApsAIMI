@@ -326,6 +326,16 @@ private data class AimiDetermineBasalEarlyTickState(
 )
 
 /**
+ * Decision transparency context, initial loop [RT], and **shadowed** flat-BG flag after delta override.
+ * @see DetermineBasalaimiSMB2.buildDecisionContextInitRtSosAndFlatShadow
+ */
+private data class AimiTickDecisionRtBootstrap(
+    val decisionCtx: AimiDecisionContext,
+    val rT: RT,
+    val flatBGsDetected: Boolean,
+)
+
+/**
  * 🛰️ DetermineBasalaimiSMB2
  *
  * The primary medical orchestrator for the AIMI Advanced Hybrid Closed Loop (AHCL).
@@ -898,6 +908,77 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             ctx.glucoseStatus.glucose > 150.0 && ctx.glucoseStatus.combinedDelta > 1.5 && (ctx.glucoseStatus.bgAcceleration ?: 0.0) > 0.4
         applyThyroidModule(ctx.profile)
         return isConfirmedHighRiseLocal
+    }
+
+    /**
+     * Phase 2 (P2): [AimiDecisionContext], initial [RT], CONTEXT telemetry phase, SOS evaluation,
+     * learner health log, WCycle / lastProfile reset, flat-BG shadow from delta override.
+     */
+    private fun buildDecisionContextInitRtSosAndFlatShadow(ctx: AimiTickContext): AimiTickDecisionRtBootstrap {
+        lastIobSurveillanceExport = null
+        val decisionCtx = AimiDecisionContext(
+            event_id = "evt_${ctx.currentTime}",
+            timestamp = ctx.currentTime,
+            trigger = run {
+                val iobNow = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0
+                val bgNow = ctx.glucoseStatus.glucose
+                val hour = java.util.Calendar.getInstance()[java.util.Calendar.HOUR_OF_DAY]
+                val isNight = hour >= 22 || hour <= 7
+                val isBgRiseFast = ctx.glucoseStatus.delta > 5
+                val nightBangBangBlock = isNight && isBgRiseFast && iobNow > 2.0 && bgNow < 100.0 &&
+                    (ctx.currentTime - lastBgRiseFastNightMs) < 15 * 60_000L
+                if (isBgRiseFast && isNight && iobNow > 2.0 && bgNow < 100.0) {
+                    if (lastBgRiseFastNightMs == 0L || (ctx.currentTime - lastBgRiseFastNightMs) >= 15 * 60_000L) {
+                        lastBgRiseFastNightMs = ctx.currentTime
+                    }
+                }
+                when {
+                    nightBangBangBlock -> {
+                        consoleLog.add("🚫 T6 NIGHT_RATE_LIMIT: BG_Rise_Fast bloqué (IOB=${"%.2f".format(iobNow)}U > 2.0 ET BG=${bgNow.toInt()} < 100 la nuit)")
+                        "Routine_Cycle"
+                    }
+                    isBgRiseFast -> "BG_Rise_Fast"
+                    else -> "Routine_Cycle"
+                }
+            },
+            baseline_state = AimiDecisionContext.BaselineState(
+                profile_isf_mgdl = ctx.profile.sens,
+                profile_basal_uph = ctx.profile.current_basal,
+                current_bg_mgdl = ctx.glucoseStatus.glucose,
+                cob_g = ctx.mealData.mealCOB,
+                iob_u = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0
+            )
+        )
+        val rT = RT(
+            algorithm = APSResult.Algorithm.AIMI,
+            runningDynamicIsf = ctx.dynIsfMode,
+            timestamp = ctx.currentTime,
+            consoleLog = consoleLog,
+            consoleError = consoleError
+        )
+        AimiLoopTelemetry.enterPhase(AimiLoopPhase.CONTEXT, hormonitorStudyExporter)
+        if (ctx.extraDebug.isNotEmpty()) {
+            rT.reason.append("${ctx.extraDebug}\n")
+        }
+        app.aaps.plugins.aps.openAPSAIMI.sos.EmergencySosManager.evaluateSosCondition(
+            bg = ctx.glucoseStatus.glucose,
+            delta = ctx.glucoseStatus.delta,
+            iob = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0,
+            context = context,
+            preferences = this.preferences,
+            nowMs = dateUtil.now()
+        )
+        logLearnersHealth(rT)
+        wCycleInfoForRun = null
+        wCycleReasonLogged = false
+        lastProfile = ctx.profile
+        val flatBGsDetected = if (ctx.flatBGsDetected && abs(ctx.glucoseStatus.delta) > 3.0) {
+            consoleLog.add("⚠️ FLAT OVERRIDE: Delta=${ctx.glucoseStatus.delta} > 3.0 -> Sensor ALIVE.")
+            false
+        } else {
+            ctx.flatBGsDetected
+        }
+        return AimiTickDecisionRtBootstrap(decisionCtx, rT, flatBGsDetected)
     }
 
     private fun logInvocationCacheState(tag: String, state: AsyncDataState<*>) {
@@ -5382,84 +5463,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val tdd7Days = early.tdd7Days
 
         val isConfirmedHighRiseLocal = bootstrapPhysiologyAfterEarlyTick(ctx, tdd7Days)
-        
-        // 🏥 AIMI DECISION CONTEXT INITIALIZATION (For Medical Transparency)
-        lastIobSurveillanceExport = null
-        val decisionCtx = AimiDecisionContext(
-            event_id = "evt_${ctx.currentTime}",
-            timestamp = ctx.currentTime,
-            trigger = run {
-                val iobNow = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0
-                val bgNow  = ctx.glucoseStatus.glucose
-                val hour   = java.util.Calendar.getInstance()[java.util.Calendar.HOUR_OF_DAY]
-                val isNight = hour >= 22 || hour <= 7
-                val isBgRiseFast = ctx.glucoseStatus.delta > 5
-                // T6: Rate-limiter nocturne anti-bang-bang
-                // Si IOB élevé (> 2 U) ET BG encore bas (< 100) la nuit, bloquer le trigger 15 min
-                val nightBangBangBlock = isNight && isBgRiseFast && iobNow > 2.0 && bgNow < 100.0 &&
-                    (ctx.currentTime - lastBgRiseFastNightMs) < 15 * 60_000L
-                if (isBgRiseFast && isNight && iobNow > 2.0 && bgNow < 100.0) {
-                    // Enregistrer le premier déclenchement pour démarrer la fenêtre de 15 min
-                    if (lastBgRiseFastNightMs == 0L || (ctx.currentTime - lastBgRiseFastNightMs) >= 15 * 60_000L) {
-                        lastBgRiseFastNightMs = ctx.currentTime
-                    }
-                }
-                when {
-                    nightBangBangBlock -> {
-                        consoleLog.add("🚫 T6 NIGHT_RATE_LIMIT: BG_Rise_Fast bloqué (IOB=${"%.2f".format(iobNow)}U > 2.0 ET BG=${bgNow.toInt()} < 100 la nuit)")
-                        "Routine_Cycle" // Dégradé en cycle routine
-                    }
-                    isBgRiseFast -> "BG_Rise_Fast"
-                    else -> "Routine_Cycle"
-                }
-            },
-            baseline_state = AimiDecisionContext.BaselineState(
-                profile_isf_mgdl = ctx.profile.sens,
-                profile_basal_uph = ctx.profile.current_basal,
-                current_bg_mgdl = ctx.glucoseStatus.glucose,
-                cob_g = ctx.mealData.mealCOB,
-                iob_u = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0 // Taking first element (Net IOB usually)
-            )
-        )
-        
-        var rT = RT(
-            algorithm = APSResult.Algorithm.AIMI,
-            runningDynamicIsf = ctx.dynIsfMode,
-            timestamp = ctx.currentTime,
-            consoleLog = consoleLog,
-            consoleError = consoleError
-        )
-        AimiLoopTelemetry.enterPhase(AimiLoopPhase.CONTEXT, hormonitorStudyExporter)
 
-        if (ctx.extraDebug.isNotEmpty()) {
-             rT.reason.append("${ctx.extraDebug}\n")
-        }
-
-        // 🚨 GLOBAL SAFETY: Trigger Emergency SOS early (Avoids T3c / Cruise Mode Bypass)
-        app.aaps.plugins.aps.openAPSAIMI.sos.EmergencySosManager.evaluateSosCondition(
-            bg = ctx.glucoseStatus.glucose,
-            delta = ctx.glucoseStatus.delta,
-            iob = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0,
-            context = context,
-            preferences = this.preferences,
-            nowMs = dateUtil.now()
-        )
-        
-        // 🛡️ Log health status of storage and learners (NOW with rT)
-        logLearnersHealth(rT)
-        wCycleInfoForRun = null
-        wCycleReasonLogged = false
-        lastProfile = profile
-
-        // 🛡️ ADAPTIVE SMOOTHIE WORKAROUND
-        // If delta is significant (> 3.0), ignore plugin's Flat detection (likely smoothed artifacts)
-        // We SHADOW the parameter 'flatBGsDetected' to enforce this override globally in this function.
-        val flatBGsDetected = if (ctx.flatBGsDetected && abs(ctx.glucoseStatus.delta) > 3.0) {
-            consoleLog.add("⚠️ FLAT OVERRIDE: Delta=${ctx.glucoseStatus.delta} > 3.0 -> Sensor ALIVE.")
-            false
-        } else {
-            ctx.flatBGsDetected
-        }
+        val tickDecisionRt = buildDecisionContextInitRtSosAndFlatShadow(ctx)
+        val decisionCtx = tickDecisionRt.decisionCtx
+        val rT = tickDecisionRt.rT
+        val flatBGsDetected = tickDecisionRt.flatBGsDetected
         
         // 🏃 REAL-TIME ACTIVITY FETCH (every loop)
         // Fetches immediate Steps & HR for display and micro-adjustments

@@ -863,6 +863,43 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
     }
 
+    /**
+     * Phase 2 (P2): gestational autopilot, early IOB / dura ISF / acceleration, harmonized basal multipliers,
+     * confirmed high-rise flag, thyroid module — same order and side effects as inline sequence.
+     */
+    private fun bootstrapPhysiologyAfterEarlyTick(ctx: AimiTickContext, tdd7Days: Double): Boolean {
+        applyGestationalAutopilot(ctx.profile)
+        this.duraISFminutes = ctx.glucoseStatus.duraISFminutes
+        this.duraISFaverage = ctx.glucoseStatus.duraISFaverage
+        val iobObj = ctx.iobDataArray.firstOrNull() ?: IobTotal(ctx.currentTime)
+        this.iobNet = iobObj.iob
+        this.iob = iobObj.iob.toFloat() // 🛡️ Early Initialization for Safety Guards
+        val accel = ctx.glucoseStatus.bgAcceleration ?: 0.0
+        this.bgacc = accel
+        val hMult = if (tdd7Days.toFloat() != 0.0f) basalLearner.getMultiplier() else 1.0
+        val nMult = if (preferences.get(BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled)) {
+            basalNeuralLearner.getUniversalBasalMultiplier(
+                bg = ctx.glucoseStatus.glucose,
+                basal = ctx.profile.current_basal,
+                accel = accel,
+                duraMin = ctx.glucoseStatus.duraISFminutes,
+                duraAvg = ctx.glucoseStatus.duraISFaverage,
+                iob = iobObj.iob
+            )
+        } else 1.0
+        adaptiveMult = when {
+            hMult < 0.99 || nMult < 0.99 -> min(hMult, nMult)
+            else -> max(hMult, nMult)
+        }
+        if (Math.abs(adaptiveMult - 1.0) > 0.01) {
+            consoleLog.add("🛡️ BASAL_UNIFIED_SCALING: H=${"%.2f".format(hMult)}x / N=${"%.2f".format(nMult)}x -> Applied=${"%.2f".format(adaptiveMult)}x")
+        }
+        val isConfirmedHighRiseLocal =
+            ctx.glucoseStatus.glucose > 150.0 && ctx.glucoseStatus.combinedDelta > 1.5 && (ctx.glucoseStatus.bgAcceleration ?: 0.0) > 0.4
+        applyThyroidModule(ctx.profile)
+        return isConfirmedHighRiseLocal
+    }
+
     private fun logInvocationCacheState(tag: String, state: AsyncDataState<*>) {
         val msg = when (state) {
             is AsyncDataState.Fresh<*> -> "CACHE $tag=FRESH ageMs=${state.ageMs}"
@@ -5344,49 +5381,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val tdd7P = early.tdd7P
         val tdd7Days = early.tdd7Days
 
-        // 🤰 Gestational Autopilot Integration
-        applyGestationalAutopilot(ctx.profile)
-
-        // 🧬 Physiological Summary for Neural Adapters
-        this.duraISFminutes = ctx.glucoseStatus.duraISFminutes
-        this.duraISFaverage = ctx.glucoseStatus.duraISFaverage
-        val iobObj = ctx.iobDataArray.firstOrNull() ?: IobTotal(ctx.currentTime)
-        this.iobNet = iobObj.iob
-        this.iob = iobObj.iob.toFloat() // 🛡️ Early Initialization for Safety Guards
-        val accel = ctx.glucoseStatus.bgAcceleration ?: 0.0
-        this.bgacc = accel
-        
-        // 🧬 Harmonized Adaptive Basal Multipliers (Fix Double-Scaling Regression)
-        val hMult = if (tdd7Days.toFloat() != 0.0f) basalLearner.getMultiplier() else 1.0
-        val nMult = if (preferences.get(BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled)) {
-            basalNeuralLearner.getUniversalBasalMultiplier(
-                bg = ctx.glucoseStatus.glucose,
-                basal = ctx.profile.current_basal,
-                accel = accel,
-                duraMin = ctx.glucoseStatus.duraISFminutes,
-                duraAvg = ctx.glucoseStatus.duraISFaverage,
-                iob = iobObj.iob
-            )
-        } else 1.0
-
-        // Harmonization Logic: 
-        // 1. If both are > 1.0, take the max to avoid compounding.
-        // 2. If one is < 1.0 (hypo protection), prioritize the reduction (safety first).
-        adaptiveMult = when {
-            hMult < 0.99 || nMult < 0.99 -> min(hMult, nMult)
-            else -> max(hMult, nMult)
-        }
-        
-        // Log the decision for transparency
-        if (Math.abs(adaptiveMult - 1.0) > 0.01) {
-            consoleLog.add("🛡️ BASAL_UNIFIED_SCALING: H=${"%.2f".format(hMult)}x / N=${"%.2f".format(nMult)}x -> Applied=${"%.2f".format(adaptiveMult)}x")
-        }
-
-        // 🚀 CONFIRMED HIGH RISE detection (Triple-Signal)
-        val isConfirmedHighRiseLocal = ctx.glucoseStatus.glucose > 150.0 && ctx.glucoseStatus.combinedDelta > 1.5 && (ctx.glucoseStatus.bgAcceleration ?: 0.0) > 0.4
-
-        // 🦋 Thyroid (Basedow) Module Integration
-        applyThyroidModule(ctx.profile)
+        val isConfirmedHighRiseLocal = bootstrapPhysiologyAfterEarlyTick(ctx, tdd7Days)
         
         // 🏥 AIMI DECISION CONTEXT INITIALIZATION (For Medical Transparency)
         lastIobSurveillanceExport = null

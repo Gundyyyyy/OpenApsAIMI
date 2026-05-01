@@ -2,6 +2,8 @@
 
 Medical loop code must stay **behavior-identical** unless a change is explicitly reviewed. This document tracks **refactoring only** (structure, readability, test hooks), not medical logic.
 
+**Dernière mise à jour doc :** suite à l’extraction `bootstrapPhysiologyAfterEarlyTick` (P2) ; branche `feature/aimi-phase2-tick-context`. Vérifier le dernier commit local pour l’état exact du code.
+
 ## Réalisé
 
 ### Phase 1 — Comparator gate
@@ -15,6 +17,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **Prélude post-bootstrap** : lectures alignées sur `ctx` de l’autopilot gestationnel / thyroïde jusqu’au multiplicateur basal unifié, `AimiDecisionContext`, init `RT`, SOS d’urgence, puis recalcul **local** de `flatBGsDetected` (override delta) — inchangé fonctionnellement.
 - **Corps principal `determine_basal`** : la majorité des lectures d’entrée utilisent désormais `ctx` (IOB profiler, PKPD précoce, BYODA G6, tube advisor, branches MAXSMB pente/ plateau, T3c shadow + brittle return, préparation signal / autosens, Autodrive V3 gate + état, cibles autosens, recomput PKPD, comparateur SMB, WCycle learning, auditeur, finalisation `decisionCtx` ISF). Les paramètres bruts ne subsistent que pour construire `AimiTickContext` et dans d’autres méthodes de la classe.
 - **Harmonisation `ctx.currentTemp` / `ctx.mealData` / `ctx.microBolusAllowed` / `ctx.currentTime`** : tous les `setTempBasal` / `calculateRate` / comparaisons de TBR actif dans `determine_basal`, flux SMB (`enablesmb`, `finalizeAndCapSMB`, `executeSmbInstruction`), agrégats COB / pentes repas, NGR, moteur basal, PKPD meal path — sans toucher à `setTempBasal()` ni `applyLegacyMealModes()` (paramètres locaux inchangés).
+- **P2 (amorcé)** : **`bootstrapPhysiologyAfterEarlyTick(ctx, tdd7Days)`** — regroupe autopilot gestationnel, résumé physiologique / IOB précoce, multiplicateurs basaux harmonisés, flag « confirmed high rise », module thyroïde ; appelé depuis `determine_basal` juste après `runEarlyDetermineBasalStages`.
 
 ### Branche / build
 - Travail sur `feature/aimi-phase2-tick-context`.
@@ -30,8 +33,8 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 
 | Priorité | Tâche | Risque |
 |----------|--------|--------|
-| P1 | Finition : derniers `currentTime` / noms de paramètres dans signatures uniquement ; commentaires obsolètes | Très faible |
-| P2 | Extraire des **étapes nommées** (ex. contexte décision + SOS + flat override + RT init) dans des `private fun` avec signatures explicites, une étape à la fois, avec revue diff | Moyen |
+| P1 | Finition : revue des commentaires dupliqués / obsolètes ; pas de changement fonctionnel attendu | Très faible |
+| P2 | Poursuivre **étapes nommées** après `bootstrapPhysiology…` : ex. bloc `AimiDecisionContext` + SOS + `flatBGsDetected` local + init `RT` + `CONTEXT` (une extraction à la fois) | Moyen |
 | P3 | Introduire une **pipeline** typée (sealed `AimiTickPhase` ou séquence de stages) derrière la même API publique `determine_basal` | Plus élevé — à valider |
 | P4 | Tests unitaires ciblés sur bootstrap + shadow flat (golden logs ou snapshots limités) | Dépend de la faisabilité dans le module |
 

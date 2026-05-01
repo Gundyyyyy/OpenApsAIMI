@@ -13,6 +13,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **`runEarlyDetermineBasalStages(ctx)`** dans `DetermineBasalaimiSMB2` : même séquence qu’avant — `beginInvocation`, clear caches, pulse telemetry, reset flags, bruit CGM, `extraDebug`, `hydrateMealDataIfTriggered`, flags advisor/TDD, copie **`originalProfile`**, `enterPhase(BOOTSTRAP)`.
 - **`AimiDetermineBasalEarlyTickState`** : `originalProfile`, `isExplicitAdvisorRun`, `tdd7P`, `tdd7Days` (valeurs figées après bootstrap numérique TDD).
 - **Prélude post-bootstrap** : lectures alignées sur `ctx` de l’autopilot gestationnel / thyroïde jusqu’au multiplicateur basal unifié, `AimiDecisionContext`, init `RT`, SOS d’urgence, puis recalcul **local** de `flatBGsDetected` (override delta) — inchangé fonctionnellement.
+- **Corps principal `determine_basal`** : la majorité des lectures d’entrée utilisent désormais `ctx` (IOB profiler, PKPD précoce, BYODA G6, tube advisor, branches MAXSMB pente/ plateau, T3c shadow + brittle return, préparation signal / autosens, Autodrive V3 gate + état, cibles autosens, recomput PKPD, comparateur SMB, WCycle learning, auditeur, finalisation `decisionCtx` ISF). Les paramètres bruts ne subsistent que pour construire `AimiTickContext` et dans d’autres méthodes de la classe.
 
 ### Branche / build
 - Travail sur `feature/aimi-phase2-tick-context`.
@@ -28,7 +29,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 
 | Priorité | Tâche | Risque |
 |----------|--------|--------|
-| P1 | Étendre l’usage de `ctx` pour les **lectures** dans d’autres sections de `determine_basal`, sans toucher aux zones à variables ombres (`flatBGsDetected`, etc.) | Faible si mécanique |
+| P1 | Finition : remplacer les derniers `currenttemp` / `mealData` / `uiInteraction` **paramètres** par `ctx.*` là où ce n’est pas déjà fait (ex. certains `setTempBasal`), et harmoniser les commentaires obsolètes | Faible |
 | P2 | Extraire des **étapes nommées** (ex. contexte décision + SOS + flat override + RT init) dans des `private fun` avec signatures explicites, une étape à la fois, avec revue diff | Moyen |
 | P3 | Introduire une **pipeline** typée (sealed `AimiTickPhase` ou séquence de stages) derrière la même API publique `determine_basal` | Plus élevé — à valider |
 | P4 | Tests unitaires ciblés sur bootstrap + shadow flat (golden logs ou snapshots limités) | Dépend de la faisabilité dans le module |

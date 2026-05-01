@@ -5488,7 +5488,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
 
         // ✅ ETAPE 1: Calculer le Profil d'Action de l'IOB (avec modulation physio)
-        val iobActionProfile = InsulinActionProfiler.calculate(iob_data_array, profile, snsDominance)
+        val iobActionProfile = InsulinActionProfiler.calculate(ctx.iobDataArray, ctx.profile, snsDominance)
 
 // Stocker les résultats dans des variables locales pour plus de clarté
         val iobTotal = iobActionProfile.iobTotal
@@ -5514,7 +5514,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             iobActivityNow = iobActivityNow,
             iobActivityIn30 = iobActivityIn30Min,
             peakMinutesAbs = iobPeakMinutes.toInt(),
-            diaHours = profile.dia,
+            diaHours = ctx.profile.dia,
             carbsActiveG = cob.toDouble(),
             now = dateUtil.now()
         )
@@ -5545,7 +5545,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val f  = pack.features
 
 // Construit un GlucoseStatusAIMI complet (plus de 0.0 par défaut)
-        val glucoseStatus = glucose_status ?: GlucoseStatusAIMI(
+        val glucoseStatus = ctx.glucoseStatus ?: GlucoseStatusAIMI(
             glucose = gs.glucose,
             noise = gs.noise,
             delta = gs.delta,
@@ -5646,15 +5646,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Use default 1.0 if autosens not available yet (it is computed later usually)
         // Accessing autosens_data might fail if it's a local var defined later.
         val earlyAutosensRatio = 1.0 
-        val earlySens = profile.sens / earlyAutosensRatio 
+        val earlySens = ctx.profile.sens / earlyAutosensRatio 
         
         // 2. Compute PKPD Predictions Immediately
         val earlyPkpdPredictions = computePkpdPredictions(
             currentBg = glucoseStatus.glucose,
-            iobArray = iob_data_array,
+            iobArray = ctx.iobDataArray,
             finalSensitivity = earlySens,
-            cobG = mealData.mealCOB, // Use mealData which is initialized at start
-            profile = profile,
+            cobG = ctx.mealData.mealCOB, // Use mealData which is initialized at start
+            profile = ctx.profile,
             rT = rT,
             delta = glucoseStatus.delta
         )
@@ -5665,7 +5665,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         rT.eventualBG = earlyPkpdPredictions.eventual
         
         // 4. Compute PkPdRuntime (Critical for Tail Damping)
-        val iobForEarlyPkpd = iob_data_array.firstOrNull()
+        val iobForEarlyPkpd = ctx.iobDataArray.firstOrNull()
         val earlyPkpdWindowSinceDoseMin = if (iobForEarlyPkpd != null && iobForEarlyPkpd.lastBolusTime > 0L) {
             ((dateUtil.now() - iobForEarlyPkpd.lastBolusTime) / 60000.0).toInt().coerceAtLeast(0)
         } else {
@@ -5683,11 +5683,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 bg = glucoseStatus.glucose,
                 deltaMgDlPer5 = glucoseStatus.delta,
                 iobU = iobTotal.toDouble(),  // FIX: Use iobTotal from iobActionProfile (line 3614)
-                carbsActiveG = mealData.mealCOB,
+                carbsActiveG = ctx.mealData.mealCOB,
                 windowMin = earlyPkpdWindowSinceDoseMin,
                 exerciseFlag = sportTime,
                 profileIsf = earlySens,
-                tdd24h = profile.max_daily_basal * 24.0, // Sort of
+                tdd24h = ctx.profile.max_daily_basal * 24.0, // Sort of
                 mealContext = null,
                 consoleLog = consoleLog,
                 combinedDelta = glucoseStatus.combinedDelta,
@@ -5764,10 +5764,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                         bgMgdl = glucoseStatus.glucose,
                         deltaMgdlPer5m = glucoseStatus.delta,
                         iobU = iobTotal,
-                        cobG = mealData.mealCOB.toDouble(),
+                        cobG = ctx.mealData.mealCOB.toDouble(),
                         isfMgdlPerU = earlySens,
                         diaHours = effectiveDiaH,
-                        targetMgdl = profile.target_bg,
+                        targetMgdl = ctx.profile.target_bg,
                         maxSmbU = this.maxSMB,
                         minPredictedBg = minPredVal,
                         eventualBgMgdl = evVal,
@@ -5816,7 +5816,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         //
         // Nuit (23h–06h) : DÉSACTIVÉ (no compensation — évite les sur-bolus nocturnes sur résiduel IOB)
         // ⚠️ One+ / G7 / xDrip libre → aucun ajustement.
-        val isG6Byoda = glucose_status.sourceSensor == app.aaps.core.data.model.SourceSensor.DEXCOM_G6_NATIVE
+        val isG6Byoda = ctx.glucoseStatus.sourceSensor == app.aaps.core.data.model.SourceSensor.DEXCOM_G6_NATIVE
         val isNight = hourOfDay >= 23 || hourOfDay < 6
         val combinedDelta: Float
         val shortAvgDeltaAdj: Float
@@ -5893,25 +5893,25 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // Absolute emergency if BG catastrophic, even with low delta
             // Protection: Don't apply if rapid fall (delta <= -5)
             bg >= 250 && combinedDelta > -5.0 -> {
-                consoleLog.add("MAXSMB_PLATEAU_CRITICAL BG=${bg.roundToInt()} Δ=${String.format("%.1f", combinedDelta)} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} -> maxSMBHB=${String.format("%.2f", maxSMBHB)}U (plateau)")
+                consoleLog.add("MAXSMB_PLATEAU_CRITICAL BG=${bg.roundToInt()} Δ=${String.format("%.1f", combinedDelta)} slope=${String.format("%.2f", ctx.mealData.slopeFromMinDeviation)} -> maxSMBHB=${String.format("%.2f", maxSMBHB)}U (plateau)")
                 maxSMBHB
             }
             
             // 🔴 ACTIVE RISE HIGH: BG >= 140 (meal interception zone)
             // Full maxSMBHB for confirmed meal/resistance in elevated range
             // Added combinedDelta check to confirm rise is real
-            (bg >= 140 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0 && combinedDelta > 0.5) ||
-            (bg >= 180 && honeymoon && mealData.slopeFromMinDeviation >= 1.4 && combinedDelta > 0.5) -> {
-                consoleLog.add("MAXSMB_SLOPE_HIGH BG=${bg.roundToInt()} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} \u0394=${String.format("%.1f", combinedDelta)} -> maxSMBHB=${String.format("%.2f", maxSMBHB)}U (confirmed rise)")
+            (bg >= 140 && !honeymoon && ctx.mealData.slopeFromMinDeviation >= 1.0 && combinedDelta > 0.5) ||
+            (bg >= 180 && honeymoon && ctx.mealData.slopeFromMinDeviation >= 1.4 && combinedDelta > 0.5) -> {
+                consoleLog.add("MAXSMB_SLOPE_HIGH BG=${bg.roundToInt()} slope=${String.format("%.2f", ctx.mealData.slopeFromMinDeviation)} \u0394=${String.format("%.1f", combinedDelta)} -> maxSMBHB=${String.format("%.2f", maxSMBHB)}U (confirmed rise)")
                 maxSMBHB
             }
             
             // 🟡 ACTIVE RISE SENSITIVE: BG 120-140 (near target zone)
             // 85% maxSMBHB for extra caution close to target
             // Added combinedDelta check to confirm rise is real
-            bg >= 120 && bg < 140 && !honeymoon && mealData.slopeFromMinDeviation >= 1.0 && combinedDelta > 0.5 -> {
+            bg >= 120 && bg < 140 && !honeymoon && ctx.mealData.slopeFromMinDeviation >= 1.0 && combinedDelta > 0.5 -> {
                 val partial = max(maxSMB, maxSMBHB * 0.85)
-                consoleLog.add("MAXSMB_SLOPE_SENSITIVE BG=${bg.roundToInt()} slope=${String.format("%.2f", mealData.slopeFromMinDeviation)} \u0394=${String.format("%.1f", combinedDelta)} -> ${String.format("%.2f", partial)}U (85% maxSMBHB - confirmed rise)")
+                consoleLog.add("MAXSMB_SLOPE_SENSITIVE BG=${bg.roundToInt()} slope=${String.format("%.2f", ctx.mealData.slopeFromMinDeviation)} \u0394=${String.format("%.1f", combinedDelta)} -> ${String.format("%.2f", partial)}U (85% maxSMBHB - confirmed rise)")
                 partial
             }
             
@@ -5945,7 +5945,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
              this.maxSMB = stdMaxSMB
              consoleLog.add("🔒 STRICT CLAMP: BG<120 -> Forced Standard MaxSMB (${String.format("%.2f", stdMaxSMB)}U)")
         }
-        val ngrConfig = buildNightGrowthResistanceConfig(profile, autosens_data, glucoseStatus, targetBg.toDouble())
+        val ngrConfig = buildNightGrowthResistanceConfig(ctx.profile, ctx.autosensData, glucoseStatus, targetBg.toDouble())
         var tir1DAYIR = 0.0
         var lastHourTIRAbove: Double? = null
         var tirbasal3IR: Double? = null
@@ -6128,13 +6128,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                         else Double.MAX_VALUE
                     val hasRecentMealEstT3c = recentEstCarbsT3c > 10.0 && estAgeMinT3c in 0.0..45.0
                     val applyHypoRecoveryRaT3c = minBgInLastMinutes(AUTODRIVE_POST_HYPO_MIN_BG_LOOKBACK_MINUTES) < 70.0 &&
-                        mealData.mealCOB < 0.1 &&
+                        ctx.mealData.mealCOB < 0.1 &&
                         !(mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime || hasRecentMealEstT3c)
                     val t3cShadowState = app.aaps.plugins.aps.openAPSAIMI.autodrive.models.AutoDriveState.createSafe(
-                        bg = glucose_status.glucose,
+                        bg = ctx.glucoseStatus.glucose,
                         bgVelocity = (shortAvgDeltaAdj.toDouble() / 5.0),
-                        iob = iob_data_array.firstOrNull()?.iob ?: 0.0,
-                        cob = mealData.mealCOB,
+                        iob = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0,
+                        cob = ctx.mealData.mealCOB,
                         estimatedSI = (variableSensitivity.toDouble() / 10000.0),
                         patientWeightKg = preferences.get(app.aaps.core.keys.DoubleKey.OApsAIMIweight),
                         physiologicalStressMask = doubleArrayOf(),
@@ -6143,7 +6143,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                         steps = snapshot.stepsLast15m,
                         hr = snapshot.hrNow,
                         rhr = snapshot.rhrResting,
-                        sourceSensor = glucose_status.sourceSensor,
+                        sourceSensor = ctx.glucoseStatus.sourceSensor,
                         maxIOB = this.maxIob,
                         maxSMB = this.maxSMB,
                         highBgMaxSMB = this.maxSMBHB,
@@ -6170,10 +6170,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             // ────────────────────────────────────────────────────────────────────────────
 
             // 🔮 T3c + trajectory / advanced predictions (isolated path — same engines as main loop)
-            val iobRowT3c = iob_data_array.firstOrNull() ?: IobTotal(currentTime)
+            val iobRowT3c = ctx.iobDataArray.firstOrNull() ?: IobTotal(ctx.currentTime)
             val lastBolusAgeT3c = if (iobRowT3c.lastBolusTime > 0L || internalLastSmbMillis > 0L) {
                 val tEff = kotlin.math.max(iobRowT3c.lastBolusTime, internalLastSmbMillis)
-                ((currentTime - tEff) / 60000.0).coerceAtLeast(0.0)
+                ((ctx.currentTime - tEff) / 60000.0).coerceAtLeast(0.0)
             } else {
                 0.0
             }
@@ -6184,19 +6184,19 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     fusedT3c != null && dynSensT3c > 0.0 -> kotlin.math.min(fusedT3c, dynSensT3c)
                     fusedT3c != null -> fusedT3c
                     else -> dynSensT3c
-                }.coerceAtLeast(10.0) * autosens_data.ratio.coerceIn(0.25, 4.0)
+                }.coerceAtLeast(10.0) * ctx.autosensData.ratio.coerceIn(0.25, 4.0)
                 )
             applyAdvancedPredictions(
                 bg = bg,
                 delta = delta,
                 sens = sensForT3cPred,
-                iob_data_array = iob_data_array,
-                mealData = mealData,
-                profile = profile,
+                iob_data_array = ctx.iobDataArray,
+                mealData = ctx.mealData,
+                profile = ctx.profile,
                 rT = rT
             )
             applyTrajectoryAnalysis(
-                currentTime = currentTime,
+                currentTime = ctx.currentTime,
                 bg = bg,
                 delta = delta.toDouble(),
                 bgacc = bgacc,
@@ -6208,7 +6208,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 targetBg = originalProfile.target_bg,
                 profile = profile,
                 rT = rT,
-                uiInteraction = uiInteraction,
+                uiInteraction = ctx.uiInteraction,
                 relevanceScore = physioMultipliers.trajectoryRelevanceScore
             )
             val lgsT3c = kotlin.math.min(90.0, (profile.lgsThreshold?.toDouble() ?: 70.0).coerceAtLeast(70.0))
@@ -6228,23 +6228,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
 
             return executeT3cBrittleMode(
-                bg = glucose_status.glucose,
-                delta = glucose_status.delta.toFloat(),
-                shortAvgDelta = glucose_status.shortAvgDelta,
-                longAvgDelta = glucose_status.longAvgDelta,
-                accel = glucose_status.bgAcceleration,
-                duraISFminutes = glucose_status.duraISFminutes,
-                duraISFaverage = glucose_status.duraISFaverage,
+                bg = ctx.glucoseStatus.glucose,
+                delta = ctx.glucoseStatus.delta.toFloat(),
+                shortAvgDelta = ctx.glucoseStatus.shortAvgDelta,
+                longAvgDelta = ctx.glucoseStatus.longAvgDelta,
+                accel = ctx.glucoseStatus.bgAcceleration,
+                duraISFminutes = ctx.glucoseStatus.duraISFminutes,
+                duraISFaverage = ctx.glucoseStatus.duraISFaverage,
                 profile = profile,
-                currenttemp = currenttemp,
-                iob = iob_data_array.firstOrNull() ?: IobTotal(System.currentTimeMillis()),
+                currenttemp = ctx.currentTemp,
+                iob = ctx.iobDataArray.firstOrNull() ?: IobTotal(System.currentTimeMillis()),
                 targetBg = originalProfile.target_bg,
                 variableSensitivity = variableSensitivity.toDouble(),
                 maxIob = maxIob,
                 eventualBg = eventualT3c.coerceAtLeast(40.0),
                 rT = rT,
                 trajectoryContext = t3cTrajCtx,
-                cgmNoise = glucose_status.noise,
+                cgmNoise = ctx.glucoseStatus.noise,
             )
         }
         val modesCondition = (!mealTime || mealruntime > 30) && (!lunchTime || lunchruntime > 30) && (!bfastTime || bfastruntime > 30) && (!dinnerTime || dinnerruntime > 30) && !sportTime && (!snackTime || snackrunTime > 30) && (!highCarbTime || highCarbrunTime > 30) && !sleepTime && !lowCarbTime
@@ -6267,15 +6267,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Ratio < 1.0 => Resistant (ISF should be smaller)
         // Ratio > 1.0 => Sensitive (ISF should be larger)
         // Effective ISF = Profile ISF * Ratio
-        val autosensRatio = if (autosens_data.ratio != 1.0) autosens_data.ratio else 1.0
+        val autosensRatio = if (ctx.autosensData.ratio != 1.0) ctx.autosensData.ratio else 1.0
         
         // [FIX] Critical Math Inversion found during Deep Dive:
         // Previous: ISF * Ratio. 
         // 100 * 1.2 = 120 (Weaker). WRONG for Resistance.
         // 100 * 0.7 = 70 (Stronger). WRONG for Sensitivity.
         
-        val systemTime = currentTime
-        val iobArray = iob_data_array
+        val systemTime = ctx.currentTime
+        val iobArray = ctx.iobDataArray
         val iob_data = iobArray[0]
         val mealFlags = MealFlags(mealTime, bfastTime, lunchTime, dinnerTime, highCarbTime)
         AimiLoopTelemetry.enterPhase(AimiLoopPhase.SIGNAL_PREPARATION, hormonitorStudyExporter)
@@ -6361,7 +6361,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
             applyBasalFirstPolicy(
                 bg = bg, delta = delta.toFloat(), combinedDelta = combinedDelta.toFloat(),
-                mealData = mealData, autosens_data = autosens_data, isMealAdvisorOneShot = isExplicitAdvisorRun,
+                mealData = ctx.mealData, autosens_data = ctx.autosensData, isMealAdvisorOneShot = isExplicitAdvisorRun,
                 targetBg = targetBg.toDouble(), rT = rT, isConfirmedHighRise = isConfirmedHighRiseLocal
             )
             consoleLog.add("  └ adaptiveMode: ${if (pkpdRuntime.params.diaHrs != 4.0 || pkpdRuntime.params.peakMin != 75.0) "ACTIVE" else "DEFAULT"}")
@@ -6371,7 +6371,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 🌀 PHASE-SPACE TRAJECTORY ANALYSIS (Feature Flag)
         // ═══════════════════════════════════════════════════════════════════
         applyTrajectoryAnalysis(
-            currentTime = currentTime,
+            currentTime = ctx.currentTime,
             bg = bg,
             delta = delta.toDouble(),
             bgacc = bgacc,
@@ -6383,7 +6383,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             targetBg = targetBg.toDouble(),
             profile = profile,
             rT = rT,
-            uiInteraction = uiInteraction,
+            uiInteraction = ctx.uiInteraction,
             relevanceScore = physioMultipliers.trajectoryRelevanceScore
         )
 
@@ -6504,7 +6504,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val profileISF_raw = if (profile.sens > 10) profile.sens else 50.0
         // 🔮 FCL 11.0 Fix: Use Dynamic 'sens' for Effective ISF to capture Resistance/Sensitivity
         // 🏥 Effective ISF: Profile ISF * Ratio (Ratio < 1 = Resistant = Stronger ISF)
-        val effectiveISF = sens * autosens_data.ratio 
+        val effectiveISF = sens * ctx.autosensData.ratio 
         // ⚡ FCL 12.0: Unified Learner Integration for Prebolus
         // [User Request]: Disabled for now. Prebolus should be raw / standard.
         // val useUnified = preferences.get(BooleanKey.OApsAIMIUnifiedReactivityEnabled)
@@ -6517,8 +6517,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         
         // 🔮 FCL 11.0: Generate Predictions NOW so they are visible even if Autodrive returns early
         applyAdvancedPredictions(
-            bg = bg, delta = delta, sens = sens, iob_data_array = iob_data_array,
-            mealData = mealData, profile = profile, rT = rT
+            bg = bg, delta = delta, sens = sens, iob_data_array = ctx.iobDataArray,
+            mealData = ctx.mealData, profile = ctx.profile, rT = rT
         )
 
         // FIX: Use the calculated 'sens' (Dynamic) instead of 'profileISF_raw' (Static) if desired?
@@ -6675,9 +6675,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val hasRecentMealEstimate = recentEstimateCarbs > 10.0 && estimateAgeMinutes in 0.0..45.0
 
             val gate = autodriveGater.shouldEngageV3(
-                bg = glucose_status.glucose,
+                bg = ctx.glucoseStatus.glucose,
                 combinedDelta = combinedDelta.toDouble(),
-                cob = mealData.mealCOB,
+                cob = ctx.mealData.mealCOB,
                 uamConfidence = AimiUamHandler.confidenceOrZero(),
                 explicitMealMode = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime,
                 hasRecentMealEstimate = hasRecentMealEstimate
@@ -6699,14 +6699,14 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 }
 
                 val autodriveMealSignals = mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime || snackTime ||
-                    mealData.mealCOB >= 0.1 || hasRecentMealEstimate
+                    ctx.mealData.mealCOB >= 0.1 || hasRecentMealEstimate
                 val applyHypoRecoveryRaDampening = minBgInLastMinutes(AUTODRIVE_POST_HYPO_MIN_BG_LOOKBACK_MINUTES) < 70.0 && !autodriveMealSignals
 
                 val adState = app.aaps.plugins.aps.openAPSAIMI.autodrive.models.AutoDriveState.createSafe(
-                    bg = glucose_status.glucose,
+                    bg = ctx.glucoseStatus.glucose,
                     bgVelocity = (shortAvgDeltaAdj.toDouble() / 5.0),
-                    iob = iob_data_array.firstOrNull()?.iob ?: 0.0,
-                    cob = mealData.mealCOB,
+                    iob = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0,
+                    cob = ctx.mealData.mealCOB,
                     estimatedSI = canonicalSI,
                     estimatedRa = continuousStateEstimator.getLastRa(),
                     patientWeightKg = preferences.get(app.aaps.core.keys.DoubleKey.OApsAIMIweight),
@@ -6716,7 +6716,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                     steps = snapshot.stepsLast15m,
                     hr = snapshot.hrNow,
                     rhr = snapshot.rhrResting,
-                    sourceSensor = glucose_status.sourceSensor,
+                    sourceSensor = ctx.glucoseStatus.sourceSensor,
                     maxIOB = this.maxIob,
                     maxSMB = this.maxSMB,
                     highBgMaxSMB = this.maxSMBHB,
@@ -7030,7 +7030,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             //consoleLog.add("Sensitivity ratio set to $sensitivityRatio based on temp target of $target_bg; ")
             consoleLog.add(context.getString(R.string.sensitivity_ratio_temp_target, sensitivityRatio, target_bg))
         } else {
-            sensitivityRatio = autosens_data.ratio
+            sensitivityRatio = ctx.autosensData.ratio
             //consoleLog.add("Autosens ratio: $sensitivityRatio; ")
             consoleLog.add(context.getString(R.string.autosens_ratio_log, sensitivityRatio))
         }
@@ -7053,11 +7053,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             //consoleLog.add("Temp Target set, not adjusting with autosens")
             consoleLog.add(context.getString(R.string.console_temp_target_set))
         } else {
-            if (profile.sensitivity_raises_target && autosens_data.ratio > 1 || profile.resistance_lowers_target && autosens_data.ratio < 1) {
+            if (profile.sensitivity_raises_target && ctx.autosensData.ratio > 1 || profile.resistance_lowers_target && ctx.autosensData.ratio < 1) {
                 // Adjust BG targets for autosens (AAPS Convention: Ratio < 1 = Resistant)
-                min_bg = round((min_bg - 60) * autosens_data.ratio, 0) + 60
-                max_bg = round((max_bg - 60) * autosens_data.ratio, 0) + 60
-                var new_target_bg = round((target_bg - 60) * autosens_data.ratio, 0) + 60
+                min_bg = round((min_bg - 60) * ctx.autosensData.ratio, 0) + 60
+                max_bg = round((max_bg - 60) * ctx.autosensData.ratio, 0) + 60
+                var new_target_bg = round((target_bg - 60) * ctx.autosensData.ratio, 0) + 60
                 // don't allow target_bg below 80
                 new_target_bg = max(80.0, new_target_bg)
                 if (target_bg == new_target_bg)
@@ -7416,12 +7416,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
 
         sens = variableSensitivity.toDouble()
-        val effectiveSens = sens * autosens_data.ratio
+        val effectiveSens = sens * ctx.autosensData.ratio
         val pkpdPredictions = computePkpdPredictions(
             currentBg = bg,
-            iobArray = iob_data_array,
+            iobArray = ctx.iobDataArray,
             finalSensitivity = effectiveSens,
-            cobG = mealData.mealCOB,
+            cobG = ctx.mealData.mealCOB,
 
             profile = profile,
             rT = rT,
@@ -8283,7 +8283,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.reason.append(context.getString(R.string.reason_iob_max, round(iob_data.iob, 2), round(maxIobLimit, 2)))
             val finalResult = if (delta < 0) {
                 // BG is dropping, usually we cut to 0. BUT check floor first.
-                val floorRate = applyBasalFloor(0.0, profile.current_basal, safetyDecision, cachedActivityContext ?: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext(), bg, delta.toDouble(), ((glucose_status as? GlucoseStatusAIMI)?.shortAvgDelta ?: 0.0).toDouble(), eventualBG.toDouble(), mealModeActive, HypoThresholdMath.getLgsThresholdSafe(profile))
+                val floorRate = applyBasalFloor(0.0, profile.current_basal, safetyDecision, cachedActivityContext ?: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext(), bg, delta.toDouble(), (ctx.glucoseStatus.shortAvgDelta.toDouble()), eventualBG.toDouble(), mealModeActive, HypoThresholdMath.getLgsThresholdSafe(profile))
                 
                 if (floorRate > 0.0) {
                      rT.reason.append(context.getString(R.string.reason_bg_dropping_floor, delta, floorRate))
@@ -8298,22 +8298,22 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             } else {
                 //rT.reason.append("; setting current basal of ${round(basal, 2)} as temp. ")
                 // Apply floor here too just in case 'basal' itself is super low? (Unlikely if it came from profile, but possible)
-                val safeBasal = applyBasalFloor(basal, profile.current_basal, safetyDecision, cachedActivityContext ?: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext(), bg, delta.toDouble(), ((glucose_status as? GlucoseStatusAIMI)?.shortAvgDelta ?: 0.0).toDouble(), eventualBG.toDouble(), mealModeActive, HypoThresholdMath.getLgsThresholdSafe(profile))
+                val safeBasal = applyBasalFloor(basal, profile.current_basal, safetyDecision, cachedActivityContext ?: app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext(), bg, delta.toDouble(), (ctx.glucoseStatus.shortAvgDelta.toDouble()), eventualBG.toDouble(), mealModeActive, HypoThresholdMath.getLgsThresholdSafe(profile))
                 rT.reason.append(context.getString(R.string.reason_set_temp_basal, round(safeBasal, 2)))
                 setTempBasal(safeBasal, 30, profile, rT, currenttemp, overrideSafetyLimits = false, adaptiveMultiplier = adaptiveMult)
             }
             comparator.compare(
                 aimiResult = finalResult,
-                glucoseStatus = glucose_status,
-                currentTemp = currenttemp,
-                iobData = iob_data_array,
+                glucoseStatus = ctx.glucoseStatus,
+                currentTemp = ctx.currentTemp,
+                iobData = ctx.iobDataArray,
                 profileAimi = originalProfile,
-                autosens = autosens_data,
-                mealData = mealData,
-                microBolusAllowed = microBolusAllowed,
-                currentTime = currentTime,
+                autosens = ctx.autosensData,
+                mealData = ctx.mealData,
+                microBolusAllowed = ctx.microBolusAllowed,
+                currentTime = ctx.currentTime,
                 flatBGsDetected = flatBGsDetected,
-                dynIsfMode = dynIsfMode
+                dynIsfMode = ctx.dynIsfMode
             )
             logDecisionFinal("MAX_IOB", finalResult, bg, delta)
             return finalResult
@@ -8537,7 +8537,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             if (wCyclePreferences.enabled()) {
                 val phase = wCycleFacade.getPhase()
                 if (phase != app.aaps.plugins.aps.openAPSAIMI.wcycle.CyclePhase.UNKNOWN) {
-                     wCycleFacade.updateLearning(phase, autosens_data.ratio)
+                     wCycleFacade.updateLearning(phase, ctx.autosensData.ratio)
                 }
             }
 
@@ -8704,16 +8704,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
             comparator.compare(
                 aimiResult = finalResult,
-                glucoseStatus = glucose_status,
-                currentTemp = currenttemp,
-                iobData = iob_data_array,
+                glucoseStatus = ctx.glucoseStatus,
+                currentTemp = ctx.currentTemp,
+                iobData = ctx.iobDataArray,
                 profileAimi = originalProfile,
-                autosens = autosens_data,
-                mealData = mealData,
-                microBolusAllowed = microBolusAllowed,
-                currentTime = currentTime,
+                autosens = ctx.autosensData,
+                mealData = ctx.mealData,
+                microBolusAllowed = ctx.microBolusAllowed,
+                currentTime = ctx.currentTime,
                 flatBGsDetected = flatBGsDetected,
-                dynIsfMode = dynIsfMode
+                dynIsfMode = ctx.dynIsfMode
             )
 
             // 🛡️ Safety: Strictly Clamp Basal to >= 0.0 to prevent negative display/command
@@ -8870,8 +8870,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                         delta = delta.toDouble(),
                         shortAvgDelta = shortAvgDelta.toDouble(),
                         longAvgDelta = longAvgDelta.toDouble(),
-                        glucoseStatus = glucose_status,
-                        iob = iob_data_array.firstOrNull() ?: IobTotal(dateUtil.now()).apply { iob = 0.0; activity = 0.0 },
+                        glucoseStatus = ctx.glucoseStatus,
+                        iob = ctx.iobDataArray.firstOrNull() ?: IobTotal(dateUtil.now()).apply { iob = 0.0; activity = 0.0 },
                         cob = cob.toDouble(),  // Convert Float to Double
                         profile = profile,
                         pkpdRuntime = pkpdRuntime,
@@ -8952,16 +8952,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 final_value_mgdl = snapshotFusedIsf,
                 modifiers = mutableListOf<AimiDecisionContext.Modifier>().apply {
                     // Autosens
-                    if (autosens_data.ratio != 1.0) {
+                    if (ctx.autosensData.ratio != 1.0) {
                         add(AimiDecisionContext.Modifier(
                             source = "Autosensitivity",
                             // ⚠️ FIXED: ratio < 1 = SENSITIVE → ISF↑ (1/ratio) = LESS insulin
-                            factor = 1.0 / autosens_data.ratio, // Sensitive (ratio=0.8) → factor=1.25 → ISF↑
-                            clinical_reason = "Rolling avg sensitivity: ${"%.2f".format(autosens_data.ratio)}"
+                            factor = 1.0 / ctx.autosensData.ratio, // Sensitive (ratio=0.8) → factor=1.25 → ISF↑
+                            clinical_reason = "Rolling avg sensitivity: ${"%.2f".format(ctx.autosensData.ratio)}"
                         ))
                     }
                     // ISF Fusion
-                    val autosensAdjIsf = snapshotProfileIsf * (1.0 / autosens_data.ratio)
+                    val autosensAdjIsf = snapshotProfileIsf * (1.0 / ctx.autosensData.ratio)
                      if (abs(snapshotFusedIsf - autosensAdjIsf) > 1.0) {
                          add(AimiDecisionContext.Modifier(
                             source = "PkPd_Fusion",

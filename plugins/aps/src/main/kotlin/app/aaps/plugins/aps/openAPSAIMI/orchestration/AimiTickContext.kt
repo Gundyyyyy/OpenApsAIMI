@@ -9,8 +9,13 @@ import app.aaps.core.interfaces.aps.OapsProfileAimi
 import app.aaps.core.interfaces.ui.UiInteraction
 
 /**
- * Immutable snapshot of one determine_basal invocation inputs (Phase 2).
- * Stages will progressively read from this instead of threading 12 parameters.
+ * Entry bundle for one [app.aaps.plugins.aps.openAPSAIMI.DetermineBasalaimiSMB2.determine_basal] invocation (Phase 2).
+ *
+ * **Aliasing:** properties reference the same objects as the original method parameters (not deep copies).
+ * In-place updates to [profile] or [mealData] are visible through this context.
+ *
+ * **flatBGsDetected:** the loop body may **shadow** this with a local `val flatBGsDetected` after delta override;
+ * downstream code must use that local value, not [flatBGsDetected] from context, once the shadow exists.
  */
 data class AimiTickContext(
     val glucoseStatus: GlucoseStatusAIMI,

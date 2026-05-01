@@ -5345,26 +5345,26 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val tdd7Days = early.tdd7Days
 
         // 🤰 Gestational Autopilot Integration
-        applyGestationalAutopilot(profile)
+        applyGestationalAutopilot(ctx.profile)
 
         // 🧬 Physiological Summary for Neural Adapters
-        this.duraISFminutes = glucose_status.duraISFminutes
-        this.duraISFaverage = glucose_status.duraISFaverage
-        val iobObj = iob_data_array.firstOrNull() ?: IobTotal(currentTime)
+        this.duraISFminutes = ctx.glucoseStatus.duraISFminutes
+        this.duraISFaverage = ctx.glucoseStatus.duraISFaverage
+        val iobObj = ctx.iobDataArray.firstOrNull() ?: IobTotal(ctx.currentTime)
         this.iobNet = iobObj.iob
         this.iob = iobObj.iob.toFloat() // 🛡️ Early Initialization for Safety Guards
-        val accel = glucose_status.bgAcceleration ?: 0.0
+        val accel = ctx.glucoseStatus.bgAcceleration ?: 0.0
         this.bgacc = accel
         
         // 🧬 Harmonized Adaptive Basal Multipliers (Fix Double-Scaling Regression)
         val hMult = if (tdd7Days.toFloat() != 0.0f) basalLearner.getMultiplier() else 1.0
         val nMult = if (preferences.get(BooleanKey.OApsAIMIT3cAdaptiveBasalEnabled)) {
             basalNeuralLearner.getUniversalBasalMultiplier(
-                bg = glucose_status.glucose,
-                basal = profile.current_basal,
+                bg = ctx.glucoseStatus.glucose,
+                basal = ctx.profile.current_basal,
                 accel = accel,
-                duraMin = glucose_status.duraISFminutes,
-                duraAvg = glucose_status.duraISFaverage,
+                duraMin = ctx.glucoseStatus.duraISFminutes,
+                duraAvg = ctx.glucoseStatus.duraISFaverage,
                 iob = iobObj.iob
             )
         } else 1.0
@@ -5383,30 +5383,30 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
 
         // 🚀 CONFIRMED HIGH RISE detection (Triple-Signal)
-        val isConfirmedHighRiseLocal = glucose_status.glucose > 150.0 && glucose_status.combinedDelta > 1.5 && (glucose_status.bgAcceleration ?: 0.0) > 0.4
+        val isConfirmedHighRiseLocal = ctx.glucoseStatus.glucose > 150.0 && ctx.glucoseStatus.combinedDelta > 1.5 && (ctx.glucoseStatus.bgAcceleration ?: 0.0) > 0.4
 
         // 🦋 Thyroid (Basedow) Module Integration
-        applyThyroidModule(profile)
+        applyThyroidModule(ctx.profile)
         
         // 🏥 AIMI DECISION CONTEXT INITIALIZATION (For Medical Transparency)
         lastIobSurveillanceExport = null
         val decisionCtx = AimiDecisionContext(
-            event_id = "evt_${currentTime}",
-            timestamp = currentTime,
+            event_id = "evt_${ctx.currentTime}",
+            timestamp = ctx.currentTime,
             trigger = run {
-                val iobNow = iob_data_array.firstOrNull()?.iob ?: 0.0
-                val bgNow  = glucose_status.glucose
+                val iobNow = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0
+                val bgNow  = ctx.glucoseStatus.glucose
                 val hour   = java.util.Calendar.getInstance()[java.util.Calendar.HOUR_OF_DAY]
                 val isNight = hour >= 22 || hour <= 7
-                val isBgRiseFast = glucose_status.delta > 5
+                val isBgRiseFast = ctx.glucoseStatus.delta > 5
                 // T6: Rate-limiter nocturne anti-bang-bang
                 // Si IOB élevé (> 2 U) ET BG encore bas (< 100) la nuit, bloquer le trigger 15 min
                 val nightBangBangBlock = isNight && isBgRiseFast && iobNow > 2.0 && bgNow < 100.0 &&
-                    (currentTime - lastBgRiseFastNightMs) < 15 * 60_000L
+                    (ctx.currentTime - lastBgRiseFastNightMs) < 15 * 60_000L
                 if (isBgRiseFast && isNight && iobNow > 2.0 && bgNow < 100.0) {
                     // Enregistrer le premier déclenchement pour démarrer la fenêtre de 15 min
-                    if (lastBgRiseFastNightMs == 0L || (currentTime - lastBgRiseFastNightMs) >= 15 * 60_000L) {
-                        lastBgRiseFastNightMs = currentTime
+                    if (lastBgRiseFastNightMs == 0L || (ctx.currentTime - lastBgRiseFastNightMs) >= 15 * 60_000L) {
+                        lastBgRiseFastNightMs = ctx.currentTime
                     }
                 }
                 when {
@@ -5419,32 +5419,32 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 }
             },
             baseline_state = AimiDecisionContext.BaselineState(
-                profile_isf_mgdl = profile.sens,
-                profile_basal_uph = profile.current_basal,
-                current_bg_mgdl = glucose_status.glucose,
-                cob_g = mealData.mealCOB,
-                iob_u = iob_data_array.firstOrNull()?.iob ?: 0.0 // Taking first element (Net IOB usually)
+                profile_isf_mgdl = ctx.profile.sens,
+                profile_basal_uph = ctx.profile.current_basal,
+                current_bg_mgdl = ctx.glucoseStatus.glucose,
+                cob_g = ctx.mealData.mealCOB,
+                iob_u = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0 // Taking first element (Net IOB usually)
             )
         )
         
         var rT = RT(
             algorithm = APSResult.Algorithm.AIMI,
-            runningDynamicIsf = dynIsfMode,
-            timestamp = currentTime,
+            runningDynamicIsf = ctx.dynIsfMode,
+            timestamp = ctx.currentTime,
             consoleLog = consoleLog,
             consoleError = consoleError
         )
         AimiLoopTelemetry.enterPhase(AimiLoopPhase.CONTEXT, hormonitorStudyExporter)
 
-        if (extraDebug.isNotEmpty()) {
-             rT.reason.append("$extraDebug\n")
+        if (ctx.extraDebug.isNotEmpty()) {
+             rT.reason.append("${ctx.extraDebug}\n")
         }
 
         // 🚨 GLOBAL SAFETY: Trigger Emergency SOS early (Avoids T3c / Cruise Mode Bypass)
         app.aaps.plugins.aps.openAPSAIMI.sos.EmergencySosManager.evaluateSosCondition(
-            bg = glucose_status.glucose,
-            delta = glucose_status.delta,
-            iob = iob_data_array.firstOrNull()?.iob ?: 0.0,
+            bg = ctx.glucoseStatus.glucose,
+            delta = ctx.glucoseStatus.delta,
+            iob = ctx.iobDataArray.firstOrNull()?.iob ?: 0.0,
             context = context,
             preferences = this.preferences,
             nowMs = dateUtil.now()
@@ -5459,11 +5459,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // 🛡️ ADAPTIVE SMOOTHIE WORKAROUND
         // If delta is significant (> 3.0), ignore plugin's Flat detection (likely smoothed artifacts)
         // We SHADOW the parameter 'flatBGsDetected' to enforce this override globally in this function.
-        val flatBGsDetected = if (flatBGsDetected && abs(glucose_status.delta) > 3.0) {
-            consoleLog.add("⚠️ FLAT OVERRIDE: Delta=${glucose_status.delta} > 3.0 -> Sensor ALIVE.")
+        val flatBGsDetected = if (ctx.flatBGsDetected && abs(ctx.glucoseStatus.delta) > 3.0) {
+            consoleLog.add("⚠️ FLAT OVERRIDE: Delta=${ctx.glucoseStatus.delta} > 3.0 -> Sensor ALIVE.")
             false
         } else {
-            flatBGsDetected
+            ctx.flatBGsDetected
         }
         
         // 🏃 REAL-TIME ACTIVITY FETCH (every loop)

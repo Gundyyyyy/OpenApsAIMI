@@ -79,6 +79,7 @@ private fun PreviewPumpFabSmbPercent() {
                 isPriming = false,
                 percent = 42,
                 status = "Delivering 0.13U",
+                wearStatus = "Delivering 0.13U",
                 delivered = PumpInsulin(0.13),
                 stopPressed = false,
                 stopDeliveryEnabled = true

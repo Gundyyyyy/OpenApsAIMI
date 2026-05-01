@@ -228,6 +228,7 @@ private fun PreviewBolusInProgress() {
                 isPriming = false,
                 percent = 45,
                 status = "Delivering 1.80U",
+                wearStatus = "Delivering 1.80U",
                 delivered = PumpInsulin(1.8),
                 stopPressed = false,
                 stopDeliveryEnabled = true
@@ -250,6 +251,7 @@ private fun PreviewBolusStopPressed() {
                 isPriming = false,
                 percent = 45,
                 status = "Delivering 1.80U",
+                wearStatus = "Delivering 1.80U",
                 delivered = PumpInsulin(1.8),
                 stopPressed = true,
                 stopDeliveryEnabled = true
@@ -272,6 +274,7 @@ private fun PreviewBolusCompleted() {
                 isPriming = false,
                 percent = 100,
                 status = "Bolus 4.00U delivered successfully",
+                wearStatus = "Bolus 4.00U delivered successfully",
                 delivered = PumpInsulin(4.0),
                 stopPressed = false,
                 stopDeliveryEnabled = true
@@ -294,6 +297,7 @@ private fun PreviewBolusIndeterminate() {
                 isPriming = false,
                 percent = 0,
                 status = "",
+                wearStatus = "",
                 delivered = PumpInsulin(0.0),
                 stopPressed = false,
                 stopDeliveryEnabled = false

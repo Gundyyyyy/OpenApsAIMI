@@ -92,6 +92,7 @@ import app.aaps.plugins.aps.openAPSAIMI.wcycle.WCyclePreferences
 import app.aaps.plugins.aps.openAPSAIMI.wcycle.CycleTrackingMode
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.AdvancedPredictionEngine
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActionProfiler
+import app.aaps.plugins.aps.openAPSAIMI.pkpd.InsulinActionState
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkpdAbsorptionGuard
 import app.aaps.plugins.aps.openAPSAIMI.autodrive.AutodriveEngine // 🧠 Autodrive
 import app.aaps.plugins.aps.openAPSAIMI.keys.AimiLongKey
@@ -333,6 +334,14 @@ private data class AimiTickDecisionRtBootstrap(
     val decisionCtx: AimiDecisionContext,
     val rT: RT,
     val flatBGsDetected: Boolean,
+)
+
+/** IOB action profile scalars + PKPD insulin observer state after realtime physio hook. */
+private data class AimiRealtimePhysioIobBootstrap(
+    val iobTotal: Double,
+    val iobPeakMinutes: Double,
+    val iobActivityIn30Min: Double,
+    val insulinActionState: InsulinActionState,
 )
 
 /**
@@ -979,6 +988,54 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             ctx.flatBGsDetected
         }
         return AimiTickDecisionRtBootstrap(decisionCtx, rT, flatBGsDetected)
+    }
+
+    /**
+     * Realtime steps/HR log, maxSMB reset, physio snapshot → [decisionCtx] physio branch,
+     * [InsulinActionProfiler], class [iobActivityNow], [insulinObserver] update + log.
+     */
+    private fun runRealtimePhysioIobProfilerAndInsulinObserver(
+        ctx: AimiTickContext,
+        decisionCtx: AimiDecisionContext,
+    ): AimiRealtimePhysioIobBootstrap {
+        val rtActivity = physioAdapter.getRealTimeActivity()
+        consoleLog.add("PHYSIO_RT Steps=${rtActivity.stepsToday} HR=${rtActivity.heartRate}bpm")
+        this.maxSMB = preferences.get(DoubleKey.OApsAIMIMaxSMB)
+        this.maxSMBHB = preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB).coerceAtLeast(this.maxSMB)
+        val physioSnapshot = physioAdapter.getLatestSnapshot()
+        val snsDominance = physioSnapshot.toSNSDominance()
+        decisionCtx.adjustments.physiological_context = AimiDecisionContext.PhysioContext(
+            hormonal_cycle_phase = wCycleInfoForRun?.let { "${it.phase.name}_Day${it.dayInCycle}" } ?: "Unknown",
+            physical_activity_mode = if (snsDominance > 0.6) "Stress/Activity" else "Resting"
+        )
+        val iobActionProfile = InsulinActionProfiler.calculate(ctx.iobDataArray, ctx.profile, snsDominance)
+        val iobTotal = iobActionProfile.iobTotal
+        val iobPeakMinutes = iobActionProfile.peakMinutes
+        iobActivityNow = iobActionProfile.activityNow
+        val iobActivityIn30Min = iobActionProfile.activityIn30Min
+        consoleLog.add(
+            "PAI: Peak in ${"%.0f".format(iobPeakMinutes)}m | " +
+                "Activity Now=${"%.0f".format(iobActivityNow * 100)}%, " +
+                "in 30m=${"%.0f".format(iobActivityIn30Min * 100)}%"
+        )
+        val insulinActionState = insulinObserver.update(
+            currentBg = bg,
+            bgDelta = delta.toDouble(),
+            iobTotal = iobTotal,
+            iobActivityNow = iobActivityNow,
+            iobActivityIn30 = iobActivityIn30Min,
+            peakMinutesAbs = iobPeakMinutes.toInt(),
+            diaHours = ctx.profile.dia,
+            carbsActiveG = cob.toDouble(),
+            now = dateUtil.now()
+        )
+        consoleLog.add("PKPD_OBS ${insulinActionState.reason}")
+        return AimiRealtimePhysioIobBootstrap(
+            iobTotal = iobTotal,
+            iobPeakMinutes = iobPeakMinutes,
+            iobActivityIn30Min = iobActivityIn30Min,
+            insulinActionState = insulinActionState
+        )
     }
 
     private fun logInvocationCacheState(tag: String, state: AsyncDataState<*>) {
@@ -5468,62 +5525,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val decisionCtx = tickDecisionRt.decisionCtx
         val rT = tickDecisionRt.rT
         val flatBGsDetected = tickDecisionRt.flatBGsDetected
-        
-        // 🏃 REAL-TIME ACTIVITY FETCH (every loop)
-        // Fetches immediate Steps & HR for display and micro-adjustments
-        val rtActivity = physioAdapter.getRealTimeActivity()
-        consoleLog.add("PHYSIO_RT Steps=${rtActivity.stepsToday} HR=${rtActivity.heartRate}bpm")
 
-        // 🧹 STATE RESET (Critical Fix FCL 10.6):
-        // maxSMB is a persistent class member. It MUST be reset to the user's preference at the start of every cycle.
-        // Otherwise, temporary overrides (like BFast2 mode) permeate to future cycles.
-        this.maxSMB = preferences.get(DoubleKey.OApsAIMIMaxSMB)
-        this.maxSMBHB = preferences.get(DoubleKey.OApsAIMIHighBGMaxSMB).coerceAtLeast(this.maxSMB)
-        // ✅ ETAPE 1: Calculer le Profil d'Action de l'IOB
-        // 🧬 PHYSIO INTEGRATION: Get SNS Dominance from Adapter
-        val physioSnapshot = physioAdapter.getLatestSnapshot()
-        val snsDominance = physioSnapshot.toSNSDominance()
-        
-        // 🏥 Update Context
-        decisionCtx.adjustments.physiological_context = AimiDecisionContext.PhysioContext(
-            hormonal_cycle_phase = wCycleInfoForRun?.let { "${it.phase.name}_Day${it.dayInCycle}" } ?: "Unknown",
-            physical_activity_mode = if (snsDominance > 0.6) "Stress/Activity" else "Resting"
-        )
-
-        // ✅ ETAPE 1: Calculer le Profil d'Action de l'IOB (avec modulation physio)
-        val iobActionProfile = InsulinActionProfiler.calculate(ctx.iobDataArray, ctx.profile, snsDominance)
-
-// Stocker les résultats dans des variables locales pour plus de clarté
-        val iobTotal = iobActionProfile.iobTotal
-        val iobPeakMinutes = iobActionProfile.peakMinutes
-        iobActivityNow = iobActionProfile.activityNow
-        val iobActivityIn30Min = iobActionProfile.activityIn30Min
-
-// On met à jour la variable `iob` globale de la classe avec la valeur de notre profiler pour la cohérence
-        // this.iob = iobTotal.toFloat() // FIX: Do NOT overwrite official IOB with Gross IOB. Use iob_data.iob.
-
-// On ajoute les nouvelles informations au log pour le débogage
-        consoleLog.add(
-            "PAI: Peak in ${"%.0f".format(iobPeakMinutes)}m | " +
-                "Activity Now=${"%.0f".format(iobActivityNow * 100)}%, " +
-                "in 30m=${"%.0f".format(iobActivityIn30Min * 100)}%"
-        )
-        
-        // 🚀 NOUAUTÉ: Update Real-Time Insulin Observer
-        val insulinActionState = insulinObserver.update(
-            currentBg = bg,
-            bgDelta = delta.toDouble(),
-            iobTotal = iobTotal,
-            iobActivityNow = iobActivityNow,
-            iobActivityIn30 = iobActivityIn30Min,
-            peakMinutesAbs = iobPeakMinutes.toInt(),
-            diaHours = ctx.profile.dia,
-            carbsActiveG = cob.toDouble(),
-            now = dateUtil.now()
-        )
-        
-        // Log état observateur
-        consoleLog.add("PKPD_OBS ${insulinActionState.reason}")
+        val physioIobBootstrap = runRealtimePhysioIobProfilerAndInsulinObserver(ctx, decisionCtx)
+        val iobTotal = physioIobBootstrap.iobTotal
+        val iobPeakMinutes = physioIobBootstrap.iobPeakMinutes
+        val iobActivityIn30Min = physioIobBootstrap.iobActivityIn30Min
+        val insulinActionState = physioIobBootstrap.insulinActionState
         
         // 👇 Force la création du CSV (premier snapshot WCycle “pré-décision”)
         ensureWCycleInfo()

@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import app.aaps.core.interfaces.pump.BolusProgressState
+import app.aaps.core.interfaces.pump.PumpInsulin
 import app.aaps.core.ui.compose.AapsSmallFab
 
 /**
@@ -78,7 +79,7 @@ private fun PreviewPumpFabSmbPercent() {
                 isPriming = false,
                 percent = 42,
                 status = "Delivering 0.13U",
-                delivered = 0.13,
+                delivered = PumpInsulin(0.13),
                 stopPressed = false,
                 stopDeliveryEnabled = true
             ),

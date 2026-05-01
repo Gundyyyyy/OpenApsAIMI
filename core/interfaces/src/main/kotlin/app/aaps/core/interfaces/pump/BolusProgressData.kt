@@ -1,5 +1,7 @@
 package app.aaps.core.interfaces.pump
 
+import app.aaps.core.interfaces.insulin.ConcentrationHelper
+import app.aaps.core.interfaces.resources.ResourceHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +17,10 @@ import javax.inject.Singleton
  * pump drivers only report progress via [updateProgress].
  */
 @Singleton
-class BolusProgressData @Inject constructor() {
+class BolusProgressData @Inject constructor(
+    val ch: ConcentrationHelper,
+    val rh: ResourceHelper
+) {
 
     private val _state = MutableStateFlow<BolusProgressState?>(null)
     val state: StateFlow<BolusProgressState?> = _state.asStateFlow()
@@ -37,7 +42,7 @@ class BolusProgressData @Inject constructor() {
             isPriming = isPriming,
             percent = 0,
             status = "",
-            delivered = 0.0,
+            delivered = PumpInsulin(0.0),
             stopPressed = false,
             stopDeliveryEnabled = true
         )
@@ -47,7 +52,29 @@ class BolusProgressData @Inject constructor() {
      * Called by pump drivers to report delivery progress.
      * Purely informational — does not control dialog lifecycle.
      */
-    fun updateProgress(percent: Int, status: String, delivered: Double = 0.0) {
+    fun updateProgress(percent: Int, status: String, delivered: PumpInsulin = PumpInsulin(0.0)) {
+        _state.update { it?.copy(percent = percent, status = status, delivered = delivered) }
+    }
+
+    /**
+     * Called by pump drivers to report delivery progress.
+     * Purely informational — does not control dialog lifecycle.
+     */
+    fun updateProgress(percent: Int) {
+        _state.value?.insulin?.let { insulin ->
+            val delivered = PumpInsulin(insulin * percent / 100 )
+            val status = if (percent < 100) ch.bolusProgressString(delivered) else rh.gs(app.aaps.core.interfaces.R.string.bolus_delivered_successfully, insulin)
+            _state.update { it?.copy(percent = percent, status = status, delivered = delivered) }
+        }
+    }
+
+    /**
+     * Called by pump drivers to report delivery progress.
+     * Purely informational — does not control dialog lifecycle.
+     */
+    fun updateProgress(delivered: PumpInsulin) {
+        val percent = _state.value?.insulin?.let { (ch.fromPump(delivered) / it * 100).toInt().coerceAtMost(100) } ?: 0
+        val status = ch.bolusProgressString(delivered)
         _state.update { it?.copy(percent = percent, status = status, delivered = delivered) }
     }
 
@@ -104,7 +131,7 @@ data class BolusProgressState(
     val isPriming: Boolean,
     val percent: Int,
     val status: String,
-    val delivered: Double,
+    val delivered: PumpInsulin,
     val stopPressed: Boolean,
     val stopDeliveryEnabled: Boolean
 )

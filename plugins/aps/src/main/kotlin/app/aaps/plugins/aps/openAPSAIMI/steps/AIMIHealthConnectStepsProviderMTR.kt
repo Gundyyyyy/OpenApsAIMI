@@ -2,7 +2,6 @@ package app.aaps.plugins.aps.openAPSAIMI.steps
 
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
@@ -94,7 +93,7 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
         }
         
         refreshAvailabilityAsync(now)
-        
+
         if (cachedAvailability) {
             aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Provider available and permissions granted")
         } else {
@@ -107,48 +106,12 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
     override fun sourceName(): String = SOURCE_NAME
     
     override fun priority(): Int = PRIORITY
-    
-    /**
-     * Fetches steps from Health Connect for a specific time window.
-     * 
-     * @param windowMinutes Duration of the window (5, 10, 15, 30, 60, 180)
-     * @param now End timestamp of the window
-     * @return Total step count in the window
-     */
-    private fun fetchStepsFromHealthConnect(windowMinutes: Int, now: Instant): Int {
-        val client = healthConnectClient ?: return 0
-        
-        val endTime = now
-        val startTime = now.minusSeconds((windowMinutes * 60).toLong())
-        
-        aapsLogger.debug(LTag.APS, "[$SOURCE_NAME] Querying Health Connect: $startTime to $endTime ({$windowMinutes}min)")
-        
-        return try {
-            val request = ReadRecordsRequest(
-                recordType = StepsRecord::class,
-                timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
-            )
-            // NOTE: this method is now called from IO coroutine only.
-            0.also { _ -> request }
-        } catch (_: Exception) {
-            0
-        }
-    }
 
     private fun refreshAvailabilityAsync(now: Long) {
         if (!availabilityRefreshInFlight.compareAndSet(false, true)) return
         ioScope.launch {
             try {
-                val client = healthConnectClient
-                cachedAvailability = if (client == null) {
-                    false
-                } else {
-                    try {
-                        client.permissionController.getGrantedPermissions().isNotEmpty()
-                    } catch (_: Exception) {
-                        false
-                    }
-                }
+                cachedAvailability = directAvailabilityCheck()
                 lastAvailabilityCheck = now
             } catch (e: Exception) {
                 aapsLogger.warn(LTag.APS, "[$SOURCE_NAME] Availability check failed", e)
@@ -156,6 +119,15 @@ class AIMIHealthConnectStepsProviderMTR @Inject constructor(
             } finally {
                 availabilityRefreshInFlight.set(false)
             }
+        }
+    }
+
+    private suspend fun directAvailabilityCheck(): Boolean {
+        val client = healthConnectClient ?: return false
+        return try {
+            client.permissionController.getGrantedPermissions().isNotEmpty()
+        } catch (_: Exception) {
+            false
         }
     }
 

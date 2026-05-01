@@ -203,6 +203,13 @@ enum class BooleanKey(
         summaryResId = R.string.pref_summary_aimi_peak_governor_enabled,
     ),
     OApsAIMIPkpdPragmaticReliefEnabled("key_aimi_pkpd_pragmatic_relief_enabled", true),
+    /** When false, AIMI stops writing loop_blackbox_v1.jsonl only; hormonitor event/daily streams unchanged. */
+    OApsAIMILoopBlackboxFileEnabled("key_aimi_loop_blackbox_file_enabled", true),
+    /**
+     * When true, AIMI determine_basal runs under a ReentrantLock so overlapping invocations cannot corrupt state.
+     * Disable only for isolated tests/benchmarks that intentionally nest calls.
+     */
+    OApsAIMILoopExclusiveInvocationEnabled("key_aimi_loop_exclusive_invocation", true),
     /** Plateau + meaningful IOB + falling prediction → throttle SMB, bias TBR, no Red Carpet restore. */
     OApsAIMIIobSurveillanceGuard("key_aimi_iob_surveillance_guard", true),
     OApsAIMIUnifiedReactivityEnabled("key_use_unified_reactivity", true),  // 🎯 NEW: Enable UnifiedReactivityLearner

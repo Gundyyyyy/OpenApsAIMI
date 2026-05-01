@@ -2,9 +2,13 @@ package app.aaps.plugins.aps.openAPSAIMI.physio
 
 import android.content.Context
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.Settings
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.interfaces.Preferences
 import java.io.File
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -12,6 +16,15 @@ import java.util.Date
 import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 data class HormonitorDecisionEventMTR(
@@ -97,7 +110,8 @@ data class HormonitorDecisionEventMTR(
 
 class AimiHormonitorStudyExporterMTR(
     private val context: Context,
-    private val aapsLogger: AAPSLogger
+    private val aapsLogger: AAPSLogger,
+    private val preferences: Preferences
 ) {
     companion object {
         private const val SCHEMA_VERSION = "1.0.0"
@@ -105,6 +119,7 @@ class AimiHormonitorStudyExporterMTR(
         private const val DAILY_FILE_NAME = "AIMI_HORMONITOR_daily_outcomes_v1.jsonl"
         private const val QA_FILE_NAME = "AIMI_HORMONITOR_dataset_qa_v1.jsonl"
         private const val SHADOW_FILE_NAME = "AIMI_HORMONITOR_shadow_contributions_v1.jsonl"
+        private const val BLACKBOX_FILE_NAME = "AIMI_HORMONITOR_loop_blackbox_v1.jsonl"
         private const val STATE_FILE_NAME = "AIMI_HORMONITOR_daily_state_v1.json"
         private const val TAG = "AimiHormonitorStudyExporterMTR"
         private const val DAILY_EMIT_INTERVAL_MS = 30L * 60L * 1000L
@@ -113,6 +128,11 @@ class AimiHormonitorStudyExporterMTR(
         private const val QA_MIN_TEMPORAL_COHERENCE = 0.99
         private const val QA_MAX_PENDING_DECISION_RATE = 0.01
         private const val QA_MAX_STALE_SNAPSHOT_RATE = 0.10
+        private const val STATE_PERSIST_INTERVAL_MS = 30_000L
+        private const val WRITE_QUEUE_CAPACITY = 512
+        private const val WATCHDOG_INTERVAL_MS = 45_000L
+        /** No loop pulse for this long → write stall warning (typical loop 5 min; avoid false positives). */
+        private const val LOOP_STALL_THRESHOLD_MS = 600_000L
     }
 
     @Volatile
@@ -121,6 +141,34 @@ class AimiHormonitorStudyExporterMTR(
     private var lastDailyEmitMs: Long = 0L
     @Volatile
     private var lastQaEmitMs: Long = 0L
+    @Volatile
+    private var lastStatePersistMs: Long = 0L
+
+    @Volatile
+    private var lastLoopPulseWallMs: Long = 0L
+
+    @Volatile
+    private var lastStallWarningWallMs: Long = 0L
+
+    /** Latest tick that started ([recordLoopPulse] with tick_id) but not yet completed with [recordLoopTickEnd]. */
+    @Volatile
+    private var pendingTickEndId: Long = 0L
+
+    @Volatile
+    private var pendingTickPulseWallMs: Long = 0L
+
+    @Volatile
+    private var lastReportedPhaseName: String = ""
+
+    @Volatile
+    private var lastIntratickStallWarningWallMs: Long = 0L
+
+    private val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val droppedWrites = AtomicLong(0)
+    private val writeQueue = Channel<WriteTask>(
+        capacity = WRITE_QUEUE_CAPACITY,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
 
     private val sharedDir = File(Environment.getExternalStorageDirectory().absolutePath + "/Documents/AAPS")
     private val appScopedDir = File(context.getExternalFilesDir(null), "AAPS")
@@ -129,6 +177,121 @@ class AimiHormonitorStudyExporterMTR(
 
     init {
         restoreDailyState()
+        startWriter()
+        startLoopWatchdog()
+    }
+
+    private fun isLoopBlackboxFileEnabled(): Boolean =
+        preferences.get(BooleanKey.OApsAIMILoopBlackboxFileEnabled)
+
+    private fun intratickStallThresholdMs(): Long {
+        val sec = preferences.get(IntKey.OApsAIMIIntratickStallSeconds).coerceIn(60, 600)
+        return sec * 1000L
+    }
+
+    private fun appendLoopBlackboxLine(line: String) {
+        if (!isLoopBlackboxFileEnabled()) return
+        val target = File(sharedDir, BLACKBOX_FILE_NAME)
+        val fallback = File(appScopedDir, BLACKBOX_FILE_NAME)
+        appendJsonlSafely(target, fallback, line)
+    }
+
+    /**
+     * Called at the start of each AIMI determine_basal pass (wall clock).
+     * Writes a JSONL pulse and feeds the stall watchdog (post-mortem blackbox).
+     */
+    fun recordLoopPulse(wallClockMs: Long, tickId: Long = 0L) {
+        lastLoopPulseWallMs = wallClockMs
+        if (tickId > 0L) {
+            pendingTickEndId = tickId
+            pendingTickPulseWallMs = wallClockMs
+        }
+        val line = JSONObject().apply {
+            put("type", "loop_pulse")
+            put("wall_ms", wallClockMs)
+            if (tickId > 0L) put("tick_id", tickId)
+            put("uptime_ms", SystemClock.uptimeMillis())
+        }.toString()
+        appendLoopBlackboxLine(line)
+    }
+
+    /** Phase transition inside the current tick (observe-only). */
+    fun recordLoopPhase(
+        tickId: Long,
+        phaseName: String,
+        wallClockMs: Long,
+        msSinceTickStart: Long? = null,
+        msSincePrevPhase: Long? = null
+    ) {
+        lastReportedPhaseName = phaseName
+        val line = JSONObject().apply {
+            put("type", "loop_phase")
+            put("tick_id", tickId)
+            put("phase", phaseName)
+            put("wall_ms", wallClockMs)
+            msSinceTickStart?.let { put("ms_since_tick_start", it) }
+            msSincePrevPhase?.let { put("ms_since_prev_phase", it) }
+            put("uptime_ms", SystemClock.uptimeMillis())
+        }.toString()
+        appendLoopBlackboxLine(line)
+    }
+
+    /**
+     * Uncaught exception escaped the tick body; clears pending tick watchdog state.
+     * Study pipelines should ignore unknown `type` or filter on this type for QA.
+     */
+    fun recordLoopTickAborted(
+        tickId: Long,
+        startedWallMs: Long,
+        endedWallMs: Long,
+        errorClass: String,
+        errorMessage: String,
+        lastPhaseName: String?
+    ) {
+        if (tickId > 0L && tickId == pendingTickEndId) {
+            pendingTickEndId = 0L
+            pendingTickPulseWallMs = 0L
+        }
+        val safeMessage = errorMessage.replace("\n", " ").take(500)
+        aapsLogger.warn(
+            LTag.APS,
+            "[$TAG] loop_tick_aborted tickId=$tickId phase=${lastPhaseName ?: "?"} $errorClass: $safeMessage"
+        )
+        val line = JSONObject().apply {
+            put("type", "loop_tick_aborted")
+            put("tick_id", tickId)
+            put("started_wall_ms", startedWallMs)
+            put("ended_wall_ms", endedWallMs)
+            put("duration_ms", (endedWallMs - startedWallMs).coerceAtLeast(0L))
+            put("error_class", errorClass)
+            put("error_message", safeMessage)
+            if (!lastPhaseName.isNullOrEmpty()) put("last_phase", lastPhaseName)
+            put("uptime_ms", SystemClock.uptimeMillis())
+        }.toString()
+        appendLoopBlackboxLine(line)
+    }
+
+    /** Emitted when a determine_basal pass completes; pairs with [recordLoopPulse]. */
+    fun recordLoopTickEnd(
+        tickId: Long,
+        startedWallMs: Long,
+        endedWallMs: Long,
+        lastPhaseName: String? = null
+    ) {
+        if (tickId > 0L && tickId == pendingTickEndId) {
+            pendingTickEndId = 0L
+            pendingTickPulseWallMs = 0L
+        }
+        val line = JSONObject().apply {
+            put("type", "loop_tick_end")
+            put("tick_id", tickId)
+            put("started_wall_ms", startedWallMs)
+            put("ended_wall_ms", endedWallMs)
+            put("duration_ms", (endedWallMs - startedWallMs).coerceAtLeast(0L))
+            if (!lastPhaseName.isNullOrEmpty()) put("last_phase", lastPhaseName)
+            put("uptime_ms", SystemClock.uptimeMillis())
+        }.toString()
+        appendLoopBlackboxLine(line)
     }
 
     fun export(event: HormonitorDecisionEventMTR) {
@@ -255,27 +418,14 @@ class AimiHormonitorStudyExporterMTR(
     }
 
     private fun appendJsonlSafely(primary: File, fallback: File, line: String) {
-        try {
-            appendLine(primary, line)
-        } catch (primaryError: Exception) {
-            if (!sharedStorageDeniedLogged) {
-                sharedStorageDeniedLogged = true
-                aapsLogger.warn(
-                    LTag.APS,
-                    "[$TAG] Study export denied on shared storage (${primary.absolutePath}). " +
-                        "Switching to app-scoped fallback (${fallback.absolutePath}). reason=${primaryError.message}"
-                )
-            }
-            try {
-                appendLine(fallback, line)
-            } catch (fallbackError: Exception) {
-                aapsLogger.error(
-                    LTag.APS,
-                    "[$TAG] Study export failed on both primary and fallback paths.",
-                    fallbackError
-                )
-            }
-        }
+        enqueueWrite(
+            WriteTask(
+                primary = primary,
+                fallback = fallback,
+                line = line,
+                mode = WriteMode.APPEND_LINE
+            )
+        )
     }
 
     private fun appendLine(file: File, line: String) {
@@ -333,12 +483,12 @@ class AimiHormonitorStudyExporterMTR(
     }
 
     private fun persistDailyState() {
+        val now = System.currentTimeMillis()
+        if (now - lastStatePersistMs < STATE_PERSIST_INTERVAL_MS) return
+        lastStatePersistMs = now
+
         val stateFile = File(appScopedDir, STATE_FILE_NAME)
         try {
-            if (!stateFile.exists()) {
-                stateFile.parentFile?.mkdirs()
-                stateFile.createNewFile()
-            }
             val countersJson = JSONObject()
             dailyCounters.forEach { (day, counters) ->
                 countersJson.put(day, JSONObject().apply {
@@ -368,10 +518,141 @@ class AimiHormonitorStudyExporterMTR(
                     }
                 })
             }
-            stateFile.writeText(root.toString())
+            enqueueWrite(
+                WriteTask(
+                    primary = stateFile,
+                    fallback = stateFile,
+                    line = root.toString(),
+                    mode = WriteMode.OVERWRITE
+                )
+            )
         } catch (_: Exception) {
             // Never break loop/export path on state persistence failures.
         }
+    }
+
+    private fun startWriter() {
+        writeScope.launch {
+            for (task in writeQueue) {
+                tryWrite(task)
+            }
+        }
+    }
+
+    private fun startLoopWatchdog() {
+        writeScope.launch {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                val now = System.currentTimeMillis()
+                val pendingId = pendingTickEndId
+                val pendingPulseAt = pendingTickPulseWallMs
+                if (pendingId > 0L && pendingPulseAt > 0L) {
+                    val intraThreshold = intratickStallThresholdMs()
+                    val intratickGap = now - pendingPulseAt
+                    if (intratickGap >= intraThreshold &&
+                        now - lastIntratickStallWarningWallMs >= intraThreshold
+                    ) {
+                        lastIntratickStallWarningWallMs = now
+                        val line = JSONObject().apply {
+                            put("type", "watchdog_intratick_stall")
+                            put("detected_wall_ms", now)
+                            put("tick_id", pendingId)
+                            put("pulse_wall_ms", pendingPulseAt)
+                            put("gap_ms", intratickGap)
+                            put("threshold_ms", intraThreshold)
+                            put("last_phase", lastReportedPhaseName)
+                            put("uptime_ms", SystemClock.uptimeMillis())
+                        }.toString()
+                        appendLoopBlackboxLine(line)
+                        aapsLogger.warn(
+                            LTag.APS,
+                            "[$TAG] Blackbox: intra-tick stall tickId=$pendingId gap=${intratickGap}ms " +
+                                "(threshold=${intraThreshold}ms phase=$lastReportedPhaseName). See $BLACKBOX_FILE_NAME"
+                        )
+                        continue
+                    }
+                }
+                val last = lastLoopPulseWallMs
+                if (last <= 0L) continue
+                val gap = now - last
+                if (gap < LOOP_STALL_THRESHOLD_MS) continue
+                if (now - lastStallWarningWallMs < LOOP_STALL_THRESHOLD_MS) continue
+                lastStallWarningWallMs = now
+                val line = JSONObject().apply {
+                    put("type", "watchdog_loop_stall")
+                    put("detected_wall_ms", now)
+                    put("last_loop_pulse_wall_ms", last)
+                    put("gap_ms", gap)
+                    put("threshold_ms", LOOP_STALL_THRESHOLD_MS)
+                    put("uptime_ms", SystemClock.uptimeMillis())
+                }.toString()
+                appendLoopBlackboxLine(line)
+                aapsLogger.warn(
+                    LTag.APS,
+                    "[$TAG] Blackbox: no loop pulse for ${gap}ms (threshold=${LOOP_STALL_THRESHOLD_MS}ms). See $BLACKBOX_FILE_NAME"
+                )
+            }
+        }
+    }
+
+    private fun enqueueWrite(task: WriteTask) {
+        val accepted = writeQueue.trySend(task).isSuccess
+        if (!accepted) {
+            val dropped = droppedWrites.incrementAndGet()
+            if (dropped == 1L || dropped % 100L == 0L) {
+                aapsLogger.warn(
+                    LTag.APS,
+                    "[$TAG] Export queue saturated. Dropped writes=$dropped"
+                )
+            }
+        }
+    }
+
+    private fun tryWrite(task: WriteTask) {
+        try {
+            writeToFile(task.primary, task.line, task.mode)
+        } catch (primaryError: Exception) {
+            if (!sharedStorageDeniedLogged && task.primary != task.fallback) {
+                sharedStorageDeniedLogged = true
+                aapsLogger.warn(
+                    LTag.APS,
+                    "[$TAG] Study export denied on shared storage (${task.primary.absolutePath}). " +
+                        "Switching to app-scoped fallback (${task.fallback.absolutePath}). reason=${primaryError.message}"
+                )
+            }
+            try {
+                writeToFile(task.fallback, task.line, task.mode)
+            } catch (fallbackError: Exception) {
+                aapsLogger.error(
+                    LTag.APS,
+                    "[$TAG] Study export failed on both primary and fallback paths.",
+                    fallbackError
+                )
+            }
+        }
+    }
+
+    private fun writeToFile(file: File, payload: String, mode: WriteMode) {
+        if (!file.exists()) {
+            file.parentFile?.mkdirs()
+            file.createNewFile()
+        }
+        when (mode) {
+            WriteMode.APPEND_LINE -> file.appendText("$payload\n")
+            WriteMode.OVERWRITE -> file.writeText(payload)
+        }
+    }
+
+    private data class WriteTask(
+        val primary: File,
+        val fallback: File,
+        val line: String,
+        val mode: WriteMode,
+    )
+
+    private enum class WriteMode {
+        APPEND_LINE,
+        OVERWRITE,
     }
 
     private fun restoreDailyState() {

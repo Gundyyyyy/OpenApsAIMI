@@ -33,7 +33,13 @@ class AIMIDatabaseStepsProviderMTR @Inject constructor(
     private val persistenceLayer: PersistenceLayer,
     private val aapsLogger: AAPSLogger
 ) : AIMIStepsProviderMTR {
-    private val stepsRef = AtomicReference<List<app.aaps.core.data.model.SC>>(emptyList())
+    private data class StepsWindowCache(
+        val start: Long,
+        val end: Long,
+        val rows: List<app.aaps.core.data.model.SC>
+    )
+
+    private val stepsRef = AtomicReference<StepsWindowCache?>(null)
     private val stepsRefreshInFlight = AtomicBoolean(false)
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
@@ -113,16 +119,24 @@ class AIMIDatabaseStepsProviderMTR @Inject constructor(
 
     private fun stepsCached(start: Long, end: Long): List<app.aaps.core.data.model.SC> {
         refreshStepsAsync(start, end)
-        return stepsRef.get()
+        val cached = stepsRef.get() ?: return emptyList()
+        val sameWindow = cached.start == start && cached.end == end
+        return if (sameWindow) cached.rows else emptyList()
     }
 
     private fun refreshStepsAsync(start: Long, end: Long) {
         if (!stepsRefreshInFlight.compareAndSet(false, true)) return
         ioScope.launch {
             try {
-                stepsRef.set(persistenceLayer.getStepsCountFromTimeToTime(start, end))
+                stepsRef.set(
+                    StepsWindowCache(
+                        start = start,
+                        end = end,
+                        rows = persistenceLayer.getStepsCountFromTimeToTime(start, end)
+                    )
+                )
             } catch (_: Exception) {
-                stepsRef.set(emptyList())
+                stepsRef.set(StepsWindowCache(start = start, end = end, rows = emptyList()))
             } finally {
                 stepsRefreshInFlight.set(false)
             }

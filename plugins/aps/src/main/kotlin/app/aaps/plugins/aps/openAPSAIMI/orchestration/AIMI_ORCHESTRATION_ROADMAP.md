@@ -3,7 +3,7 @@
 
 Medical loop code must stay **behavior-identical** unless a change is explicitly reviewed. This document tracks **refactoring only** (structure, readability, test hooks), not medical logic.
 
-**Dernière mise à jour doc :** **`runTddRatesAndIsfFusionAfterContext`** (TDD horaires + fusion ISF + **`IsfTddProvider`**, même ordre d’effets qu’avant) ; **`applyContextModule`** documenté ; P1 commentaires (trajectoire / pipeline) + suppression **`profileISF_raw`** inutilisé et code commenté obsolète (prebolus unifié).
+**Dernière mise à jour doc :** **`runAdvancedPredictionsAndPredPipePrep`** + **`AimiAdvancedPredictionsPredPipePrep`** — **`applyAdvancedPredictions`**, **`sanitizePredictionValues`**, min BG composite, **`HypoThresholdMath.computeHypoThreshold`**, log **PRED_PIPE** ; mêmes **`sanity` / `minBg` / `threshold`** pour safety, Autodrive, **`minBgHypoComposite`**. P1 : commentaire Autodrive V3 raccourci.
 
 ## Réalisé
 
@@ -57,7 +57,8 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **P2 (suite)** : **`runAimiSnapshotMedicalJsonAndHormonitorExportStage`** — snapshot médical (**`decisionCtx`**) ; append **JSONL** ; phase **EXPORT** ; **`hormonitorStudyExporter`** (physio, TIR, TDD) — **I/O disque** ; erreurs → **`consoleError`** uniquement (**⚠️** ordre vs callback auditor inchangé ; KDoc explicite sur **état capturé avant** verdict async).
 - **P2 (suite)** : **`runTrajectoryTightSpiralSafetyBridge`** — après **`applyTrajectoryAnalysis`**, avant **`applyContextModule`** : si dernière analyse = **`TrajectoryType.TIGHT_SPIRAL`**, fraction basale + CGate / repas, mutation **`rT`** / **`lastSafetySource`** / **`logDecisionFinal`** ; **pas** de **`return`** (LGS aval inchangé). Paramètre explicite **`physioMultipliers`** (local du tick, pas membre classe). Import **`TrajectoryType`**.
 - **P2 (suite)** : **`runTddRatesAndIsfFusionAfterContext`** — après **`applyContextModule`** : dérivés **`tdd*PerHour`**, fusion **`fusedIsf`** / variable / profil, **`variableSensitivity`**, logs fusion + **`IsfTddProvider.set`** ; retour **`sens`** pour **`applyAdvancedPredictions`** (réassignable plus bas, ex. endo/physio). **Sync uniquement** (inchangé vs bloc inline).
-- **P1 (doc, même commit)** : bannières ASCII / doublons « FCL » dans le tronçon trajectoire → contexte → TDD/ISF → predictions → safety ; une ligne de garde-fou sur l’ordre safety / advisor ; **`profileISF_raw`** supprimé (dead code).
+- **P2 (suite)** : **`AimiAdvancedPredictionsPredPipePrep`** + **`runAdvancedPredictionsAndPredPipePrep`** — après micro-boluses dynamiques : **`applyAdvancedPredictions`** puis sanity / seuil hypo / **PRED_PIPE** ; déstructure en **`sanity`**, **`minBg`** (composite, ≠ **`min_bg`** schedule), **`threshold`** pour **`trySafetyStart`**, V3/V2, drift, UAM hypo composite. Import **`PredictionSanityResult`**.
+- **P1 (doc, même commit)** : bannières ASCII / doublons « FCL » dans le tronçon trajectoire → contexte → TDD/ISF → predictions → safety ; une ligne de garde-fou sur l’ordre safety / advisor ; **`profileISF_raw`** supprimé (dead code). Tronçon Autodrive V3 : bannière « Super-iLet » remplacée par renvoi KDoc.
 
 ### Branche / build
 - Travail sur `feature/aimi-phase2-tick-context`.

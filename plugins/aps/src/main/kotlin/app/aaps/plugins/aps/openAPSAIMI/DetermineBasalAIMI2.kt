@@ -62,6 +62,7 @@ import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdLogRow
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.IsfTddProvider
 import app.aaps.plugins.aps.openAPSAIMI.pkpd.PkPdRuntime
 import app.aaps.plugins.aps.openAPSAIMI.ports.PkpdPort
+import app.aaps.plugins.aps.openAPSAIMI.prediction.PredictionSanityResult
 import app.aaps.plugins.aps.openAPSAIMI.prediction.minPredictedAcrossCurves
 import app.aaps.plugins.aps.openAPSAIMI.prediction.sanitizePredictionValues
 import app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiLoopPhase
@@ -359,6 +360,16 @@ private sealed class AimiGlucosePackLoadOutcome {
 private data class AimiT9PhysioPkpdTubeBootstrap(
     val pumpAgeDays: Float,
     val physioMultipliers: PhysioMultipliersMTR,
+)
+
+/**
+ * Après [applyAdvancedPredictions] : résultat [sanitizePredictionValues], min BG « composite » (BG / pred / eventual),
+ * et seuil hypo LGS pour le tick. Réutilisé par [trySafetyStart], Autodrive V3/V2, et [runUamModelCalHypoGuardPostHypoAndSetPredictedSmb] (`minBgHypoComposite`).
+ */
+private data class AimiAdvancedPredictionsPredPipePrep(
+    val sanity: PredictionSanityResult,
+    val minBg: Double,
+    val threshold: Double,
 )
 
 /**
@@ -4755,6 +4766,56 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
         }
         return sens
+    }
+
+    /**
+     * [applyAdvancedPredictions] puis [sanitizePredictionValues], min BG composite, [HypoThresholdMath.computeHypoThreshold],
+     * log **PRED_PIPE** (pompe joignable = diagnostic uniquement).
+     *
+     * **Ordre** : les prédictions mutent [rT] ; le sanity lit `rT.eventualBG` / `rT.predBGs` **après** — ne pas réordonner
+     * avant [trySafetyStart] ni avant Autodrive (même [threshold] que l’historique inline).
+     */
+    private fun runAdvancedPredictionsAndPredPipePrep(
+        ctx: AimiTickContext,
+        profile: OapsProfileAimi,
+        rT: RT,
+        bg: Double,
+        delta: Float,
+        sens: Double,
+        predictedBg: Float,
+        glucoseStatus: GlucoseStatusAIMI,
+        minAgo: Double,
+    ): AimiAdvancedPredictionsPredPipePrep {
+        applyAdvancedPredictions(
+            bg = bg, delta = delta, sens = sens, iob_data_array = ctx.iobDataArray,
+            mealData = ctx.mealData, profile = ctx.profile, rT = rT,
+        )
+        fun safePredPipeValue(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
+        val sanity = sanitizePredictionValues(
+            bg = bg,
+            delta = delta,
+            predBgRaw = predictedBg.toDouble(),
+            eventualBgRaw = rT.eventualBG,
+            series = rT.predBGs,
+            log = consoleLog,
+        )
+        val minBg = minOf(
+            safePredPipeValue(bg),
+            safePredPipeValue(sanity.predBg),
+            safePredPipeValue(sanity.eventualBg),
+        )
+        val threshold = HypoThresholdMath.computeHypoThreshold(minBg, profile.lgsThreshold)
+        val pumpReachable = try {
+            activePlugin.activePump.isInitialized() && activePlugin.activePump.isConnected()
+        } catch (_: Exception) {
+            false
+        }
+        consoleLog.add(
+            "PRED_PIPE: bg=${bg.roundToInt()} delta=${"%.1f".format(delta)} predBg=${sanity.predBg.roundToInt()} " +
+                "eventualBg=${sanity.eventualBg.roundToInt()} min=${minBg.roundToInt()} th=${threshold.toInt()} " +
+                "noise=${glucoseStatus.noise} dataAge=${minAgo}m pumpReachable=$pumpReachable sanity=${sanity.label}",
+        )
+        return AimiAdvancedPredictionsPredPipePrep(sanity, minBg, threshold)
     }
 
     private fun logInvocationCacheState(tag: String, state: AsyncDataState<*>) {
@@ -9497,23 +9558,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val dynamicPbolusLarge = if (pbolusA > 0.0) pbolusA else calculateDynamicMicroBolus(effectiveISF, 25.0, reason)
         val dynamicPbolusSmall = if (pbolusAS > 0.0) pbolusAS else calculateDynamicMicroBolus(effectiveISF, 15.0, reason)
 
-        applyAdvancedPredictions(
-            bg = bg, delta = delta, sens = sens, iob_data_array = ctx.iobDataArray,
-            mealData = ctx.mealData, profile = ctx.profile, rT = rT
-        )
-
-        // Safety prep (hypo threshold, pump reachability) — order: after predictions, before trySafetyStart
-        fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
-        val sanity = sanitizePredictionValues(bg, delta, predictedBg.toDouble(), rT.eventualBG, rT.predBGs, consoleLog)
-        val minBg = minOf(safe(bg), safe(sanity.predBg), safe(sanity.eventualBg))
-        val threshold = HypoThresholdMath.computeHypoThreshold(minBg, profile.lgsThreshold)
-        val pumpReachable = try {
-            activePlugin.activePump.isInitialized() && activePlugin.activePump.isConnected()
-        } catch (e: Exception) { false }
-        consoleLog.add(
-            "PRED_PIPE: bg=${bg.roundToInt()} delta=${"%.1f".format(delta)} predBg=${sanity.predBg.roundToInt()} " +
-                "eventualBg=${sanity.eventualBg.roundToInt()} min=${minBg.roundToInt()} th=${threshold.toInt()} " +
-                "noise=${glucoseStatus.noise} dataAge=${minAgo}m pumpReachable=$pumpReachable sanity=${sanity.label}"
+        val (sanity, minBg, threshold) = runAdvancedPredictionsAndPredPipePrep(
+            ctx = ctx,
+            profile = profile,
+            rT = rT,
+            bg = bg,
+            delta = delta,
+            sens = sens,
+            predictedBg = predictedBg,
+            glucoseStatus = glucoseStatus,
+            minAgo = minAgo,
         )
 
         // Decision pipeline: safety before meal advisor — see roadmap invariants 5–7
@@ -9559,9 +9613,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             targetBgMgdl = targetBg,
         )?.let { return it }
 
-        // ====================================================================================
-        // 🧠 AUTODRIVE V3 MULTI-VARIABLES INJECTION (The "Super-iLet" implementation)
-        // ====================================================================================
+        // Autodrive V3 — see [runAutodriveV3MultiVariableBranch]
         val v3AppliedAction = runAutodriveV3MultiVariableBranch(
             ctx = ctx,
             profile = profile,

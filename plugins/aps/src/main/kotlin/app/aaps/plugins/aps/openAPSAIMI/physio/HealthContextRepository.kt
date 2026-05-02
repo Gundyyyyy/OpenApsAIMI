@@ -138,7 +138,21 @@ class HealthContextRepository @Inject constructor(
             source = "Merged(Unified+HC)",
             isValid = confidence > 0.3
         )
-        if (!snapshot.isValid && lastSnapshot.isValid) return lastSnapshot
+        // Do not freeze steps/FC when Unified refreshed but HC-only confidence is low (e.g. no HRV/sleep yet).
+        if (!snapshot.isValid && lastSnapshot.isValid) {
+            val merged = lastSnapshot.copy(
+                stepsLast5m = snapshot.stepsLast5m,
+                stepsLast15m = snapshot.stepsLast15m,
+                stepsLast60m = snapshot.stepsLast60m,
+                activityState = snapshot.activityState,
+                hrNow = if (snapshot.hrNow > 0) snapshot.hrNow else lastSnapshot.hrNow,
+                hrAvg15m = if (snapshot.hrAvg15m > 0) snapshot.hrAvg15m else lastSnapshot.hrAvg15m,
+                timestamp = snapshot.timestamp,
+                source = snapshot.source,
+            )
+            lastSnapshot = merged
+            return merged
+        }
 
         lastSnapshot = snapshot
         return snapshot

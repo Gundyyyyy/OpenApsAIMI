@@ -382,6 +382,29 @@ private data class AimiTrajectoryContextIsfPrep(
     val dynamicPbolusSmall: Double,
 )
 
+/** CGM trop vieux → sortie anticipée ; sinon données signal + PKPD pour la suite du tick. */
+private sealed class AimiSignalPreparationPkpdOutcome {
+    data class StaleAbort(val rT: RT) : AimiSignalPreparationPkpdOutcome()
+    data class Continue(val data: AimiSignalPreparationPkpdContinue) : AimiSignalPreparationPkpdOutcome()
+}
+
+private data class AimiSignalPreparationPkpdContinue(
+    val modesCondition: Boolean,
+    val pbolusAS: Double,
+    val pbolusA: Double,
+    val reason: StringBuilder,
+    val recentBGs: List<Float>,
+    val totalBolusLastHour: Double,
+    val autosensRatio: Double,
+    val iob_data: IobTotal,
+    val lastBolusTimeMs: Long?,
+    val lateFatRiseFlag: Boolean,
+    val tdd24Hrs: Float,
+    val minAgo: Double,
+    val windowSinceDoseInt: Int,
+    val pkpdRuntime: PkPdRuntime?,
+)
+
 /**
  * Combined delta, BYODA short-average adjustment, and dynamic peak time for this tick.
  * Intentionally runs **before** chargement therapy / horloges repas et `applyLegacyMealModes` pour ne pas perturber bfast/lunch/dinner/snack/highcarb.
@@ -4871,6 +4894,145 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
         }
         return sens
+    }
+
+    /**
+     * `modesCondition` … PKPD runtime + [applyBasalFirstPolicy] : même ordre que l’historique inline dans [determine_basal].
+     * Mutations : [lastBolusAgeMinutes], [pkpdIntegration], logs, [rT] via basal-first ; lecture BG/IOB/COB sur l’instance.
+     */
+    private fun runSignalPreparationPkpdRuntimePhase(
+        ctx: AimiTickContext,
+        profile: OapsProfileAimi,
+        rT: RT,
+        glucoseStatus: GlucoseStatusAIMI,
+        combinedDelta: Float,
+        tdd7P: Double,
+        isExplicitAdvisorRun: Boolean,
+        isConfirmedHighRiseLocal: Boolean,
+        pkpdRuntimeIn: PkPdRuntime?,
+    ): AimiSignalPreparationPkpdOutcome {
+        val modesCondition = (!mealTime || mealruntime > 30) && (!lunchTime || lunchruntime > 30) && (!bfastTime || bfastruntime > 30) && (!dinnerTime || dinnerruntime > 30) && !sportTime && (!snackTime || snackrunTime > 30) && (!highCarbTime || highCarbrunTime > 30) && !sleepTime && !lowCarbTime
+        val pbolusAS: Double = preferences.get(DoubleKey.OApsAIMIautodrivesmallPrebolus)
+        val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
+        val reason = StringBuilder()
+        val recentBGs = getRecentBGs()
+
+        val oneHourAgo = now - (60 * 60 * 1000L)
+        val bolusesHistory = getBolusesFromTimeCached(oneHourAgo, true)
+        val totalBolusLastHour = bolusesHistory.sumOf { it.amount }
+
+        calculateBgTrend(recentBGs, reason)
+
+        val autosensRatio = if (ctx.autosensData.ratio != 1.0) ctx.autosensData.ratio else 1.0
+
+        val systemTime = ctx.currentTime
+        val iobArray = ctx.iobDataArray
+        val iob_data = iobArray[0]
+        val mealFlags = MealFlags(mealTime, bfastTime, lunchTime, dinnerTime, highCarbTime)
+        AimiLoopTelemetry.enterPhase(AimiLoopPhase.SIGNAL_PREPARATION, hormonitorStudyExporter)
+
+        val lastBolusTimeMs: Long? = iob_data.lastBolusTime.takeIf { it > 0L }
+
+        val lateFatRiseFlag = isLateFatProteinRise(
+            bg = bg,
+            predictedBg = predictedBg.toDouble(),
+            delta = delta.toDouble(),
+            shortAvgDelta = shortAvgDelta.toDouble(),
+            longAvgDelta = longAvgDelta.toDouble(),
+            iob = iob.toDouble(),
+            cob = cob.toDouble(),
+            maxSMB = maxSMB,
+            lastBolusTimeMs = lastBolusTimeMs,
+            mealFlags = mealFlags
+        )
+        val tdd24hStateForPkpd = determineBasalInvocationCaches.getTdd24hTotalAmountState(tddCalculator)
+        logInvocationCacheState("TDD24H_PKPD", tdd24hStateForPkpd)
+        var tdd24Hrs = tdd24hStateForPkpd.valueOrNull()?.toFloat() ?: 0.0f
+        if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
+        val bgTime = glucoseStatus.date
+        val minAgo = round((systemTime - bgTime) / 60.0 / 1000.0, 1)
+
+        if (minAgo > 12.0) {
+            reason.append("⚠️ Data Stale (${minAgo.toInt()}m) -> Logic Paused\n")
+            consoleError.add("Data Stale (${minAgo}m) -> Logic Paused")
+            logDecisionFinal("STALE_DATA", rT, bg, delta)
+            return AimiSignalPreparationPkpdOutcome.StaleAbort(
+                rT.also {
+                    ensurePredictionFallback(it, bg)
+                    markFinalLoopDecisionFromRT(it)
+                }
+            )
+        }
+        val windowSinceDoseMin = if (iob_data.lastBolusTime > 0 || internalLastSmbMillis > 0) {
+            val effectiveLastBolusTime = kotlin.math.max(iob_data.lastBolusTime, internalLastSmbMillis)
+            ((systemTime - effectiveLastBolusTime) / 60000.0).coerceAtLeast(0.0)
+        } else 0.0
+        val windowSinceDoseInt = windowSinceDoseMin.toInt()
+        lastBolusAgeMinutes = windowSinceDoseMin
+        val carbsActiveG = ctx.mealData.mealCOB.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
+        val mealModeActiveNow = isMealContextActive(ctx.mealData)
+        val pkpdMealContext = MealAggressionContext(
+            mealModeActive = mealModeActiveNow,
+            predictedBgMgdl = predictedBg.toDouble(),
+            targetBgMgdl = targetBg.toDouble()
+        )
+        pkpdIntegration.setRecentBolusSamples(
+            buildRecentPkpdBolusSamples(
+                nowMillis = ctx.currentTime,
+                fallbackWindowMin = windowSinceDoseInt
+            )
+        )
+        val pkpdRuntimeTemp = pkpdIntegration.computeRuntime(
+            epochMillis = ctx.currentTime,
+            bg = bg,
+            deltaMgDlPer5 = delta.toDouble(),
+            iobU = iob.toDouble(),
+            carbsActiveG = carbsActiveG,
+            windowMin = windowSinceDoseInt,
+            exerciseFlag = sportTime,
+            profileIsf = profile.sens,
+            tdd24h = tdd24Hrs.toDouble(),
+            mealContext = pkpdMealContext,
+            consoleLog = consoleLog,
+            combinedDelta = combinedDelta.toDouble(),
+            uamConfidence = AimiUamHandler.confidenceOrZero()
+        )
+
+        var pkpdRuntime = pkpdRuntimeIn
+        if (pkpdRuntimeTemp != null) {
+            pkpdRuntime = pkpdRuntimeTemp
+
+            consoleLog.add("📊 PKPD_LEARNER:")
+            consoleLog.add("  │ DIA (learned): ${"%.2f".format(Locale.US, pkpdRuntime.params.diaHrs)}h")
+            consoleLog.add("  │ Peak (learned): ${"%.0f".format(Locale.US, pkpdRuntime.params.peakMin)}min")
+            consoleLog.add("  │ fusedISF: ${"%.1f".format(Locale.US, pkpdRuntime.fusedIsf)} mg/dL/U")
+
+            applyBasalFirstPolicy(
+                bg = bg, delta = delta.toFloat(), combinedDelta = combinedDelta.toFloat(),
+                mealData = ctx.mealData, autosens_data = ctx.autosensData, isMealAdvisorOneShot = isExplicitAdvisorRun,
+                targetBg = targetBg.toDouble(), rT = rT, isConfirmedHighRise = isConfirmedHighRiseLocal
+            )
+            consoleLog.add("  └ adaptiveMode: ${if (pkpdRuntime.params.diaHrs != 4.0 || pkpdRuntime.params.peakMin != 75.0) "ACTIVE" else "DEFAULT"}")
+        }
+
+        return AimiSignalPreparationPkpdOutcome.Continue(
+            AimiSignalPreparationPkpdContinue(
+                modesCondition = modesCondition,
+                pbolusAS = pbolusAS,
+                pbolusA = pbolusA,
+                reason = reason,
+                recentBGs = recentBGs,
+                totalBolusLastHour = totalBolusLastHour,
+                autosensRatio = autosensRatio,
+                iob_data = iob_data,
+                lastBolusTimeMs = lastBolusTimeMs,
+                lateFatRiseFlag = lateFatRiseFlag,
+                tdd24Hrs = tdd24Hrs,
+                minAgo = minAgo,
+                windowSinceDoseInt = windowSinceDoseInt,
+                pkpdRuntime = pkpdRuntime,
+            )
+        )
     }
 
     /**
@@ -9541,9 +9703,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         var pkpdRuntime = this.cachedPkpdRuntime
 
         val reasonAimi = StringBuilder()
-        var windowSinceDoseInt = 0
-        var carbsActiveForPkpd = 0.0
-
 
         val useLegacyDynamics = (pkpdRuntime == null)
         val deltaPeakTick = runCombinedDeltaByodaAndDynamicPeak(ctx, glucoseStatus, useLegacyDynamics, reasonAimi)
@@ -9605,124 +9764,38 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             insulinActionState = insulinActionState,
         )?.let { return it }
 
-        val modesCondition = (!mealTime || mealruntime > 30) && (!lunchTime || lunchruntime > 30) && (!bfastTime || bfastruntime > 30) && (!dinnerTime || dinnerruntime > 30) && !sportTime && (!snackTime || snackrunTime > 30) && (!highCarbTime || highCarbrunTime > 30) && !sleepTime && !lowCarbTime
-        val pbolusAS: Double = preferences.get(DoubleKey.OApsAIMIautodrivesmallPrebolus)
-        val pbolusA: Double = preferences.get(DoubleKey.OApsAIMIautodrivePrebolus)
-        val reason = StringBuilder()
-        val recentBGs = getRecentBGs()
-
-        // 🕒 FCL 5.0 Pre-calc: Total Bolus Volume Last Hour
-        val oneHourAgo = now - (60 * 60 * 1000L)
-        val bolusesHistory = getBolusesFromTimeCached(oneHourAgo, true)
-        val totalBolusLastHour = bolusesHistory.sumOf { it.amount }
-
-        val bgTrend = calculateBgTrend(recentBGs, reason)
-        
-        // 🧠 FCL 7.0: Update Watchdog State
-        
-        // 🧠 FCL 8.0: Autosens Synergy
-        // 🏥 Autosens Ratio Logic (Corrected - aligned with AAPS)
-        // Ratio < 1.0 => Resistant (ISF should be smaller)
-        // Ratio > 1.0 => Sensitive (ISF should be larger)
-        // Effective ISF = Profile ISF * Ratio
-        val autosensRatio = if (ctx.autosensData.ratio != 1.0) ctx.autosensData.ratio else 1.0
-        
-        // [FIX] Critical Math Inversion found during Deep Dive:
-        // Previous: ISF * Ratio. 
-        // 100 * 1.2 = 120 (Weaker). WRONG for Resistance.
-        // 100 * 0.7 = 70 (Stronger). WRONG for Sensitivity.
-        
+        val spSignalPkpd = when (
+            val outcome = runSignalPreparationPkpdRuntimePhase(
+                ctx = ctx,
+                profile = profile,
+                rT = rT,
+                glucoseStatus = glucoseStatus,
+                combinedDelta = combinedDelta,
+                tdd7P = tdd7P,
+                isExplicitAdvisorRun = isExplicitAdvisorRun,
+                isConfirmedHighRiseLocal = isConfirmedHighRiseLocal,
+                pkpdRuntimeIn = pkpdRuntime,
+            )
+        ) {
+            is AimiSignalPreparationPkpdOutcome.StaleAbort -> return outcome.rT
+            is AimiSignalPreparationPkpdOutcome.Continue -> outcome.data
+        }
+        pkpdRuntime = spSignalPkpd.pkpdRuntime
+        val modesCondition = spSignalPkpd.modesCondition
+        val pbolusAS = spSignalPkpd.pbolusAS
+        val pbolusA = spSignalPkpd.pbolusA
+        val reason = spSignalPkpd.reason
+        val recentBGs = spSignalPkpd.recentBGs
+        val totalBolusLastHour = spSignalPkpd.totalBolusLastHour
+        val autosensRatio = spSignalPkpd.autosensRatio
+        val iob_data = spSignalPkpd.iob_data
+        val lastBolusTimeMs = spSignalPkpd.lastBolusTimeMs
+        val lateFatRiseFlag = spSignalPkpd.lateFatRiseFlag
+        val tdd24Hrs = spSignalPkpd.tdd24Hrs
+        val minAgo = spSignalPkpd.minAgo
+        val windowSinceDoseInt = spSignalPkpd.windowSinceDoseInt
         val systemTime = ctx.currentTime
-        val iobArray = ctx.iobDataArray
-        val iob_data = iobArray[0]
-        val mealFlags = MealFlags(mealTime, bfastTime, lunchTime, dinnerTime, highCarbTime)
-        AimiLoopTelemetry.enterPhase(AimiLoopPhase.SIGNAL_PREPARATION, hormonitorStudyExporter)
-
-        // Heure du dernier bolus : iob_data est bien disponible ici
-        val lastBolusTimeMs: Long? = iob_data.lastBolusTime.takeIf { it > 0L }
-
-        val lateFatRiseFlag  = isLateFatProteinRise(
-            bg = bg,
-            predictedBg = predictedBg.toDouble(),
-            delta = delta.toDouble(),
-            shortAvgDelta = shortAvgDelta.toDouble(),
-            longAvgDelta = longAvgDelta.toDouble(),
-            iob = iob.toDouble(),
-            cob = cob.toDouble(),
-            maxSMB = maxSMB,
-            lastBolusTimeMs = lastBolusTimeMs,
-            mealFlags = mealFlags
-        )
-        val tdd24hStateForPkpd = determineBasalInvocationCaches.getTdd24hTotalAmountState(tddCalculator)
-        logInvocationCacheState("TDD24H_PKPD", tdd24hStateForPkpd)
-        var tdd24Hrs = tdd24hStateForPkpd.valueOrNull()?.toFloat() ?: 0.0f
-        if (tdd24Hrs == 0.0f) tdd24Hrs = tdd7P.toFloat()
         val bgTime = glucoseStatus.date
-        val minAgo = round((systemTime - bgTime) / 60.0 / 1000.0, 1)
-        
-        // 🔒 SAFETY FCL 14.0: Stale Data Check
-        // If data is > 12 mins old, disable Autodrive/SMBs to prevent unwanted late boluses.
-        if (minAgo > 12.0) {
-            reason.append("⚠️ Data Stale (${minAgo.toInt()}m) -> Logic Paused\n")
-            consoleError.add("Data Stale (${minAgo}m) -> Logic Paused")
-            logDecisionFinal("STALE_DATA", rT, bg, delta)
-            return rT.also {
-                ensurePredictionFallback(it, bg)
-                markFinalLoopDecisionFromRT(it)
-            }
-        }
-        val windowSinceDoseMin = if (iob_data.lastBolusTime > 0 || internalLastSmbMillis > 0) {
-            val effectiveLastBolusTime = kotlin.math.max(iob_data.lastBolusTime, internalLastSmbMillis)
-            ((systemTime - effectiveLastBolusTime) / 60000.0).coerceAtLeast(0.0)
-        } else 0.0
-        windowSinceDoseInt = windowSinceDoseMin.toInt()
-        lastBolusAgeMinutes = windowSinceDoseMin
-        val carbsActiveG = ctx.mealData.mealCOB.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
-        carbsActiveForPkpd = carbsActiveG
-        val mealModeActiveNow = isMealContextActive(ctx.mealData)
-        val pkpdMealContext = MealAggressionContext(
-            mealModeActive = mealModeActiveNow,
-            predictedBgMgdl = predictedBg.toDouble(),
-            targetBgMgdl = targetBg.toDouble()
-        )
-        pkpdIntegration.setRecentBolusSamples(
-            buildRecentPkpdBolusSamples(
-                nowMillis = ctx.currentTime,
-                fallbackWindowMin = windowSinceDoseInt
-            )
-        )
-        val pkpdRuntimeTemp = pkpdIntegration.computeRuntime(
-            epochMillis = ctx.currentTime,
-            bg = bg,
-            deltaMgDlPer5 = delta.toDouble(),
-            iobU = iob.toDouble(),
-            carbsActiveG = carbsActiveG,
-            windowMin = windowSinceDoseInt,
-            exerciseFlag = sportTime,
-            profileIsf = profile.sens,
-            tdd24h = tdd24Hrs.toDouble(),
-            mealContext = pkpdMealContext,
-            consoleLog = consoleLog,
-            combinedDelta = combinedDelta.toDouble(),
-            uamConfidence = AimiUamHandler.confidenceOrZero()
-        )
-
-        if (pkpdRuntimeTemp != null) {
-            pkpdRuntime = pkpdRuntimeTemp
-            
-            // 📊 Expose PkPd Learner state in rT for visibility
-            consoleLog.add("📊 PKPD_LEARNER:")
-            consoleLog.add("  │ DIA (learned): ${"%.2f".format(Locale.US, pkpdRuntime.params.diaHrs)}h")
-            consoleLog.add("  │ Peak (learned): ${"%.0f".format(Locale.US, pkpdRuntime.params.peakMin)}min")
-            consoleLog.add("  │ fusedISF: ${"%.1f".format(Locale.US, pkpdRuntime.fusedIsf)} mg/dL/U")
-        
-            applyBasalFirstPolicy(
-                bg = bg, delta = delta.toFloat(), combinedDelta = combinedDelta.toFloat(),
-                mealData = ctx.mealData, autosens_data = ctx.autosensData, isMealAdvisorOneShot = isExplicitAdvisorRun,
-                targetBg = targetBg.toDouble(), rT = rT, isConfirmedHighRise = isConfirmedHighRiseLocal
-            )
-            consoleLog.add("  └ adaptiveMode: ${if (pkpdRuntime.params.diaHrs != 4.0 || pkpdRuntime.params.peakMin != 75.0) "ACTIVE" else "DEFAULT"}")
-        }
 
         val trajContextIsf = runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep(
             ctx = ctx,

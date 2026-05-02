@@ -589,8 +589,11 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
         // Header
         sb.append("🏥 Physio Status (${ageMin}m ago) | Conf: ${(snapshot.confidence * 100).toInt()}%")
         
-        // Activity
-        sb.append("\n🏃 Activity: ${snapshot.stepsLast15m} steps/15m (State: ${snapshot.activityState})")
+        // Activity: 5m reacts faster to recent walking; 15m matches modulation window; ACTIVE if steps15 > 1000 (not a display minimum).
+        sb.append(
+            "\n🏃 Activity: ${snapshot.stepsLast5m} steps/5m | ${snapshot.stepsLast15m} steps/15m " +
+                "(State: ${snapshot.activityState}, ACTIVE if >1000/15m)"
+        )
         
         // Heart
         val hrvStr = if (snapshot.hrvRmssd > 0) "${snapshot.hrvRmssd.toInt()}ms" else "--"

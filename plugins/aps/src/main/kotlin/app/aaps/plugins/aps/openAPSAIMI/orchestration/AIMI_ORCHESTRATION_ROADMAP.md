@@ -3,7 +3,7 @@
 
 Medical loop code must stay **behavior-identical** unless a change is explicitly reviewed. This document tracks **refactoring only** (structure, readability, test hooks), not medical logic.
 
-**Dernière mise à jour doc :** P2 **`runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep`** + **`AimiTrajectoryContextIsfPrep`** (trajectoire → spiral bridge → contexte → fusion ISF → microbolus) ; P1 commentaires récents.
+**Dernière mise à jour doc :** P2 **`runSignalPreparationPkpdRuntimePhase`** + **`AimiSignalPreparationPkpdOutcome` / `Continue`** (signal → stale → PKPD + basal-first) ; puis trajectoire/contexte/ISF comme avant.
 
 ## Réalisé
 
@@ -65,6 +65,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **P1 (doc, même commit)** : bannières ASCII / doublons « FCL » dans le tronçon trajectoire → contexte → TDD/ISF → predictions → safety ; une ligne de garde-fou sur l’ordre safety / advisor ; **`profileISF_raw`** supprimé (dead code). Tronçon Autodrive V3 : bannière « Super-iLet » remplacée par renvoi KDoc.
 - **P1 (suite)** : **`DetermineBasalAIMI2`** — bannières T9 / physio / early PKPD condensées ; bloc PAI (indent + libellés) ; suppression gros commentaire mort (honeymoon `variableSensitivity`) ; **KDoc orphelin / bloc cassé** avant **`isDriftTerminatorCondition`** → une ligne d’archive + KDoc sur le guard ; en-têtes dupliqués decision-pipeline / safety / post-hypo ; **`hydrateMealDataIfTriggered`** / **`executeT3cBrittleMode`** en KDoc court ; section constants Meal Advisor. Logique médicale inchangée.
 - **P2 (suite)** : **`AimiTrajectoryContextIsfPrep`** + **`runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep`** — même ordre qu’avant : **`applyTrajectoryAnalysis`** → **`runTrajectoryTightSpiralSafetyBridge`** → **`applyContextModule`** → **`runTddRatesAndIsfFusionAfterContext`** → microbolus dynamiques ; champs tick (BG, COB, …) lus sur l’instance comme l’inline historique. **`determine_basal`** : indentation normalisée avant **`return finalResult`**.
+- **P2 (suite)** : **`AimiSignalPreparationPkpdOutcome`** (`StaleAbort` / `Continue`) + **`AimiSignalPreparationPkpdContinue`** + **`runSignalPreparationPkpdRuntimePhase`** — après T3c brittle : `modesCondition`, bolus 1h, trend BG (effet sur [reason]), telemetry **SIGNAL_PREPARATION**, fenêtre dose / **PKPD** / **applyBasalFirstPolicy** ; sortie anticipée stale identique (`ensurePredictionFallback` + `markFinalLoopDecisionFromRT`). **`systemTime`** / **`bgTime`** restent redéclarés dans **`determine_basal`** pour **`buildGlobalAimiBasalScheduleBootstrap`** et stages aval (mêmes expressions que l’historique : `ctx.currentTime`, `glucoseStatus.date`).
 
 ### Branche / build
 - Travail sur `feature/aimi-phase2-tick-context`.

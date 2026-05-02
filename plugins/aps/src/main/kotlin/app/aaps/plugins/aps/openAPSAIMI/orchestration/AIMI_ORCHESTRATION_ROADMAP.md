@@ -3,7 +3,7 @@
 
 Medical loop code must stay **behavior-identical** unless a change is explicitly reviewed. This document tracks **refactoring only** (structure, readability, test hooks), not medical logic.
 
-**Dernière mise à jour doc :** P2 **`runSignalPreparationPkpdRuntimePhase`** + **`AimiSignalPreparationPkpdOutcome` / `Continue`** (signal → stale → PKPD + basal-first) ; puis trajectoire/contexte/ISF comme avant.
+**Dernière mise à jour doc :** **P4 (amorcé)** — `src/test/.../orchestration/AimiDetermineBasalTickOrchestratorTest.kt` (JUnit 5). **P3b** + § **Carte P3a**. § **Cadrage P3** — **L1** validé runtime (confirmé). Garde-fou **`targetBg`** vs **`target_bg`**.
 
 ## Réalisé
 
@@ -11,7 +11,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - Préférence `BooleanKey.OApsAIMIAimiSmbComparatorEnabled` (défaut `false`) pour désactiver le comparateur SMB sans retirer le code.
 - `AimiSmbComparator` sort tôt si la préférence est fausse.
 
-### Phase 2 — Tick context (en cours)
+### Phase 2 — Tick context (déstructuration mécanique : faite ; **P3b** orchestrateur : faite)
 - **`AimiTickContext`** (`orchestration/AimiTickContext.kt`) : regroupe les paramètres d’entrée de `determine_basal` (glucose, temp, IOB[], profil, autosens, repas, flags temps, UI, debug).
 - **`runEarlyDetermineBasalStages(ctx)`** dans `DetermineBasalaimiSMB2` : même séquence qu’avant — `beginInvocation`, clear caches, pulse telemetry, reset flags, bruit CGM, `extraDebug`, `hydrateMealDataIfTriggered`, flags advisor/TDD, copie **`originalProfile`**, `enterPhase(BOOTSTRAP)`.
 - **`AimiDetermineBasalEarlyTickState`** : `originalProfile`, `isExplicitAdvisorRun`, `tdd7P`, `tdd7Days` (valeurs figées après bootstrap numérique TDD).
@@ -22,8 +22,8 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **P2 (suite)** : **`AimiTickDecisionRtBootstrap`** + **`buildDecisionContextInitRtSosAndFlatShadow(ctx)`** — construction `AimiDecisionContext`, `RT` initial, phase CONTEXT, raison `extraDebug`, SOS global, `logLearnersHealth`, reset WCycle / `lastProfile`, et **`flatBGsDetected` local** (override delta) ; `lastProfile` aligné sur **`ctx.profile`** (même référence que le paramètre `profile`).
 - **P2 (suite)** : **`AimiRealtimePhysioIobBootstrap`** + **`runRealtimePhysioIobProfilerAndInsulinObserver(ctx, decisionCtx)`** — log activité RT, reset `maxSMB` / `maxSMBHB`, snapshot physio → `decisionCtx.adjustments.physiological_context`, `InsulinActionProfiler`, `iobActivityNow` membre, observateur insuline + logs PAI / PKPD_OBS.
 - **P2 (suite)** : **`AimiGlucosePackLoadOutcome`** (`Abort` / `Continue`) + **`ensureWCycleAndLoadGlucoseStatusOrAbort(ctx, rT)`** — `ensureWCycleInfo()`, `glucoseStatusCalculatorAimi.compute(true)`, mêmes logs / early return / `ensurePredictionFallback` / `markFinalLoopDecisionFromRT` qu’avant ; le corps de `determine_basal` déstructure `glucoseStatus` et `AimiBgFeatures?` via un `when` exhaustif (smart-cast Kotlin).
-- **P2 (suite)** : **`AimiT9PhysioPkpdTubeBootstrap`** + **`runT9PhysioEarlyPkpdAndTubeBootstrap`** — bloc T9 (log G6 lead), physio multipliers + trace, PKPD précoce + `cachedPkpdRuntime`, application physio / inflammation sur limites, echo TAP-G, tube advisor ; retourne `pumpAgeDays` + **`physioMultipliers`** (encore lus plus loin dans le tick : trajectoire / caps).
-- **P2 (suite)** : **`AimiCombinedDeltaAndPeakTick`** + **`runCombinedDeltaByodaAndDynamicPeak`** — deltas récents, delta combiné, compensateur BYODA jour/nuit, `calculateDynamicPeakTime` vs `profile.peakTime` ; **volontairement avant** `Therapy` / `applyLegacyMealModes` (modes repas inchangés).
+- **P2 (suite)** : **`AimiT9PhysioPkpdTubeBootstrap`** + **`runT9PhysioEarlyPkpdAndTubeBootstrap`** — bloc **T9** (compensation **G6 lead** / velocity via `ContinuousStateEstimator`, log delta corrigé), physio multipliers + trace, PKPD précoce + `cachedPkpdRuntime`, application physio / inflammation sur limites, echo TAP-G, tube advisor ; retourne `pumpAgeDays` + **`physioMultipliers`** (encore lus plus loin dans le tick : trajectoire / caps). **≠ BYODA** : pas de compensateur « BYODA combiné / shortAvg » ici (voir ligne suivante).
+- **P2 (suite)** : **`AimiCombinedDeltaAndPeakTick`** + **`runCombinedDeltaByodaAndDynamicPeak`** — deltas récents, delta combiné, **compensateur BYODA G6 native** (jour/nuit) sur `combinedDelta` / `shortAvgDelta`, `calculateDynamicPeakTime` vs `profile.peakTime` ; **volontairement avant** `Therapy` / `applyLegacyMealModes` (modes repas inchangés). C’est l’emplacement de l’ancienne **narration BYODA** condensée en commentaire court dans le code.
 - **P2 (suite)** : **`AimiTickClockTirCarbGlucoseBootstrap`** + **`runTickClockMaxSmbTirCarbAndGlucoseCopy`** — `hourOfDay`, honeymoon, historique SMB, maxIOB/maxSMB (plateau/pente), NGR, snapshot TIR, `now`, glucides/tags, copie δ GS sur membres ; **stop avant** `Therapy` (horloges bfast/lunch/dinner/snack/highcarb inchangées).
 - **P2 (suite)** : **`AimiTherapyExerciseGate`** (`Continue` / `ReturnEarly`) + **`runTherapyHydrateClocksAndExerciseLockoutGate`** — `Therapy`, CSV trim si delete, flags repas + runtimes, accélération/stabilité, `nightbis`, lockout sport → SMB 0, retours anticipés T3c / standard ; **juste avant** le bloc « MANUAL MEAL MODES » / `applyLegacyMealModes`.
 - **P2 (suite)** : **`runT3cBrittleBypassOrReturn`** dans `DetermineBasalAIMI2` — extraction **mécanique** du bloc `BooleanKey.OApsAIMIT3cBrittleMode` : garde prébolus (historique bolus 20 min, lockout `internalLastSmbMillis`, plafond IOB vs `maxIob`), tick **shadow** Autodrive (DataLake / learner, sans commande), `applyAdvancedPredictions` + `applyTrajectoryAnalysis` avec **paramètres explicites** (`insulinActionState` depuis le bootstrap physio/IOB du tick, `physioMultipliers`, `pkpdRuntime`, `shortAvgDeltaAdj`, `originalProfile`, etc.), puis `executeT3cBrittleMode` comme avant. **`null`** si brittle désactivé (aucun effet). **Invariant d’ordre** : appel **immédiatement après** `applyLegacyMealModes` — le commentaire/code suppose que le prébolus legacy a déjà été traité en amont.
@@ -65,7 +65,15 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **P1 (doc, même commit)** : bannières ASCII / doublons « FCL » dans le tronçon trajectoire → contexte → TDD/ISF → predictions → safety ; une ligne de garde-fou sur l’ordre safety / advisor ; **`profileISF_raw`** supprimé (dead code). Tronçon Autodrive V3 : bannière « Super-iLet » remplacée par renvoi KDoc.
 - **P1 (suite)** : **`DetermineBasalAIMI2`** — bannières T9 / physio / early PKPD condensées ; bloc PAI (indent + libellés) ; suppression gros commentaire mort (honeymoon `variableSensitivity`) ; **KDoc orphelin / bloc cassé** avant **`isDriftTerminatorCondition`** → une ligne d’archive + KDoc sur le guard ; en-têtes dupliqués decision-pipeline / safety / post-hypo ; **`hydrateMealDataIfTriggered`** / **`executeT3cBrittleMode`** en KDoc court ; section constants Meal Advisor. Logique médicale inchangée.
 - **P2 (suite)** : **`AimiTrajectoryContextIsfPrep`** + **`runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep`** — même ordre qu’avant : **`applyTrajectoryAnalysis`** → **`runTrajectoryTightSpiralSafetyBridge`** → **`applyContextModule`** → **`runTddRatesAndIsfFusionAfterContext`** → microbolus dynamiques ; champs tick (BG, COB, …) lus sur l’instance comme l’inline historique. **`determine_basal`** : indentation normalisée avant **`return finalResult`**.
-- **P2 (suite)** : **`AimiSignalPreparationPkpdOutcome`** (`StaleAbort` / `Continue`) + **`AimiSignalPreparationPkpdContinue`** + **`runSignalPreparationPkpdRuntimePhase`** — après T3c brittle : `modesCondition`, bolus 1h, trend BG (effet sur [reason]), telemetry **SIGNAL_PREPARATION**, fenêtre dose / **PKPD** / **applyBasalFirstPolicy** ; sortie anticipée stale identique (`ensurePredictionFallback` + `markFinalLoopDecisionFromRT`). **`systemTime`** / **`bgTime`** restent redéclarés dans **`determine_basal`** pour **`buildGlobalAimiBasalScheduleBootstrap`** et stages aval (mêmes expressions que l’historique : `ctx.currentTime`, `glucoseStatus.date`).
+- **P2 (suite)** : **`AimiSignalPreparationPkpdOutcome`** (`StaleAbort` / `Continue`) + **`AimiSignalPreparationPkpdContinue`** + **`runSignalPreparationPkpdRuntimePhase`** — après T3c brittle : `modesCondition`, bolus 1h, trend BG (effet sur [reason]), telemetry **SIGNAL_PREPARATION**, fenêtre dose / **PKPD** / **applyBasalFirstPolicy** ; sortie anticipée stale identique (`ensurePredictionFallback` + `markFinalLoopDecisionFromRT`). **`systemTime`** / **`bgTime`** : `val (systemTime, bgTime) = ctx.currentTime to glucoseStatus.date` (équivalent historique).
+- **P2 (suite)** : **`AimiPreTherapyAutodriveByodaBootstrap`** + **`buildPreTherapyAutodriveByodaBootstrap`** — flag G6 BYODA + prefs Autodrive + libellé **`autodriveDisplay`** ; **`determine_basal`** ne garde que `adBoot` → `isG6Byoda` / `autodrive` / `autodriveDisplay` avant **`runTickClockMaxSmbTirCarbAndGlucoseCopy`**.
+- **P2 (suite)** : **`determine_basal`** — déstructuration **mécanique** de **`AimiSignalPreparationPkpdContinue`** (14 champs + `pkpdRuntime = pkpdRuntimeSignal`) pour une seule source de vérité sur l’ordre des champs.
+- **P1 (suite)** : commentaires d’injection (trajectory / `ContinuousStateEstimator`), ligne **`snapshotRtReset…`** / **`isDriftTerminatorCondition`** (tombstone FCL retiré), bloc endo+ISF (fusion des lignes « legacy steps »), import `AutodriveEngine`, suppression commentaire mort `iob2`.
+- **P2 (suite)** : **`determine_basal`** — déstructuration Kotlin des résultats d’amorçage (**`AimiDetermineBasalEarlyTickState`**, **`AimiTickDecisionRtBootstrap`**, **`AimiRealtimePhysioIobBootstrap`**, **`AimiT9PhysioPkpdTubeBootstrap`**, **`AimiCombinedDeltaAndPeakTick`**, **`AimiTickClockTirCarbGlucoseBootstrap`**, **`GlobalAimiBasalScheduleBootstrap`**) pour verrouiller l’ordre des champs sur les `data class` ; rebinding `var` basal / cibles / `maxIobLimit` inchangé après **`GlobalAimiBasalScheduleBootstrap`**.
+- **P2 (suite)** : **`determine_basal`** — même principe pour **`runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep`**, **`runPostAutodrivePostHypoClassification`**, **`runPostBasalBootstrapIobTickStepsAndHeartRate`**, **`runBasalAimiTddCarbLimitsTirEarlyBasalAndPaiIsf`**, **`runPkpdPredictionsBgiDeviationAndNoisyTargetsStage`** (`sens` reste **`var`** via `sensInit`).
+- **P2 (suite)** : **`determine_basal`** — **`runSmbDecisionLogAdvisorOneShotAndExecuteInstruction`** → `(smbExecution, isMealAdvisorOneShot)` ; **`runPkpdGuardEndoDampenRedCarpetAndCapSmb`** → réassign `smbToGive` / `intervalsmb` ; **`runMealHyperBasalBoostTickStage`** + overlay → **`AimiMealHyperBasalOverlayState`** ; **`runWCycleIcCsfClampCiAndCarbImpactLogs`** ; **`runCarbsAdvisorEnableSmbSafetyAndHardHypoBasalStopOrReturn`** → 7 champs ; **`runCoreDecisionMaxIobExceededTempBasalGate`** → **`ContinueSMBPath`** déstructuré.
+- **P3b** : **`runDetermineBasalTick(ctx)`** (`internal`) — corps du tick extrait de la lambda `traceDetermineBasalTick` ; **`determine_basal`** = `AimiTickContext(...)` + **`AimiDetermineBasalTickOrchestrator.run(this, ctx)`** (`orchestration/AimiDetermineBasalTickOrchestrator.kt`). `val profile = ctx.profile` en tête du tick (même référence qu’avant, invariant 1).
+- **P4 (amorcé)** : **`AimiDetermineBasalTickOrchestratorTest`** (`src/test/.../orchestration/`) — contrat P3b : un appel à **`run(plugin, ctx)`** → **`runDetermineBasalTick(ctx)`** et même [RT] ; **JUnit 5** (le module utilise `useJUnitPlatform()`, pas JUnit 4).
 
 ### Branche / build
 - Travail sur `feature/aimi-phase2-tick-context`.
@@ -84,14 +92,87 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 9. **CarbsAdvisor vs cibles** : **`CarbsAdvisor.estimateRequiredCarbs`** (bloc après WCycle/CSF) doit continuer à utiliser **`targetBG = targetBg.toDouble()`** (champ instance — objectif loop / temp target, déjà aligné avec PKPD, trajectoire, autodrive, etc.) — **pas** le remplacer par le local **`target_bg`** (milieu de bande schedule + ajustements PKPD/noisy) sous prétexte de « cohérence » avec **`enablesmb`** ou la ligne COB : ce sont deux définitions volontairement différentes ; un changement ici est une **décision produit**, pas un refactor mécanique. (**`HypoTools.calculateMinutesAboveThreshold`** n’utilise pas la cible glycémique, seulement BG / pente / seuil fixe.)
 10. **Pas / FC physio (Unified + log)** : **`HealthContextRepository.fetchSnapshot()`** alimente le snapshot affiché dans le débogage ; **`getDetailedLogString()`** doit déclencher un **`fetchSnapshot()`** hors thread UI pour éviter un texte obsolète (0 pas / HR 0) alors que les tuiles AAPS sont à jour. **`UnifiedActivityProviderMTR.getStepsTotalSince`** : pour les fenêtres ~5/10/15/30/60/180 min, utiliser les champs **`steps5min`…`steps180min`** de la **dernière** ligne **[SC]** fraîche (même sémantique que la sync HC / téléphone) ; l’ancienne somme des seuls **`steps5min`** par bucket **sous-estimait** les totaux 15/60 min quand peu d’enregistrements tombent dans la fenêtre — écart possible de l’ordre de **~1000+ pas** vs agrégateurs « journée » si les définitions (fenêtre glissante vs total journée) diffèrent toujours.
 
+## Cadrage P3 (validé)
+
+Décisions de refactor **hors** logique médicale ; la boucle reste **identique** sauf revue explicite.
+
+| Point | Décision |
+|--------|-----------|
+| **Objectif prioritaire** | **A** — lisibilité / carte du tick pour humains ; **B** — testabilité (**à terme**, pas bloquant pour la première livraison P3). |
+| **Qui valide le merge** | Toi seul. |
+| **Preuve minimale (L1)** | `:plugins:aps:compileFullDebugKotlin --no-daemon` **+** **un** cycle loop manuel sur build réel (le loop tourne, pas d’exception bloquante). Les smokes détaillés du § « Validation recommandée » restent **conseillés** quand tu touches ordre safety / advisor / T3c / V3 / post-hypo. |
+| **Taille des PR** | **M** autorisé (renommage / réorganisation **mécanique**) **à condition** de la **double vérification** ci-dessous. |
+
+**Double vérification non-régression (validateur solo, PR taille M)** — les **deux** passes avant merge :
+
+1. **Pass diff** : relire `git diff` (ou équivalent) en s’appuyant au minimum sur les **invariants 4 → 9** (ordre therapy → legacy repas → T3c ; safety avant advisor ; Hard Brake avant V3 ; post-hypo une fois ; `targetBg` vs `target_bg`). Tout réordonnancement apparent doit être **justifié dans le message de commit** ; sinon = stop, PR à découper.
+2. **Pass L1** : compiler **puis** enchaîner **un** cycle loop **après** cette relecture (pas « j’ai testé avant de finir le diff »).
+
+**Suite P3 avec ce cadrage** : ~~P3a~~ / ~~P3b~~ (faits). **P3c** — machine à états `sealed` large : seulement quand la priorité **B** (testabilité) devient principale.
+
+## Carte P3a — ordre d’exécution du tick AIMI
+
+Référence **lecture seule** : **#0–1** = enveloppe `traceDetermineBasalTick` + construction `AimiTickContext` + **`AimiDetermineBasalTickOrchestrator.run`** dans **`determine_basal`** ; **#2–45** = corps de **`runDetermineBasalTick(ctx)`** (`internal`, même fichier plugin). Les **early return** sont indiqués par « **return** ».
+
+| # | Étape (fonction / bloc) | Notes |
+|---|-------------------------|--------|
+| 0 | Enveloppe **`AimiLoopTelemetry.traceDetermineBasalTick`** | Télémétrie tick ; ne pas déplacer sans revue telemetry. |
+| 1 | **`AimiTickContext(...)`** | Entrées brutes → `ctx` (invariant 1 : références partagées). |
+| 2 | **`runEarlyDetermineBasalStages(ctx)`** | Bootstrap caches / phases / TDD figé. |
+| 3 | **`bootstrapPhysiologyAfterEarlyTick(ctx, tdd7Days)`** | Physio précoce post-early. |
+| 4 | **`buildDecisionContextInitRtSosAndFlatShadow(ctx)`** → `decisionCtx`, `rT`, **`flatBGsDetected` local** | Invariant 2 : utiliser le **local** re-ombrelé après coup. |
+| 5 | **`runRealtimePhysioIobProfilerAndInsulinObserver(ctx, decisionCtx)`** | IOB profiler + `insulinActionState`. |
+| 6 | **`ensureWCycleAndLoadGlucoseStatusOrAbort(ctx, rT)`** | **return** si `Abort`. |
+| 7 | **`runT9PhysioEarlyPkpdAndTubeBootstrap(...)`** | T9 lead + early PKPD + tube ; **≠** BYODA combinéΔ. |
+| 8 | **`runCombinedDeltaByodaAndDynamicPeak(...)`** | BYODA combiné / shortAvg + pic dynamique. |
+| 9 | **`buildPreTherapyAutodriveByodaBootstrap(ctx)`** | `autodriveDisplay` / flags G6 BYODA pour la suite. |
+| 10 | **`runTickClockMaxSmbTirCarbAndGlucoseCopy(...)`** | Horloges / TIR / copie δ sur membres ; **avant** Therapy. |
+| 11 | **`runTherapyHydrateClocksAndExerciseLockoutGate(...)`** | **return** si `ReturnEarly`. |
+| 12 | **`runManualMealModesAfterTherapyGate(...)`** | `applyLegacyMealModes` encapsulé ; **return** si early. Invariant 4 : **avant** T3c. |
+| 13 | **`runT3cBrittleBypassOrReturn(...)`** | **return** si brittle appliqué. |
+| 14 | **`runSignalPreparationPkpdRuntimePhase(...)`** | **return** si `StaleAbort`. |
+| 15 | **`runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep(...)`** | Trajectoire → contexte → TDD/ISF → microbolus dynamiques. |
+| 16 | **`runAdvancedPredictionsAndPredPipePrep(...)`** | Prédictions + **PRED_PIPE** → `sanity`, `minBg` composite, `threshold`. |
+| 17 | **`runPredPipelineSafetyHaltOrReturn(...)`** | **return** si safety `Halt`. Invariant 5 : **avant** advisor. |
+| 18 | `hasReceivedRecentBolus` (45 min) puis **`runMealAdvisorDecisionOrReturn(...)`** | **return** si advisor applique. |
+| 19 | **`runHardBrakeLyraOrReturn(...)`** | Invariant 6 : **avant** V3. |
+| 20 | **`runAutodriveV3MultiVariableBranch(...)`** | `v3AppliedAction`. Invariant 7. |
+| 21 | **`runAutodriveV2FallbackBranch(...)`** | V2 si pas lockout V3. |
+| 22 | **`runPostAutodrivePostHypoClassification(...)`** | `postHypoState` une fois ; invariant 8. |
+| 23 | **`runPostHypoCompressionAndDriftTerminatorOrReturn(...)`** | **return** si compression / drift exit. |
+| 24 | **`buildGlobalAimiBasalScheduleBootstrap(...)`** | Schedule basal + `target_bg` / `min_bg` / `max_bg` **locaux** (≠ `targetBg` membre). |
+| 25 | **`runPostBasalBootstrapIobTickStepsAndHeartRate(...)`** | Pas / FC / deltas tick. |
+| 26 | **`runBasalAimiTddCarbLimitsTirEarlyBasalAndPaiIsf(...)`** | TDD / `basalaimi` / PAI → `timenow`, etc. |
+| 27 | **`applyEndoAndActivityAdjustments(...)`** | |
+| 28 | **`applyIsfBoundsAndPhysioMultipliersAfterEndoActivity(...)`** → réassigne **`sens`** | |
+| 29 | **`runPkpdPredictionsBgiDeviationAndNoisyTargetsStage(...)`** | Met à jour `min_bg` / `target_bg` / `max_bg` **locaux**. |
+| 30 | **`runUamModelCalHypoGuardPostHypoAndSetPredictedSmb(...)`** | `predictedSMB` / `modelcal`. |
+| 31 | **`runSmbDecisionLogAdvisorOneShotAndExecuteInstruction(...)`** | |
+| 32 | **`applySmbAdvisorExecutionToTickStateAndLog(...)`** | État SMB + log console. |
+| 33 | **`runPkpdGuardEndoDampenRedCarpetAndCapSmb(...)`** | `smbToGive` / `intervalsmb`. |
+| 34 | **`snapshotRtResetEnactmentFieldsRestorePredictionsAndPriorityCommands(...)`** | |
+| 35 | **`runMealHyperBasalBoostTickStage`** + **`applyMealHyperBasalBoostOverlayIfNeeded`** | **return** si `CompleteLoop`. |
+| 36 | **`appendAutodriveStatusTirAndCompactPhysioSummaryToReason(...)`** | Raison compacte. |
+| 37 | **`runWCycleIcCsfClampCiAndCarbImpactLogs(...)`** | |
+| 38 | **`runCarbsAdvisorEnableSmbSafetyAndHardHypoBasalStopOrReturn(...)`** | Invariant 9 : **`targetBg` membre** dans `CarbsAdvisor` (via stage interne) — ne pas confondre avec `target_bg` schedule. **return** hypo basal gate. |
+| 39 | **`runPostSafetyMealFirst30NgrHeadroomBasalSmbStage(...)`** | **return** si `EarlyTempBasal`. |
+| 40 | **`runCoreDecisionMaxIobExceededTempBasalGate(...)`** | **return** si `ReturnTempBasal` (MAX_IOB). |
+| 41 | **`runInsulinReqActivityRelaxAndMicrobolusStage(...)`** | Chemin SMB avant moteur basal. |
+| 42 | **`runBasalDecisionEngineDecideStage(...)`** | Garde-fou call site : **`targetBg` membre** vs **`target_bg`** local. |
+| 43 | **`runPostBasalEngineLearnersRtInstrumentationAndAuditorStage(...)`** → `finalResult` | ⚠️ **async** possible sur auditor. |
+| 44 | **`runAimiSnapshotMedicalJsonAndHormonitorExportStage(...)`** | I/O export après appel auditor (ordre historique). |
+| 45 | **`return finalResult`** | |
+
+**P3b (implémenté)** : le corps du tick vit dans **`runDetermineBasalTick`** ; l’ordre et les **return** de ce tableau doivent rester alignés avec le code après chaque refactor.
+
 ## Reste à faire (priorité suggérée)
 
 | Priorité | Tâche | Risque |
 |----------|--------|--------|
-| P1 | Finition : commentaires dupliqués **hors** tronçon post-context — dernière passe : T9/physio/PKPD, PAI, tombstone KDoc, helpers fin de tick | Très faible |
-| P2 | ~~étapes bootstrap + T3c + advisor + Hard Brake + Autodrive V3/V2 + compression/Drift~~ ; ~~bootstrap basal global (`buildGlobalAimiBasalScheduleBootstrap`)~~ ; suite : reste du **SMB / basal** aval dans le tick si encore monolithique, puis **pipeline typée** | Moyen |
-| P3 | Introduire une **pipeline** typée (sealed `AimiTickPhase` ou séquence de stages) derrière la même API publique `determine_basal` | Plus élevé — à valider |
-| P4 | Tests unitaires ciblés sur bootstrap + shadow flat (golden logs ou snapshots limités) | Dépend de la faisabilité dans le module |
+| P1 | **Optionnel / cosmétique** : dans **`runT9PhysioEarlyPkpdAndTubeBootstrap`**, alléger commentaires numérotés hérités (« 3. / 5.5) », etc.) et densité des logs (emojis) **si** bruit visuel. **Ne pas** chercher un « bloc BYODA long » dans `runT9` : BYODA **delta combiné / shortAvg** = **`runCombinedDeltaByodaAndDynamicPeak`** ; prefs + libellé advisor = **`buildPreTherapyAutodriveByodaBootstrap`**. PAI / bannières : déjà couverts par les entrées **P1 (suite)** dans Réalisé — reliquat purement stylistique. | Très faible |
+| P2 | ~~bootstrap…Drift~~ ; ~~déstructurations~~ ; ~~**P3b** corps dans `runDetermineBasalTick`~~ — **ne pas** « factoriser » les gros `AimiBasalDecisionEngineStageBundle` / `FinalizeBundle` sans revue : risque **targetBg** vs **target_bg**. Garde-fou : call site moteur basal. **P3c** si priorité **B** | Moyen |
+| P3 | ~~**P3a**~~ § **Carte P3a** ; ~~**P3b** orchestrateur~~ → **`runDetermineBasalTick`** + **`AimiDetermineBasalTickOrchestrator`**. **P3c** `sealed` large = quand **B** (tests) devient priorité — § **Cadrage P3** | Élevé si P3c trop tôt |
+| P4 | Tests unitaires ciblés — **amorcé** : `AimiDetermineBasalTickOrchestratorTest` (contrat P3b : délégation unique à `runDetermineBasalTick`). Suite : bootstraps « purs » / golden logs si **B** prioritaire | Faible pour smoke orchestrateur |
 
 ## Hors scope immédiat
 
@@ -101,6 +182,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 ## Validation recommandée
 
 - `:plugins:aps:compileFullDebugKotlin --no-daemon`
+- `:plugins:aps:testFullDebugUnitTest --tests "app.aaps.plugins.aps.openAPSAIMI.orchestration.AimiDetermineBasalTickOrchestratorTest"` (contrat P3b)
 - Smoke test runtime : un cycle loop complet avec comparateur off, vérifier logs et décision SMB/basal attendus.
 - Smoke T3c : brittle **on** vs **off** ; avec mode repas / prébolus legacy actif, vérifier que l’ordre therapy → legacy → T3c n’a pas régressé (logs garde prébolus).
 - Smoke Meal Advisor : déclencheur explicite (Snap&Go) vs passif (carbs estimés + `modesCondition` true) ; avec **mode legacy** actif, vérifier skip auto et/ou chemin explicite selon attente ; après apply, confirmer qu’aucun SMB aval ne modifie `rT`.

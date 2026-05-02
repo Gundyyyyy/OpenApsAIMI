@@ -3,7 +3,7 @@
 
 Medical loop code must stay **behavior-identical** unless a change is explicitly reviewed. This document tracks **refactoring only** (structure, readability, test hooks), not medical logic.
 
-**Dernière mise à jour doc :** **`runCarbsAdvisorEnableSmbSafetyAndHardHypoBasalStopOrReturn`** + **`AimiCarbsAdvisorHardHypoBasalGateResult`** — CarbsAdvisor + **`stopBasal`** → TBR 0 ; P1 commentaires NGR / MAX_IOB.
+**Dernière mise à jour doc :** P2 **`runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep`** + **`AimiTrajectoryContextIsfPrep`** (trajectoire → spiral bridge → contexte → fusion ISF → microbolus) ; P1 commentaires récents.
 
 ## Réalisé
 
@@ -63,6 +63,8 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **P2 (suite)** : **`appendAutodriveStatusTirAndCompactPhysioSummaryToReason`** — après overlay basal : raison **`rT`** (Autodrive + TIR + compact peak/pas/FC via **`appendCompactLog`**) ; avant **`runWCycleIcCsfClampCiAndCarbImpactLogs`**. P1 : suppression blocs commentaires obsolètes (FCL / fin predictions) entre WCycle et CarbsAdvisor.
 - **P2 (suite)** : **`AimiCarbsAdvisorHardHypoBasalGateResult`** + **`runCarbsAdvisorEnableSmbSafetyAndHardHypoBasalStopOrReturn`** — enrobe **`runCarbsAdvisorEnableSmbBasalHistoryAndSafetyStage`** + retour anticipé TBR 0 si **`safetyDecision.stopBasal`** (inchangé vs corps du tick). P1 : retrait « -------- 1) / 2) » ; commentaires NGR / MAX_IOB raccourcis.
 - **P1 (doc, même commit)** : bannières ASCII / doublons « FCL » dans le tronçon trajectoire → contexte → TDD/ISF → predictions → safety ; une ligne de garde-fou sur l’ordre safety / advisor ; **`profileISF_raw`** supprimé (dead code). Tronçon Autodrive V3 : bannière « Super-iLet » remplacée par renvoi KDoc.
+- **P1 (suite)** : **`DetermineBasalAIMI2`** — bannières T9 / physio / early PKPD condensées ; bloc PAI (indent + libellés) ; suppression gros commentaire mort (honeymoon `variableSensitivity`) ; **KDoc orphelin / bloc cassé** avant **`isDriftTerminatorCondition`** → une ligne d’archive + KDoc sur le guard ; en-têtes dupliqués decision-pipeline / safety / post-hypo ; **`hydrateMealDataIfTriggered`** / **`executeT3cBrittleMode`** en KDoc court ; section constants Meal Advisor. Logique médicale inchangée.
+- **P2 (suite)** : **`AimiTrajectoryContextIsfPrep`** + **`runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep`** — même ordre qu’avant : **`applyTrajectoryAnalysis`** → **`runTrajectoryTightSpiralSafetyBridge`** → **`applyContextModule`** → **`runTddRatesAndIsfFusionAfterContext`** → microbolus dynamiques ; champs tick (BG, COB, …) lus sur l’instance comme l’inline historique. **`determine_basal`** : indentation normalisée avant **`return finalResult`**.
 
 ### Branche / build
 - Travail sur `feature/aimi-phase2-tick-context`.
@@ -85,7 +87,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 
 | Priorité | Tâche | Risque |
 |----------|--------|--------|
-| P1 | Finition : commentaires dupliqués **hors** tronçon post-context (fait ici pour trajectoire / pipeline décision) | Très faible |
+| P1 | Finition : commentaires dupliqués **hors** tronçon post-context — dernière passe : T9/physio/PKPD, PAI, tombstone KDoc, helpers fin de tick | Très faible |
 | P2 | ~~étapes bootstrap + T3c + advisor + Hard Brake + Autodrive V3/V2 + compression/Drift~~ ; ~~bootstrap basal global (`buildGlobalAimiBasalScheduleBootstrap`)~~ ; suite : reste du **SMB / basal** aval dans le tick si encore monolithique, puis **pipeline typée** | Moyen |
 | P3 | Introduire une **pipeline** typée (sealed `AimiTickPhase` ou séquence de stages) derrière la même API publique `determine_basal` | Plus élevé — à valider |
 | P4 | Tests unitaires ciblés sur bootstrap + shadow flat (golden logs ou snapshots limités) | Dépend de la faisabilité dans le module |

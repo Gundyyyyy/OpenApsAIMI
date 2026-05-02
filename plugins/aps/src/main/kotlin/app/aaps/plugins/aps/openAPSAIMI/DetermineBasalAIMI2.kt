@@ -293,9 +293,7 @@ internal data class AimiDecisionContext(
     }
 }
 
-// ========================================
-// Meal Advisor Configuration Constants
-// ========================================
+// Meal Advisor: IOB discount and minimum carb coverage (see const KDocs below).
 /**
  * IOB Discount Factor for Meal Advisor
  * 
@@ -370,6 +368,18 @@ private data class AimiAdvancedPredictionsPredPipePrep(
     val sanity: PredictionSanityResult,
     val minBg: Double,
     val threshold: Double,
+)
+
+/**
+ * Après PKPD runtime + [applyBasalFirstPolicy] : trajectoire, pont TIGHT_SPIRAL, module contexte,
+ * fusion TDD/ISF, puis microbolus dynamiques pour Autodrive. Ordre et effets de bord identiques à l’historique inline.
+ */
+private data class AimiTrajectoryContextIsfPrep(
+    val sens: Double,
+    val baseSensitivity: Double,
+    val contextTargetOverride: Double?,
+    val dynamicPbolusLarge: Double,
+    val dynamicPbolusSmall: Double,
 )
 
 /**
@@ -1168,30 +1178,19 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         iobTotal: Double,
     ): AimiT9PhysioPkpdTubeBootstrap {
         val profile = ctx.profile
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🌐 T9 — COMPENSATION LAG G6 UNIVERSELLE (V2 + V3)
-        // Applique le correcteur de délai Dexcom G6 (+25% lead) dès ce point,
-        // afin que TOUS les modules aval (physioAdapter, PKPD, LGS, SMB) bénéficient
-        // de la vélocité corrigée — et pas seulement le pipeline Autodrive V3.
-        // ═══════════════════════════════════════════════════════════════════════════
+        // T9: G6 lead compensation (+25%) so physio, PKPD, LGS, SMB share corrected delta (not only Autodrive V3).
         val isG6Sensor = try {
-            // Détection robuste du G6 via le plugin BG source actif
-            // (glucoseStatus ne porte pas le type capteur en V2)
             activePlugin.activeBgSource.javaClass.simpleName.contains("Dexcom", ignoreCase = true) &&
             activePlugin.activeBgSource.javaClass.simpleName.contains("G6", ignoreCase = true)
         } catch (e: Exception) { false }
         val rawVelocityMgdlMin = glucoseStatus.delta / 5.0 // delta mg/dL/5min → mg/dL/min
         val correctedVelocityMgdlMin = continuousStateEstimator.applyG6LeadCompensation(rawVelocityMgdlMin, isG6Sensor)
-        // Reconvertir en mg/dL/5min pour les modules qui utilisent delta
         val correctedDelta = correctedVelocityMgdlMin * 5.0
         if (isG6Sensor && correctedDelta != glucoseStatus.delta.toDouble()) {
             consoleLog.add("🌐 T9 G6-Lead: delta_raw=${String.format("%.1f", glucoseStatus.delta)} → delta_corr=${String.format("%.1f", correctedDelta)} mg/dL/5min")
         }
-        // ═══════════════════════════════════════════════════════════════════════════
 
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🏥 PHYSIOLOGICAL ASSISTANT INTEGRATION (MTR)
-        // ═══════════════════════════════════════════════════════════════════════════
+        // Physio assistant (MTR): multipliers + trace / status line.
         val physioMultipliers = if (preferences.get(app.aaps.core.keys.BooleanKey.AimiPhysioAssistantEnable)) {
             try {
                 physioAdapter.getMultipliers(
@@ -1236,20 +1235,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         } catch (e: Exception) {
              consoleError.add("❌ Physio Log Error: ${e.message}")
         }
-        // ═══════════════════════════════════════════════════════════════════════════
-        
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🔧 FIX CRITIQUE (MTR): EARLY PKPD CALCULATION
-        // PkPd predictions must be available BEFORE SafetyNet, Meal Advisor, and Legacy logic run.
-        // ═══════════════════════════════════════════════════════════════════════════
-        
-        // 1. Prepare Sensitivity for PKPD
-        // Use default 1.0 if autosens not available yet (it is computed later usually)
-        // Accessing autosens_data might fail if it's a local var defined later.
-        val earlyAutosensRatio = 1.0 
-        val earlySens = ctx.profile.sens / earlyAutosensRatio 
-        
-        // 2. Compute PKPD Predictions Immediately
+
+        // Early PKPD: predictions before SafetyNet, Meal Advisor, and legacy branches (autosens ratio 1.0 here; refined later in tick).
+        val earlyAutosensRatio = 1.0
+        val earlySens = ctx.profile.sens / earlyAutosensRatio
+
         val earlyPkpdPredictions = computePkpdPredictions(
             currentBg = glucoseStatus.glucose,
             iobArray = ctx.iobDataArray,
@@ -2728,33 +2718,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             val safeCap = (profileCurrentBasal * 1.5).toFloat()
             this.basalaimi = (this.basalaimi * earlyFactor).coerceAtMost(safeCap)
         }
-        // this.variableSensitivity = if (honeymoon) {
-        //     if (bg < 150) {
-        //         (baseSensitivity * 1.2).toFloat() // Légère augmentation pour honeymoon en cas de BG bas
-        //     } else {
-        //         max(
-        //             (baseSensitivity / 3.0).toFloat(), // Réduction plus forte en honeymoon
-        //             sens.toFloat()
-        //         )
-        //     }
-        // } else {
-        //     if (bg < 100) {
-        //         (baseSensitivity * 1.1).toFloat()
-        //     } else if (bg > 120) {
-        //         val aggressivenessFactor = (1.0 + 0.4 * ((bg - 120.0) / 60.0)).coerceIn(1.0, 1.4)
-        //         val aggressiveSens = (sens / aggressivenessFactor).toFloat()
-        //         max( (baseSensitivity * 0.7).toFloat(), aggressiveSens)
-        //     }else{
-        //
-        //         sens.toFloat()
-        //     }
-        // }
-        var newVariableSensitivity = paiBaseSensitivity // On part de la sensibilité de base (fusionnée)
+        var newVariableSensitivity = paiBaseSensitivity // fused base ISF before PAI adjustment
 
-// --- ✅ ETAPE 2: NOUVELLE LOGIQUE PROACTIVE BASÉE SUR LE PAI ---
+        // PAI: proactive ISF vs BG rise and IOB peak / fade (InsulinActionProfiler signals).
         consoleLog.add("PAI Logic: Base ISF=${"%.1f".format(paiBaseSensitivity)}")
 
-// Scénario 1 : Montée glycémique détectée
+        // Rising BG + high: urgency factor from IOB peak timing.
         if (delta > 1.5 && bg > 120) {
             val urgencyFactor = when {
                 // Le pic est loin (>45min) OU le pic est déjà bien passé (<-30min) -> URGENCE
@@ -2780,7 +2749,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             }
         }
 
-// Scénario 2 : Tendance stable ou en légère baisse mais BG toujours haut
+        // High BG, flat/slow drift: slight aggressiveness if IOB will fade (anti-rebound).
         if (delta in -1.0..1.5 && bg > 140) {
             // Si l'activité de l'insuline va chuter, on risque un rebond.
             if (iobActivityIn30Min < iobActivityNow * 0.8) {
@@ -2791,7 +2760,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         this.variableSensitivity = newVariableSensitivity.toFloat()
 
-// --- FIN DE LA NOUVELLE LOGIQUE ---
         return AimiBasalAimiThroughPaiStageSnapshot(
             timenowHour = timenowCaptured,
             sixAMHour = sixAMHourCaptured,
@@ -4906,6 +4874,64 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
     /**
+     * [applyTrajectoryAnalysis] → [runTrajectoryTightSpiralSafetyBridge] → [applyContextModule] →
+     * [runTddRatesAndIsfFusionAfterContext] → microbolus dynamiques (prefs prébolus ou [calculateDynamicMicroBolus]).
+     * Lit les champs d’instance courants (BG, delta, IOB, COB, …) comme l’ancien bloc dans [determine_basal].
+     */
+    private fun runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep(
+        ctx: AimiTickContext,
+        profile: OapsProfileAimi,
+        rT: RT,
+        iobData: IobTotal,
+        physioMultipliers: PhysioMultipliersMTR,
+        insulinActionState: InsulinActionState,
+        pkpdRuntime: PkPdRuntime?,
+        tdd7Days: Double,
+        tdd7P: Double,
+        tdd24Hrs: Float,
+        pbolusA: Double,
+        pbolusAS: Double,
+        reason: StringBuilder,
+    ): AimiTrajectoryContextIsfPrep {
+        applyTrajectoryAnalysis(
+            currentTime = ctx.currentTime,
+            bg = bg,
+            delta = delta.toDouble(),
+            bgacc = bgacc,
+            iobActivityNow = iobActivityNow,
+            iob = iob,
+            insulinActionState = insulinActionState,
+            lastBolusAgeMinutes = lastBolusAgeMinutes,
+            cob = cob,
+            targetBg = targetBg.toDouble(),
+            profile = profile,
+            rT = rT,
+            uiInteraction = ctx.uiInteraction,
+            relevanceScore = physioMultipliers.trajectoryRelevanceScore
+        )
+        runTrajectoryTightSpiralSafetyBridge(profile, rT, iobData, bg, delta, cob, physioMultipliers)
+        val contextTargetOverride = applyContextModule(bg = bg, iob = iobData.iob, cob = cob.toDouble(), rT = rT)
+        val sens = runTddRatesAndIsfFusionAfterContext(
+            profile = profile,
+            tdd7Days = tdd7Days,
+            tdd7P = tdd7P,
+            tdd24Hrs = tdd24Hrs,
+            pkpdRuntime = pkpdRuntime,
+        )
+        val baseSensitivity = pkpdRuntime?.fusedIsf ?: profile.sens
+        val effectiveISF = sens * ctx.autosensData.ratio
+        val dynamicPbolusLarge = if (pbolusA > 0.0) pbolusA else calculateDynamicMicroBolus(effectiveISF, 25.0, reason)
+        val dynamicPbolusSmall = if (pbolusAS > 0.0) pbolusAS else calculateDynamicMicroBolus(effectiveISF, 15.0, reason)
+        return AimiTrajectoryContextIsfPrep(
+            sens = sens,
+            baseSensitivity = baseSensitivity,
+            contextTargetOverride = contextTargetOverride,
+            dynamicPbolusLarge = dynamicPbolusLarge,
+            dynamicPbolusSmall = dynamicPbolusSmall,
+        )
+    }
+
+    /**
      * [applyAdvancedPredictions] puis [sanitizePredictionValues], min BG composite, [HypoThresholdMath.computeHypoThreshold],
      * log **PRED_PIPE** (pompe joignable = diagnostic uniquement).
      *
@@ -7003,51 +7029,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return false
     }
 
+    // Legacy FCL helper block removed 2026-01-05 (backup: DetermineBasalAIMI2.kt.backup_20260105_221151); superseded by PkPdRuntime / HighBgOverride.
+
     /**
-     * Detects rapid IOB increase which may indicate receptor saturation
-     * and potentially slower insulin absorption.
-     * 
-     * @param currentIOB Current insulin on board
-     * @param lookbackMinutes Time window to check (default 15 min)
-     * @return IOB increase amount if rapid, 0.0 otherwise
+     * Drift terminator: sustained plateau above target with weak rise, positive deviation vs IOB prediction, no recent bolus.
      */
-    
-    /**
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // ❌ CODE MORT SUPPRIMÉ (2026-01-05) - Système FCL Legacy
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //
-    // Fonctions supprimées (partiellement implémentées, jamais utilisées):
-    // - detectRapidIOBIncrease()           : Détection bolus rapide > 2U
-    // - calculateDynamicDIA()              : Ajustement DIA saturation récepteurs
-    // - calculateAdaptivePrebolus()        : Prebolus adaptatif (DISABLED user)
-    // - isHighPlateauBreakerCondition()    : Feature FCL "High Plateau Breaker"
-    // - calculateResistanceHammer()        : Feature FCL boost x1.5 résistance
-    // - checkIneffectivenessWatchdog()     : Watchdog échecs Hammer
-    // - updateWatchdogState()              : Update state Hammer (tournait vide)
-    //
-    // Variables supprimées:
-    // - lastResistanceHammerTime: Long     : État Resistance Hammer (jamais modifié)
-    // - hammerFailureCount: Int            : Compteur échecs (jamais incrémenté)
-    //
-    // Raison suppression: Système partiellement détruit, remplacé par:
-    // - pkpd/PkPdRuntime            : DIA/peak dynamiques + saturation tail
-    // - safety/HighBgOverride       : Gestion montées élevées (progressif vs brutal)
-    //
-    // Total supprimé: 149 lignes (7 fonctions + 1 appel + 2 variables)
-    // Backup: DetermineBasalAIMI2.kt.backup_20260105_221151
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-     * Calculates dynamic DIA and peak time adjustments based on rapid IOB increase.
-     * Large boluses may slow absorption due to receptor saturation.
-     * 
-     * @param profile Base profile with standard DIA/peak
-     * @param rapidIOBAmount Amount of rapid IOB increase
-     * @return Pair of (adjustedDIA, adjustedPeak)
-     */
-
-
-
     private fun isDriftTerminatorCondition(
         bg: Float,
         targetBg: Float,
@@ -7119,11 +7105,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return false
     }
 
-    // =========================================================================
-    // 🛡️ POST-HYPO DISAMBIGUATION GUARD
-    // =========================================================================
-    // État interne : timestamp du dernier cycle où BG < 70 a été observé.
-    // Persiste entre les cycles pour le timer d'expiration ReboundSuspected.
+    // Post-hypo disambiguation ([PostHypoState]); [lastHypoBelow70At] persists for rebound timer.
     private var lastHypoBelow70At: Long = 0L
 
     /**
@@ -9741,43 +9723,27 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
             consoleLog.add("  └ adaptiveMode: ${if (pkpdRuntime.params.diaHrs != 4.0 || pkpdRuntime.params.peakMin != 75.0) "ACTIVE" else "DEFAULT"}")
         }
-        
-        // Phase-space trajectory — see [applyTrajectoryAnalysis]
-        applyTrajectoryAnalysis(
-            currentTime = ctx.currentTime,
-            bg = bg,
-            delta = delta.toDouble(),
-            bgacc = bgacc,
-            iobActivityNow = iobActivityNow,
-            iob = iob,
-            insulinActionState = insulinActionState,
-            lastBolusAgeMinutes = lastBolusAgeMinutes,
-            cob = cob,
-            targetBg = targetBg.toDouble(),
+
+        val trajContextIsf = runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep(
+            ctx = ctx,
             profile = profile,
             rT = rT,
-            uiInteraction = ctx.uiInteraction,
-            relevanceScore = physioMultipliers.trajectoryRelevanceScore
-        )
-
-        // TIGHT_SPIRAL → proactive basal reduction — see [runTrajectoryTightSpiralSafetyBridge]
-        runTrajectoryTightSpiralSafetyBridge(profile, rT, iob_data, bg, delta, cob, physioMultipliers)
-
-        val contextTargetOverride = applyContextModule(bg = bg, iob = iob_data.iob, cob = cob.toDouble(), rT = rT)
-
-        var sens = runTddRatesAndIsfFusionAfterContext(
-            profile = profile,
+            iobData = iob_data,
+            physioMultipliers = physioMultipliers,
+            insulinActionState = insulinActionState,
+            pkpdRuntime = pkpdRuntime,
             tdd7Days = tdd7Days,
             tdd7P = tdd7P,
             tdd24Hrs = tdd24Hrs,
-            pkpdRuntime = pkpdRuntime,
+            pbolusA = pbolusA,
+            pbolusAS = pbolusAS,
+            reason = reason,
         )
-        val baseSensitivity = pkpdRuntime?.fusedIsf ?: profile.sens
-
-        // effectiveISF = schedule ISF × autosens ratio (resistance/sensitivity)
-        val effectiveISF = sens * ctx.autosensData.ratio
-        val dynamicPbolusLarge = if (pbolusA > 0.0) pbolusA else calculateDynamicMicroBolus(effectiveISF, 25.0, reason)
-        val dynamicPbolusSmall = if (pbolusAS > 0.0) pbolusAS else calculateDynamicMicroBolus(effectiveISF, 15.0, reason)
+        var sens = trajContextIsf.sens
+        val baseSensitivity = trajContextIsf.baseSensitivity
+        val contextTargetOverride = trajContextIsf.contextTargetOverride
+        val dynamicPbolusLarge = trajContextIsf.dynamicPbolusLarge
+        val dynamicPbolusSmall = trajContextIsf.dynamicPbolusSmall
 
         val (sanity, minBg, threshold) = runAdvancedPredictionsAndPredPipePrep(
             ctx = ctx,
@@ -10325,29 +10291,29 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             )
         )
 
-            // Learners post-moteur, TBR final, comparator, instrumentation RT, auditor — see [runPostBasalEngineLearnersRtInstrumentationAndAuditorStage]
-            val finalResult = runPostBasalEngineLearnersRtInstrumentationAndAuditorStage(
-                AimiPostBasalEngineFinalizeBundle(
-                    ctx = ctx,
-                    profile = profile,
-                    originalProfile = originalProfile,
-                    rT = rT,
-                    basalDecision = basalDecision,
-                    flatBGsDetected = flatBGsDetected,
-                    pkpdRuntime = pkpdRuntime,
-                    tdd7Days = tdd7Days,
-                    intervalsmb = intervalsmb,
-                )
-            )
-
-            // 🏥 AIMI SNAPSHOT + JSONL + EXPORT — see [runAimiSnapshotMedicalJsonAndHormonitorExportStage]
-            runAimiSnapshotMedicalJsonAndHormonitorExportStage(
+        // Learners post-moteur, TBR final, comparator, instrumentation RT, auditor — see [runPostBasalEngineLearnersRtInstrumentationAndAuditorStage]
+        val finalResult = runPostBasalEngineLearnersRtInstrumentationAndAuditorStage(
+            AimiPostBasalEngineFinalizeBundle(
                 ctx = ctx,
                 profile = profile,
-                decisionCtx = decisionCtx,
-                finalResult = finalResult,
+                originalProfile = originalProfile,
+                rT = rT,
+                basalDecision = basalDecision,
+                flatBGsDetected = flatBGsDetected,
                 pkpdRuntime = pkpdRuntime,
+                tdd7Days = tdd7Days,
+                intervalsmb = intervalsmb,
             )
+        )
+
+        // 🏥 AIMI SNAPSHOT + JSONL + EXPORT — see [runAimiSnapshotMedicalJsonAndHormonitorExportStage]
+        runAimiSnapshotMedicalJsonAndHormonitorExportStage(
+            ctx = ctx,
+            profile = profile,
+            decisionCtx = decisionCtx,
+            finalResult = finalResult,
+            pkpdRuntime = pkpdRuntime,
+        )
 
         return finalResult
     }
@@ -10489,14 +10455,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         // Cap only by absolute max config (safety)
         return if (boosted > maxBasalConfig) maxBasalConfig else boosted
     }
-// -----------------------------------------------------------------------------------------
-    // ⚙️ DECISION PIPELINE HELPERS (AIMI 2.0 Refactor)
-    // -----------------------------------------------------------------------------------------
 
-    // -----------------------------------------------------
-    // ⚔️ DECISION PIPELINE HELPERS (AIMI 2.0 Refactor)
-    // -----------------------------------------------------
-
+    // Decision pipeline helpers: degrade plan, DECISION_FINAL / basal neural, safety entry.
     private enum class ModeDegradeLevel(val value: Int, val label: String) {
         NORMAL(0, "Normal"),
         CAUTION(1, "Caution"),
@@ -10657,10 +10617,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         appendDecisionFinalTickLine(diag, activityThreshold)
     }
 
-
-    // ==========================================
-    // 🛡️ PRIORITY 1: SAFETY (LGS/HYPO)
-    // ==========================================
+    // Safety (LGS / hypo): [trySafetyStart] entry.
     private fun trySafetyStart(
         bg: Double,
         delta: Float,
@@ -10898,9 +10855,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
     }
 
-    // =========================================================================================
-    // 🛠️ MTR FIX Helper: Hydrate COB from Prefs if DB is too slow (Isolated to avoid VerifyError)
-    // =========================================================================================
+    /** Hydrate [MealData.mealCOB] from prefs when advisor triggered and DB COB still zero (latency bypass). */
     private fun hydrateMealDataIfTriggered(mealData: MealData) {
         // We handle the read directly to keep the stack simple in the main method
         val isExplicitAdvisorRun: Boolean = preferences.get(BooleanKey.OApsAIMIMealAdvisorTrigger)
@@ -10915,9 +10870,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
     }
 
-    // =========================================================================================
-    // 🛡️ T3C BRITTLE MODE — Dynamic PI Basal (Strict Basal-First Isolation)
-    // =========================================================================================
+    /** T3c brittle mode: dynamic PI basal (basal-first isolation). */
     private fun executeT3cBrittleMode(
         bg: Double,
         delta: Float,

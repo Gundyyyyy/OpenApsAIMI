@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.openAPSAIMI.physio
 
+import android.os.Looper
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -555,6 +556,13 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
      * Replaces the old diagnostic log with a Snapshot summary
      */
     fun getDetailedLogString(): String {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            try {
+                repo.fetchSnapshot()
+            } catch (_: Exception) {
+                // Debug string must not fail the loop tick if merge/read throws.
+            }
+        }
         val snapshot = repo.getLastSnapshot()
         
         if (!snapshot.isValid || snapshot.timestamp == 0L) {

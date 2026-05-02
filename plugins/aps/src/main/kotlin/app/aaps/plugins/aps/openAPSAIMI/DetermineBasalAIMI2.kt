@@ -5752,7 +5752,32 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         heartRate?.let { reason.append(context.getString(R.string.heart_rate, if (it.isNaN()) "--" else "%.0f".format(it))) }
         reason.append("\n")
     }
-    
+
+    /**
+     * Lignes **rT.reason** : statut Autodrive / mode repas, snapshot TIR (membres [currentTIRLow] / [currentTIRRange] / [currentTIRAbove]),
+     * puis [appendCompactLog] sur [reasonAimi] et concaténation — inchangé vs inline historique.
+     */
+    private fun appendAutodriveStatusTirAndCompactPhysioSummaryToReason(
+        rT: RT,
+        autodriveDisplay: String,
+        activeModeName: String,
+        reasonAimi: StringBuilder,
+        tp: Double,
+        bg: Double,
+        delta: Float,
+        recentSteps5Minutes: Int,
+        averageBeatsPerMinute: Double,
+    ) {
+        rT.reason.appendLine(
+            context.getString(R.string.autodrive_status, autodriveDisplay, activeModeName),
+        )
+        rT.reason.appendLine(
+            "📊 TIR: <70: ${"%.1f".format(currentTIRLow)}% | 70–180: ${"%.1f".format(currentTIRRange)}% | >180: ${"%.1f".format(currentTIRAbove)}%",
+        )
+        appendCompactLog(reasonAimi, tp, bg, delta, recentSteps5Minutes, averageBeatsPerMinute)
+        rT.reason.append(reasonAimi.toString())
+    }
+
     /**
      * 🧠 AI Auditor Helper: Calculate cumulative SMB delivered in last 30 minutes
      * Used for intelligent audit triggering
@@ -10066,19 +10091,18 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val basalBoostApplied = mealHyperBasalOverlayState.basalBoostApplied
         val basalBoostSource = mealHyperBasalOverlayState.basalBoostSource
 
-        // Final Status & TIR Logging
-        rT.reason.appendLine(
-             context.getString(R.string.autodrive_status, autodriveDisplay, activeModeName)
+        appendAutodriveStatusTirAndCompactPhysioSummaryToReason(
+            rT = rT,
+            autodriveDisplay = autodriveDisplay,
+            activeModeName = activeModeName,
+            reasonAimi = reasonAimi,
+            tp = tp,
+            bg = bg,
+            delta = delta,
+            recentSteps5Minutes = recentSteps5Minutes,
+            averageBeatsPerMinute = averageBeatsPerMinute,
         )
-        // Cleaned up Logging
 
-        rT.reason.appendLine(
-            "📊 TIR: <70: ${"%.1f".format(currentTIRLow)}% | 70–180: ${"%.1f".format(currentTIRRange)}% | >180: ${"%.1f".format(currentTIRAbove)}%"
-        )
-        appendCompactLog(reasonAimi, tp, bg, delta, recentSteps5Minutes, averageBeatsPerMinute)
-        rT.reason.append(reasonAimi.toString())
-        
-        // 🔮 FCL 11.0: WCycle IC → CSF, clamp field [ci], remaining CA + carb-impact log — see [runWCycleIcCsfClampCiAndCarbImpactLogs]
         val wCycleCsfCarbImpact = runWCycleIcCsfClampCiAndCarbImpactLogs(
             profile = profile,
             ctx = ctx,
@@ -10090,11 +10114,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
         val csf = wCycleCsfCarbImpact.csf
         val slopeFromDeviations = wCycleCsfCarbImpact.slopeFromDeviations
-        // MOVED (FCL 11.0): Logic hoisted to top of determine_basal
-        // (Deleted duplicate block)
-//fin predictions
-////////////////////////////////////////////
-//estimation des glucides nécessaires si risque hypo — see [runCarbsAdvisorEnableSmbBasalHistoryAndSafetyStage]
+
         val carbsSmbSafetyStage = runCarbsAdvisorEnableSmbBasalHistoryAndSafetyStage(
             profile = profile,
             ctx = ctx,

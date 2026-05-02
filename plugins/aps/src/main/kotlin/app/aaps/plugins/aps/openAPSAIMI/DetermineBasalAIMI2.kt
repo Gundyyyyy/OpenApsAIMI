@@ -3721,6 +3721,64 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
     }
 
+    private sealed class AimiCarbsAdvisorHardHypoBasalGateResult {
+        data class ReturnZeroTempBasal(val rT: RT) : AimiCarbsAdvisorHardHypoBasalGateResult()
+        data class Continue(val stage: AimiCarbsAdvisorEnableSmbSafetyStage) : AimiCarbsAdvisorHardHypoBasalGateResult()
+    }
+
+    /**
+     * [runCarbsAdvisorEnableSmbBasalHistoryAndSafetyStage] puis, si [SafetyDecision.stopBasal], **TBR 0 % 30 min** (même [setTempBasal] / [adaptiveMult] qu’avant).
+     */
+    private fun runCarbsAdvisorEnableSmbSafetyAndHardHypoBasalStopOrReturn(
+        profile: OapsProfileAimi,
+        ctx: AimiTickContext,
+        rT: RT,
+        glucoseStatus: GlucoseStatusAIMI,
+        iobData: IobTotal,
+        csf: Double,
+        slopeFromDeviations: Double,
+        sens: Double,
+        bg: Double,
+        iob: Float,
+        cob: Float,
+        delta: Float,
+        eventualBG: Double,
+        combinedDelta: Float,
+        deviation: Int,
+        bgi: Double,
+        targetBgSchedule: Double,
+        maxBgSchedule: Double,
+        windowSinceDoseInt: Int,
+    ): AimiCarbsAdvisorHardHypoBasalGateResult {
+        val stage = runCarbsAdvisorEnableSmbBasalHistoryAndSafetyStage(
+            profile = profile,
+            ctx = ctx,
+            rT = rT,
+            glucoseStatus = glucoseStatus,
+            iobData = iobData,
+            csf = csf,
+            slopeFromDeviations = slopeFromDeviations,
+            sens = sens,
+            bg = bg,
+            iob = iob,
+            cob = cob,
+            delta = delta,
+            eventualBG = eventualBG,
+            combinedDelta = combinedDelta,
+            deviation = deviation,
+            bgi = bgi,
+            targetBgSchedule = targetBgSchedule,
+            maxBgSchedule = maxBgSchedule,
+            windowSinceDoseInt = windowSinceDoseInt,
+        )
+        if (stage.safetyDecision.stopBasal) {
+            return AimiCarbsAdvisorHardHypoBasalGateResult.ReturnZeroTempBasal(
+                setTempBasal(0.0, 30, profile, rT, ctx.currentTemp, adaptiveMultiplier = adaptiveMult),
+            )
+        }
+        return AimiCarbsAdvisorHardHypoBasalGateResult.Continue(stage)
+    }
+
     private sealed class AimiPostSafetyMealNgrStageResult {
         data class EarlyTempBasal(val rt: RT) : AimiPostSafetyMealNgrStageResult()
         data class Continue(
@@ -10115,27 +10173,32 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val csf = wCycleCsfCarbImpact.csf
         val slopeFromDeviations = wCycleCsfCarbImpact.slopeFromDeviations
 
-        val carbsSmbSafetyStage = runCarbsAdvisorEnableSmbBasalHistoryAndSafetyStage(
-            profile = profile,
-            ctx = ctx,
-            rT = rT,
-            glucoseStatus = glucoseStatus,
-            iobData = iob_data,
-            csf = csf,
-            slopeFromDeviations = slopeFromDeviations,
-            sens = sens,
-            bg = bg,
-            iob = iob,
-            cob = cob,
-            delta = delta,
-            eventualBG = eventualBG,
-            combinedDelta = combinedDelta,
-            deviation = deviation,
-            bgi = bgi,
-            targetBgSchedule = target_bg,
-            maxBgSchedule = max_bg,
-            windowSinceDoseInt = windowSinceDoseInt,
-        )
+        val carbsSmbSafetyStage = when (
+            val gate = runCarbsAdvisorEnableSmbSafetyAndHardHypoBasalStopOrReturn(
+                profile = profile,
+                ctx = ctx,
+                rT = rT,
+                glucoseStatus = glucoseStatus,
+                iobData = iob_data,
+                csf = csf,
+                slopeFromDeviations = slopeFromDeviations,
+                sens = sens,
+                bg = bg,
+                iob = iob,
+                cob = cob,
+                delta = delta,
+                eventualBG = eventualBG,
+                combinedDelta = combinedDelta,
+                deviation = deviation,
+                bgi = bgi,
+                targetBgSchedule = target_bg,
+                maxBgSchedule = max_bg,
+                windowSinceDoseInt = windowSinceDoseInt,
+            )
+        ) {
+            is AimiCarbsAdvisorHardHypoBasalGateResult.ReturnZeroTempBasal -> return gate.rT
+            is AimiCarbsAdvisorHardHypoBasalGateResult.Continue -> gate.stage
+        }
         val forcedBasalmealmodes = carbsSmbSafetyStage.forcedBasalmealmodes
         val forcedBasal = carbsSmbSafetyStage.forcedBasal
         val enableSMB = carbsSmbSafetyStage.enableSMB
@@ -10144,12 +10207,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val minutesSinceLastChange = carbsSmbSafetyStage.minutesSinceLastChange
         val safetyDecision = carbsSmbSafetyStage.safetyDecision
 
-// -------- 1) sécurité hypo dure, avant tout
-        if (safetyDecision.stopBasal) {
-            return setTempBasal(0.0, 30, profile, rT, ctx.currentTemp, adaptiveMultiplier = adaptiveMult)
-        }
-
-        // -------- 2) repas 0–30 min (TBR forcée) puis NGR + headroom / boosts — see [runPostSafetyMealFirst30NgrHeadroomBasalSmbStage]
+        // NGR / repas 0–30 + headroom — see [runPostSafetyMealFirst30NgrHeadroomBasalSmbStage]
         var isMealActive = false
         var runtimeMinValue = Int.MAX_VALUE
         when (
@@ -10180,7 +10238,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 smbToGive = mealNgr.smbToGive
             }
         }
-        // 📝 Décision centralisée + gate IOB max — see [runCoreDecisionMaxIobExceededTempBasalGate]
+        // MAX_IOB gate — see [runCoreDecisionMaxIobExceededTempBasalGate]
         val maxIobGateContinue = when (
             val maxIobGate = runCoreDecisionMaxIobExceededTempBasalGate(
                 profile = profile,

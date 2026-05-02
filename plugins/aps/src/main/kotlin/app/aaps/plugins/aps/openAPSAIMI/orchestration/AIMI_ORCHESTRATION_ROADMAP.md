@@ -3,7 +3,7 @@
 
 Medical loop code must stay **behavior-identical** unless a change is explicitly reviewed. This document tracks **refactoring only** (structure, readability, test hooks), not medical logic.
 
-**Dernière mise à jour doc :** **`appendAutodriveStatusTirAndCompactPhysioSummaryToReason`** — statut Autodrive / mode, ligne TIR, **`appendCompactLog`** + **`reasonAimi`** ; nettoyage commentaires FCL / « fin predictions » avant CarbsAdvisor.
+**Dernière mise à jour doc :** **`runCarbsAdvisorEnableSmbSafetyAndHardHypoBasalStopOrReturn`** + **`AimiCarbsAdvisorHardHypoBasalGateResult`** — CarbsAdvisor + **`stopBasal`** → TBR 0 ; P1 commentaires NGR / MAX_IOB.
 
 ## Réalisé
 
@@ -61,6 +61,7 @@ Medical loop code must stay **behavior-identical** unless a change is explicitly
 - **P2 (suite)** : **`runPostAutodrivePostHypoClassification`** + **`AimiPostAutodrivePostHypoBundle`** — après **`runAutodriveV2FallbackBranch`** : prefs carbs + **`classifyPostHypoState`** ; le bundle expose aussi **`estimatedCarbs` / `estimatedCarbsTimeMs`** pour **`timeSinceEstimateMin`** et **`resolveMealHyperBasalBoostOutcome`** (même lecture prefs qu’avant, pas de double fetch). Type imbriqué dans la classe (réf. **`PostHypoState`**).
 - **P2 (suite)** : **`AimiMealHyperBasalBoostTickResult`** (`CompleteLoop` / `ContinueWithOverlay`) + **`runMealHyperBasalBoostTickStage`** — **`timeSinceEstimateMin`** + **`resolveMealHyperBasalBoostOutcome`** ; **`applyMealHyperBasalBoostOverlayIfNeeded`** applique TBR overlay et produit **`AimiMealHyperBasalOverlayState`** (**`basalBoostApplied`**, **`basalBoostSource`**) pour **`runInsulinReqActivityRelaxAndMicrobolusStage`**. Sealed distinct de **`AimiMealHyperBasalBoostOutcome`** (domaine vs orchestration tick).
 - **P2 (suite)** : **`appendAutodriveStatusTirAndCompactPhysioSummaryToReason`** — après overlay basal : raison **`rT`** (Autodrive + TIR + compact peak/pas/FC via **`appendCompactLog`**) ; avant **`runWCycleIcCsfClampCiAndCarbImpactLogs`**. P1 : suppression blocs commentaires obsolètes (FCL / fin predictions) entre WCycle et CarbsAdvisor.
+- **P2 (suite)** : **`AimiCarbsAdvisorHardHypoBasalGateResult`** + **`runCarbsAdvisorEnableSmbSafetyAndHardHypoBasalStopOrReturn`** — enrobe **`runCarbsAdvisorEnableSmbBasalHistoryAndSafetyStage`** + retour anticipé TBR 0 si **`safetyDecision.stopBasal`** (inchangé vs corps du tick). P1 : retrait « -------- 1) / 2) » ; commentaires NGR / MAX_IOB raccourcis.
 - **P1 (doc, même commit)** : bannières ASCII / doublons « FCL » dans le tronçon trajectoire → contexte → TDD/ISF → predictions → safety ; une ligne de garde-fou sur l’ordre safety / advisor ; **`profileISF_raw`** supprimé (dead code). Tronçon Autodrive V3 : bannière « Super-iLet » remplacée par renvoi KDoc.
 
 ### Branche / build

@@ -3458,6 +3458,85 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
     /**
+     * Résultat du tronçon meal/hyper basal dans le tick : soit **sortie loop** (TBR max 30 min déjà posé),
+     * soit **overlay** optionnel sur [rT] (SMB aval inchangé).
+     */
+    private sealed class AimiMealHyperBasalBoostTickResult {
+        data class CompleteLoop(val rT: RT) : AimiMealHyperBasalBoostTickResult()
+        data class ContinueWithOverlay(val overlayRate: Double?) : AimiMealHyperBasalBoostTickResult()
+    }
+
+    /**
+     * État basal-boost pour logs SMB aval ([runInsulinReqActivityRelaxAndMicrobolusStage]) — pas des membres d’instance.
+     */
+    private data class AimiMealHyperBasalOverlayState(
+        val basalBoostApplied: Boolean,
+        val basalBoostSource: String?,
+    )
+
+    /**
+     * [timeSinceEstimateMin] puis [resolveMealHyperBasalBoostOutcome] — même horloge « maintenant » qu’avant l’extraction.
+     */
+    private fun runMealHyperBasalBoostTickStage(
+        ctx: AimiTickContext,
+        profile: OapsProfileAimi,
+        rT: RT,
+        basal: Double,
+        profileCurrentBasal: Double,
+        isMealAdvisorOneShot: Boolean,
+        targetBg: Double,
+        estimatedCarbs: Double,
+        estimatedCarbsTimeMs: Long,
+    ): AimiMealHyperBasalBoostTickResult {
+        val timeSinceEstimateMin =
+            if (estimatedCarbsTimeMs > 0L) (System.currentTimeMillis() - estimatedCarbsTimeMs) / 60000.0 else Double.MAX_VALUE
+        return when (
+            val o = resolveMealHyperBasalBoostOutcome(
+                ctx = ctx,
+                profile = profile,
+                rT = rT,
+                basal = basal,
+                profileCurrentBasal = profileCurrentBasal,
+                isMealAdvisorOneShot = isMealAdvisorOneShot,
+                targetBg = targetBg,
+                timeSinceEstimateMin = timeSinceEstimateMin,
+                estimatedCarbs = estimatedCarbs,
+            )
+        ) {
+            is AimiMealHyperBasalBoostOutcome.CompleteWithTempBasal ->
+                AimiMealHyperBasalBoostTickResult.CompleteLoop(o.rT)
+            is AimiMealHyperBasalBoostOutcome.ContinueWithOptionalRate ->
+                AimiMealHyperBasalBoostTickResult.ContinueWithOverlay(o.rate)
+        }
+    }
+
+    /**
+     * Applique l’overlay basal (30 min) si [overlayRate] non null ; retourne les flags pour la suite du tick.
+     */
+    private fun applyMealHyperBasalBoostOverlayIfNeeded(
+        overlayRate: Double?,
+        deliverAt: Long,
+        rT: RT,
+    ): AimiMealHyperBasalOverlayState {
+        val basalBoostApplied = overlayRate != null
+        val basalBoostSource: String? = when {
+            overlayRate != null && rT.reason.contains("Global Hyper Kicker") -> "HyperKicker"
+            overlayRate != null && rT.reason.contains("Post-Meal Boost") -> "PostMealBoost"
+            overlayRate != null && rT.reason.contains("Meal") -> "MealMode"
+            overlayRate != null && rT.reason.contains("fasting") -> "Fasting"
+            else -> null
+        }
+        if (basalBoostApplied && overlayRate != null) {
+            rT.rate = overlayRate.coerceAtLeast(0.0)
+            rT.deliverAt = deliverAt
+            rT.duration = 30
+            consoleLog.add("BOOST_BASAL_APPLIED source=${basalBoostSource ?: "Unknown"} rate=${"%.2f".format(Locale.US, overlayRate)}U/h")
+            rT.reason.append("BasalBoost: ${basalBoostSource ?: "?"} ${"%.2f".format(Locale.US, overlayRate)}U/h. ")
+        }
+        return AimiMealHyperBasalOverlayState(basalBoostApplied, basalBoostSource)
+    }
+
+    /**
      * WCycle IC multiplier → adjusted CR → CSF, clamp **[ci]** (mg/dL/5m, field) to absorption cap, remaining-CA bookkeeping + slopes, then CI / duration log line.
      * Mutates [ci] (Float field) like the inlined block; returns **[csf]** and **[slopeFromDeviations]** for [CarbsAdvisor] / hypo minutes below.
      */
@@ -9967,54 +10046,26 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             bg = bg,
         )
 
-        // ====================================================================================
-
-
-        // Try already consumed above
-        val timeSinceEstimateMin = if (estimatedCarbsTime > 0L) (System.currentTimeMillis() - estimatedCarbsTime) / 60000.0 else Double.MAX_VALUE
-        
-        // Trigger already consumed above
-        // Meal / snack / 30 min max-TBR branches return from [resolveMealHyperBasalBoostOutcome]; overlay rates continue below.
-        val rate: Double? = when (val mealHyperBasalOutcome = resolveMealHyperBasalBoostOutcome(
-            ctx = ctx,
-            profile = profile,
-            rT = rT,
-            basal = basal,
-            profileCurrentBasal = profile_current_basal,
-            isMealAdvisorOneShot = isMealAdvisorOneShot,
-            targetBg = target_bg,
-            timeSinceEstimateMin = timeSinceEstimateMin,
-            estimatedCarbs = estimatedCarbs,
-        )) {
-            is AimiMealHyperBasalBoostOutcome.CompleteWithTempBasal -> return mealHyperBasalOutcome.rT
-            is AimiMealHyperBasalBoostOutcome.ContinueWithOptionalRate -> mealHyperBasalOutcome.rate
+        val mealHyperBasalOverlayState = when (
+            val stage = runMealHyperBasalBoostTickStage(
+                ctx = ctx,
+                profile = profile,
+                rT = rT,
+                basal = basal,
+                profileCurrentBasal = profile_current_basal,
+                isMealAdvisorOneShot = isMealAdvisorOneShot,
+                targetBg = target_bg,
+                estimatedCarbs = estimatedCarbs,
+                estimatedCarbsTimeMs = estimatedCarbsTime,
+            )
+        ) {
+            is AimiMealHyperBasalBoostTickResult.CompleteLoop -> return stage.rT
+            is AimiMealHyperBasalBoostTickResult.ContinueWithOverlay ->
+                applyMealHyperBasalBoostOverlayIfNeeded(stage.overlayRate, deliverAt, rT)
         }
+        val basalBoostApplied = mealHyperBasalOverlayState.basalBoostApplied
+        val basalBoostSource = mealHyperBasalOverlayState.basalBoostSource
 
-
-        // 🔧 FIX: Basal Boost Overlay Pattern (No Early Return)
-        // ================================================================
-        // Track basal boost source for logging and modulation
-        val basalBoostApplied = rate != null
-        val basalBoostSource: String? = when {
-            rate != null && rT.reason.contains("Global Hyper Kicker") -> "HyperKicker"
-            rate != null && rT.reason.contains("Post-Meal Boost") -> "PostMealBoost"  
-            rate != null && rT.reason.contains("Meal") -> "MealMode"
-            rate != null && rT.reason.contains("fasting") -> "Fasting"
-            else -> null
-        }
-        
-        // Apply basal boost if calculated (OVERLAY - don't block SMB)
-        if (basalBoostApplied && rate != null) {
-            rT.rate = rate.coerceAtLeast(0.0)
-            
-            rT.deliverAt = deliverAt
-            rT.duration = 30
-            consoleLog.add("BOOST_BASAL_APPLIED source=${basalBoostSource ?: "Unknown"} rate=${"%.2f".format(Locale.US, rate)}U/h")
-            rT.reason.append("BasalBoost: ${basalBoostSource ?: "?"} ${"%.2f".format(Locale.US, rate)}U/h. ")
-            // REMOVED: return rT (continue to SMB calculation)
-        }
-        // ================================================================
-        
         // Final Status & TIR Logging
         rT.reason.appendLine(
              context.getString(R.string.autodrive_status, autodriveDisplay, activeModeName)

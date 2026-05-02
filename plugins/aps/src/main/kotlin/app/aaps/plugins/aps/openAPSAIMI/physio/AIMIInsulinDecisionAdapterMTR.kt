@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /**
  * 💉 AIMI Insulin Decision Adapter - MTR Implementation
@@ -153,7 +154,9 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
             )
             return PhysioMultipliersMTR.NEUTRAL
         }
-        
+
+        ensurePhysioSnapshotRefreshed()
+
         // Get current snapshot (still needed for Real-Time Activity Brake)
         val snapshot = repo.getLastSnapshot() 
         
@@ -534,6 +537,23 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
     // ═══════════════════════════════════════════════════════════════════════
     
     private fun Double.format(decimals: Int): String = "%.${decimals}f".format(this)
+
+    /**
+     * [HealthContextRepository.fetchSnapshot] reads steps/HR via DB on a non-main thread
+     * ([UnifiedActivityProviderMTR] skips reads on the UI looper). Uses [runBlocking] on the
+     * main looper only so a brief UI stall is possible; loop/APS should prefer a background thread.
+     */
+    private fun ensurePhysioSnapshotRefreshed() {
+        try {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                runBlocking(Dispatchers.IO) { repo.fetchSnapshot() }
+            } else {
+                repo.fetchSnapshot()
+            }
+        } catch (_: Exception) {
+            // Physio must not fail the loop tick if merge/read throws.
+        }
+    }
     
     /**
      * Gets current adapter status for debugging
@@ -556,13 +576,7 @@ class AIMIInsulinDecisionAdapterMTR @Inject constructor(
      * Replaces the old diagnostic log with a Snapshot summary
      */
     fun getDetailedLogString(): String {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            try {
-                repo.fetchSnapshot()
-            } catch (_: Exception) {
-                // Debug string must not fail the loop tick if merge/read throws.
-            }
-        }
+        ensurePhysioSnapshotRefreshed()
         val snapshot = repo.getLastSnapshot()
         
         if (!snapshot.isValid || snapshot.timestamp == 0L) {

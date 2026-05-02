@@ -6977,6 +6977,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
     /**
+     * [classifyPostHypoState] + prefs carbs réutilisées plus bas (`timeSinceEstimateMin`, [resolveMealHyperBasalBoostOutcome]).
+     */
+    private data class AimiPostAutodrivePostHypoBundle(
+        val postHypoState: PostHypoState,
+        val estimatedCarbs: Double,
+        /** Horodatage prefs advisor (ms) ; l’âge se recalcule en aval avec `System.currentTimeMillis()`. */
+        val estimatedCarbsTimeMs: Long,
+    )
+
+    /**
      * Retourne vrai si le contexte ressemble à un repas SANS déclaration explicite
      * (cas Autodrive V3 où l'utilisateur ne déclare pas de repas manuellement).
      * Requiert ≥ 2 critères parmi 4 pour éviter les faux positifs.
@@ -7073,6 +7083,55 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             reason.append("🛡️ POST_HYPO_REBOUND: Rebond suspecté (${sinceHypoMs / 60_000}min depuis BG<70, COB=${"%.1f".format(cob)}g noMeal)\n")
             PostHypoState.ReboundSuspected(sinceHypoMs)
         }
+    }
+
+    /**
+     * Après [runAutodriveV2FallbackBranch] : lecture prefs advisor (carbs / horodatage), âge pour [classifyPostHypoState],
+     * agrégat mode repas explicite, puis classification (**effets** sur fenêtre hypo & logs [reason]).
+     *
+     * Retourne aussi **`estimatedCarbs` / `estimatedCarbsTimeMs`** pour le même tick (overlay repas / hyper plus bas).
+     *
+     * **Invariant** : une seule invocation par tick — [AimiPostAutodrivePostHypoBundle.postHypoState] pour drift/SMB (roadmap §8).
+     */
+    private fun runPostAutodrivePostHypoClassification(
+        recentBGs: List<Float>,
+        cob: Float,
+        shortAvgDeltaAdj: Float,
+        delta: Float,
+        slopeFromMinDeviation: Double,
+        mealTime: Boolean,
+        bfastTime: Boolean,
+        lunchTime: Boolean,
+        dinnerTime: Boolean,
+        highCarbTime: Boolean,
+        snackTime: Boolean,
+        reason: StringBuilder,
+    ): AimiPostAutodrivePostHypoBundle {
+        val localHour = Calendar.getInstance()[Calendar.HOUR_OF_DAY]
+        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
+        val estimatedCarbsTimeDouble = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime)
+        val estimatedCarbsTime = estimatedCarbsTimeDouble.toLong()
+        val estimatedCarbsAgeMs =
+            if (estimatedCarbsTime > 0L) System.currentTimeMillis() - estimatedCarbsTime else Long.MAX_VALUE
+        val explicitMealMode =
+            mealTime || lunchTime || dinnerTime || bfastTime || highCarbTime || snackTime
+        val postHypoState = classifyPostHypoState(
+            recentBGs = recentBGs,
+            cob = cob.toDouble(),
+            explicitMealMode = explicitMealMode,
+            shortAvgDelta = shortAvgDeltaAdj,
+            delta = delta,
+            slopeFromMinDeviation = slopeFromMinDeviation,
+            estimatedCarbs = estimatedCarbs,
+            estimatedCarbsAgeMs = estimatedCarbsAgeMs,
+            localHour = localHour,
+            reason = reason,
+        )
+        return AimiPostAutodrivePostHypoBundle(
+            postHypoState = postHypoState,
+            estimatedCarbs = estimatedCarbs,
+            estimatedCarbsTimeMs = estimatedCarbsTime,
+        )
     }
 
     /** Compatibilité descendante — utilisé dans le Drift Terminator */
@@ -9646,25 +9705,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             dynamicPbolusSmall = dynamicPbolusSmall,
         )
 
-        // Post-hypo classification (once per tick — reused below for SMB disambiguation; side effects in [classifyPostHypoState])
-        val localHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        val estimatedCarbs = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbs)
-        val estimatedCarbsTimeDouble = preferences.get(DoubleKey.OApsAIMILastEstimatedCarbTime)
-        val estimatedCarbsTime = estimatedCarbsTimeDouble.toLong()
-        val estimatedCarbsAgeMs = if (estimatedCarbsTime > 0L) System.currentTimeMillis() - estimatedCarbsTime else Long.MAX_VALUE
-        val explicitMealMode = mealTime || lunchTime || dinnerTime || bfastTime || highCarbTime || snackTime
-        val postHypoState = classifyPostHypoState(
+        val postHypoBundle = runPostAutodrivePostHypoClassification(
             recentBGs = recentBGs,
-            cob = cob.toDouble(),
-            explicitMealMode = explicitMealMode,
-            shortAvgDelta = shortAvgDeltaAdj.toFloat(),
-            delta = delta.toFloat(),
+            cob = cob,
+            shortAvgDeltaAdj = shortAvgDeltaAdj,
+            delta = delta,
             slopeFromMinDeviation = ctx.mealData.slopeFromMinDeviation,
-            estimatedCarbs = estimatedCarbs,
-            estimatedCarbsAgeMs = estimatedCarbsAgeMs,
-            localHour = localHour,
-            reason = reason
+            mealTime = mealTime,
+            bfastTime = bfastTime,
+            lunchTime = lunchTime,
+            dinnerTime = dinnerTime,
+            highCarbTime = highCarbTime,
+            snackTime = snackTime,
+            reason = reason,
         )
+        val postHypoState = postHypoBundle.postHypoState
+        val estimatedCarbs = postHypoBundle.estimatedCarbs
+        val estimatedCarbsTime = postHypoBundle.estimatedCarbsTimeMs
 
         runPostHypoCompressionAndDriftTerminatorOrReturn(
             ctx = ctx,

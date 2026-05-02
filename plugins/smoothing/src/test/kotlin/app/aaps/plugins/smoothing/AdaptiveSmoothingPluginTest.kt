@@ -31,9 +31,12 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
 
     @BeforeEach
     fun setUpPlugin() {
-        whenever(sp.getDouble(eq(DoubleNonKey.UkfLearnedR.key), any())).thenReturn(25.0)
-        whenever(sp.getLong(eq(LongNonKey.UkfLastProcessedTimestamp.key), any())).thenReturn(0L)
-        whenever(sp.getLong(eq(LongNonKey.UkfSensorChangeTimestamp.key), any())).thenReturn(0L)
+        whenever(sp.getDouble(eq(DoubleNonKey.UkfLearnedR.key), eq(DoubleNonKey.UkfLearnedR.defaultValue)))
+            .thenReturn(DoubleNonKey.UkfLearnedR.defaultValue)
+        whenever(sp.getLong(eq(LongNonKey.UkfLastProcessedTimestamp.key), eq(LongNonKey.UkfLastProcessedTimestamp.defaultValue)))
+            .thenReturn(LongNonKey.UkfLastProcessedTimestamp.defaultValue)
+        whenever(sp.getLong(eq(LongNonKey.UkfSensorChangeTimestamp.key), eq(LongNonKey.UkfSensorChangeTimestamp.defaultValue)))
+            .thenReturn(LongNonKey.UkfSensorChangeTimestamp.defaultValue)
 
         whenever(persistenceLayer.observeChanges(eq(TE::class.java))).thenReturn(emptyFlow())
 

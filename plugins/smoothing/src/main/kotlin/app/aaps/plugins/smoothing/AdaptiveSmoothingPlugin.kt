@@ -80,8 +80,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         0.0, 0.40     // Rate process noise: ~0.24 mg/dL/min std dev
     )
 
-    // Adaptive Measurement Noise (R) Limits
-    private val R_INIT = 25.0
+    // Adaptive Measurement Noise (R) Limits (learned default = [DoubleNonKey.UkfLearnedR])
     private val R_MIN = 16.0
     private val R_MAX = 196.0
 
@@ -90,7 +89,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private val RATE_DAMPING = 0.98
 
     // Processing state
-    private var learnedR = R_INIT
+    private var learnedR = DoubleNonKey.UkfLearnedR.defaultValue
     private val innovations = ArrayDeque<Double>(innovationWindow + 1)
     private val rawInnovationVariance = ArrayDeque<Double>(innovationWindow + 1)
     private var lastProcessedTimestamp: Long = 0
@@ -594,10 +593,12 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     private fun loadPersistedParameters() {
         try {
-            learnedR = sp.getDouble(DoubleNonKey.UkfLearnedR.key, R_INIT)
+            learnedR = sp.getDouble(DoubleNonKey.UkfLearnedR.key, DoubleNonKey.UkfLearnedR.defaultValue)
             lastProcessedTimestamp = sp.getLong(LongNonKey.UkfLastProcessedTimestamp.key, LongNonKey.UkfLastProcessedTimestamp.defaultValue)
             lastSensorChangeTimestamp = sp.getLong(LongNonKey.UkfSensorChangeTimestamp.key, LongNonKey.UkfSensorChangeTimestamp.defaultValue)
-        } catch (e: Exception) { learnedR = R_INIT }
+        } catch (e: Exception) {
+            learnedR = DoubleNonKey.UkfLearnedR.defaultValue
+        }
     }
 
     private fun savePersistedParameters() {
@@ -618,10 +619,10 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     }
 
     private fun resetLearning() {
-        learnedR = R_INIT
+        learnedR = DoubleNonKey.UkfLearnedR.defaultValue
         innovations.clear()
         rawInnovationVariance.clear()
-        aapsLogger.info(LTag.GLUCOSE, "HybridSmoothing: Learning Reset. R=$R_INIT")
+        aapsLogger.info(LTag.GLUCOSE, "HybridSmoothing: Learning Reset. R=$learnedR")
         savePersistedParameters()
     }
 

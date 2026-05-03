@@ -661,8 +661,8 @@ class MainViewModel @Inject constructor(
         sceneExecutor.dismiss()
     }
 
-    /** Format milliseconds to human-readable duration using DateUtil */
-    fun formatDuration(ms: Long): String = dateUtil.niceTimeScalar(ms, rh)
+    /** Format milliseconds to a localized "time remaining" string (e.g., "1h 30m remaining"). */
+    fun formatDuration(ms: Long): String = dateUtil.timeRemainingString(ms, rh)
 
     fun requestSceneConfirmation(sceneId: String) {
         val scene = sceneRepository.getScene(sceneId) ?: return

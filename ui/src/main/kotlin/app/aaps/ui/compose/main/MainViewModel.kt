@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import app.aaps.core.data.iob.InMemoryGlucoseValue
 import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
+import app.aaps.core.data.model.SceneEndAction
 import app.aaps.core.data.model.TT
 import app.aaps.core.data.time.T
 import app.aaps.core.data.ue.Action
@@ -21,6 +22,8 @@ import app.aaps.core.interfaces.insulin.Insulin
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.UserEntryLogger
+import app.aaps.core.interfaces.notifications.NotificationId
+import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
 import app.aaps.core.interfaces.overview.graph.ProfileDisplayData
 import app.aaps.core.interfaces.overview.graph.RunningModeDisplayData
@@ -111,7 +114,8 @@ class MainViewModel @Inject constructor(
     private val sceneExecutor: SceneExecutor,
     private val activeSceneManager: ActiveSceneManager,
     private val rxBus: RxBus,
-    private val runningModeGuard: RunningModeGuard
+    private val runningModeGuard: RunningModeGuard,
+    private val notificationManager: NotificationManager
 ) : ViewModel() {
 
     // Event-driven state (drawer, dialogs, simple-mode preference). Imperative .update{} calls
@@ -695,11 +699,31 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun requestSceneDeactivation() {
-        val activeState = activeSceneManager.getActiveState() ?: return
+    fun requestSceneDeactivation() = viewModelScope.launch {
+        val activeState = activeSceneManager.getActiveState() ?: return@launch
         val message = rh.gs(app.aaps.core.ui.R.string.scene_confirm_deactivate, activeState.scene.name)
+        // When the scene chains to a runnable follow-up, "Skip to <Next>" becomes the primary
+        // action and "End Scene" the alternative — the chain represents the user's pre-declared
+        // intent for what happens next, so it's the recommended path on early end. Preconditions
+        // mirror SceneExpiryWorker.runChain (target enabled, loop running, pump initialized,
+        // profile set); they are re-checked at execute time as a TOCTOU guard.
+        val chain = activeState.scene.endAction as? SceneEndAction.ChainScene
+        val target = chain?.let { sceneRepository.getScene(it.sceneId) }
+        val ready = target != null &&
+            target.isEnabled &&
+            !loop.runningMode().pausesLoopExecution() &&
+            activePlugin.activePump.isInitialized() &&
+            profileFunction.getProfile() != null
         _actionConfirmation.update {
-            ActionConfirmation(
+            if (ready) ActionConfirmation(
+                title = rh.gs(app.aaps.core.ui.R.string.scene_deactivate),
+                message = message,
+                onConfirmAction = ConfirmableAction.DeactivateAndChainScene(target.id),
+                confirmLabel = rh.gs(app.aaps.core.ui.R.string.scene_skip_to_format, target.name),
+                secondaryAction = ConfirmableAction.DeactivateScene,
+                secondaryLabel = rh.gs(app.aaps.core.ui.R.string.scene_deactivate)
+            )
+            else ActionConfirmation(
                 title = rh.gs(app.aaps.core.ui.R.string.scene_deactivate),
                 message = message,
                 onConfirmAction = ConfirmableAction.DeactivateScene
@@ -771,6 +795,45 @@ class MainViewModel @Inject constructor(
 
             is ConfirmableAction.DeactivateScene          -> {
                 sceneExecutor.deactivate()
+            }
+
+            is ConfirmableAction.DeactivateAndChainScene  -> {
+                // User chose "Skip to <Next>": end current scene early, then activate the chain
+                // target. Always deactivates (user committed to ending the current scene); the
+                // chain is best-effort. Re-checks preconditions at execute time as a TOCTOU
+                // guard — the dialog may have been open for arbitrary time, during which the
+                // target could be disabled/deleted, the pump dropped, the loop suspended, or the
+                // profile cleared. If anything changed, we end the current scene cleanly and
+                // skip the chain rather than partially activating onto an unhealthy state.
+                val endedName = activeSceneManager.getActiveState()?.scene?.name
+                val target = sceneRepository.getScene(action.targetSceneId)
+                val canChain = target != null &&
+                    target.isEnabled &&
+                    !loop.runningMode().pausesLoopExecution() &&
+                    activePlugin.activePump.isInitialized() &&
+                    profileFunction.getProfile() != null
+                sceneExecutor.deactivate()
+                if (!canChain) return@launch
+                // Smart-cast: canChain==true implies target!=null (canChain itself includes target!=null).
+                val result = sceneExecutor.activate(target)
+                if (result.success && endedName != null) {
+                    notificationManager.post(
+                        id = NotificationId.SCENE_CHAINED,
+                        text = rh.gs(app.aaps.core.ui.R.string.scene_chained_format, endedName, target.name)
+                    )
+                } else if (!result.success) {
+                    val failed = result.actionResults.count { !it.success }
+                    notificationManager.post(
+                        id = NotificationId.SCENE_CHAIN_ERROR,
+                        text = rh.gs(
+                            app.aaps.core.ui.R.string.scene_chain_error_summary,
+                            endedName ?: "",
+                            target.name,
+                            failed,
+                            result.actionResults.size
+                        )
+                    )
+                }
             }
         }
     }

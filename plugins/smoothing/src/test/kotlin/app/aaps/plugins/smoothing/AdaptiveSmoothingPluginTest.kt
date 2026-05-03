@@ -31,17 +31,17 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
 
     @BeforeEach
     fun setUpPlugin() {
-        whenever(sp.getDouble(eq(DoubleNonKey.UkfLearnedR.key), eq(DoubleNonKey.UkfLearnedR.defaultValue)))
-            .thenReturn(DoubleNonKey.UkfLearnedR.defaultValue)
-        whenever(sp.getLong(eq(LongNonKey.UkfLastProcessedTimestamp.key), eq(LongNonKey.UkfLastProcessedTimestamp.defaultValue)))
-            .thenReturn(LongNonKey.UkfLastProcessedTimestamp.defaultValue)
-        whenever(sp.getLong(eq(LongNonKey.UkfSensorChangeTimestamp.key), eq(LongNonKey.UkfSensorChangeTimestamp.defaultValue)))
-            .thenReturn(LongNonKey.UkfSensorChangeTimestamp.defaultValue)
-
-        whenever(persistenceLayer.observeChanges(eq(TE::class.java))).thenReturn(emptyFlow())
-
-        whenever(config.appInitialized).thenReturn(true)
         runBlocking {
+            whenever(sp.getDouble(eq(DoubleNonKey.UkfLearnedR.key), eq(DoubleNonKey.UkfLearnedR.defaultValue)))
+                .thenReturn(DoubleNonKey.UkfLearnedR.defaultValue)
+            whenever(sp.getLong(eq(LongNonKey.UkfLastProcessedTimestamp.key), eq(LongNonKey.UkfLastProcessedTimestamp.defaultValue)))
+                .thenReturn(LongNonKey.UkfLastProcessedTimestamp.defaultValue)
+            whenever(sp.getLong(eq(LongNonKey.UkfSensorChangeTimestamp.key), eq(LongNonKey.UkfSensorChangeTimestamp.defaultValue)))
+                .thenReturn(LongNonKey.UkfSensorChangeTimestamp.defaultValue)
+
+            whenever(persistenceLayer.observeChanges(eq(TE::class.java))).thenReturn(emptyFlow())
+
+            whenever(config.appInitialized).thenReturn(true)
             whenever(persistenceLayer.getTherapyEventDataFromTime(any(), any())).thenReturn(emptyList())
             whenever(iobCobCalculator.calculateIobFromBolus()).thenReturn(IobTotal(time = 0L, iob = 0.2))
             whenever(iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended()).thenReturn(IobTotal(time = 0L, iob = 0.2))

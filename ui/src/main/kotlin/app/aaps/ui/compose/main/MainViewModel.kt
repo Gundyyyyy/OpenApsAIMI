@@ -51,8 +51,8 @@ import app.aaps.core.keys.StringNonKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.constraints.ConstraintObject
 import app.aaps.core.objects.extensions.toStringFull
+import app.aaps.core.objects.runningMode.PumpCommandGate
 import app.aaps.core.objects.runningMode.RunningModeGuard
-import app.aaps.core.objects.runningMode.TbrGate
 import app.aaps.core.objects.wizard.QuickWizard
 import app.aaps.core.objects.wizard.QuickWizardEntry
 import app.aaps.core.objects.wizard.QuickWizardMode
@@ -426,7 +426,7 @@ class MainViewModel @Inject constructor(
                 title = entry.buttonText(),
                 message = message,
                 onOk = {
-                    if (!runningModeGuard.checkWithSnackbar(TbrGate.CommandKind.BOLUS)) {
+                    if (!runningModeGuard.checkWithSnackbar(PumpCommandGate.CommandKind.BOLUS)) {
                         uel.log(
                             Action.BOLUS, Sources.QuickWizard,
                             entry.buttonText(),

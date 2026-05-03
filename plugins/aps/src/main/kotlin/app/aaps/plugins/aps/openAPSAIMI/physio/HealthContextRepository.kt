@@ -60,12 +60,11 @@ class HealthContextRepository @Inject constructor(
         @Suppress("UNCHECKED_CAST")
         val rhrList = rhrRef.get() as List<RHRDataMTR>
 
-        // Warmup guard: if async fetch has not produced core data yet, keep last valid
-        // snapshot instead of silently degrading to near-empty context.
-        if (sleepData == null && hrvList.isEmpty() && rhrList.isEmpty() && lastSnapshot.isValid) {
-            return lastSnapshot
-        }
-        
+        // HC core (sleep/HRV/RHR) loads async; do not skip Unified steps/HR while waiting.
+        // Reuse last valid HC-derived fields only so confidence/merge stay stable until refs fill.
+        val warmupHcPending =
+            sleepData == null && hrvList.isEmpty() && rhrList.isEmpty() && lastSnapshot.isValid
+
         // 2. Fetch Real-Time Data (Unified Provider: Watch > Phone > HC)
         val steps5Result = unifiedProvider.getStepsTotalSince(System.currentTimeMillis() - 5 * 60 * 1000)
         val steps15Result = unifiedProvider.getStepsTotalSince(System.currentTimeMillis() - 15 * 60 * 1000)
@@ -79,30 +78,49 @@ class HealthContextRepository @Inject constructor(
         val currentHR: Int = (hrResult?.bpm ?: 0.0).toInt()
 
         // Use FeatureExtractor logic to get normalized HRV (Nocturnal priority)
-        val hrv = if (hrvList.isNotEmpty()) {
-             if (sleepData != null && sleepData.hasValidData()) {
-                 hrvList.filter { it.timestamp >= sleepData.startTime && it.timestamp <= sleepData.endTime }
-                        .map { it.rmssd }.average().takeIf { !it.isNaN() } 
+        val hrv = when {
+            hrvList.isNotEmpty() -> {
+                if (sleepData != null && sleepData.hasValidData()) {
+                    hrvList.filter { it.timestamp >= sleepData.startTime && it.timestamp <= sleepData.endTime }
+                        .map { it.rmssd }.average().takeIf { !it.isNaN() }
                         ?: hrvList.lastOrNull()?.rmssd ?: 0.0
-             } else {
-                 hrvList.lastOrNull()?.rmssd ?: 0.0
-             }
-        } else 0.0
+                } else {
+                    hrvList.lastOrNull()?.rmssd ?: 0.0
+                }
+            }
+            warmupHcPending -> lastSnapshot.hrvRmssd
+            else -> 0.0
+        }
 
-        val rhr = if (rhrList.isNotEmpty()) {
-            rhrList.minByOrNull { it.bpm }?.bpm ?: 60
-        } else 60
+        val rhr = when {
+            rhrList.isNotEmpty() -> rhrList.minByOrNull { it.bpm }?.bpm ?: 60
+            warmupHcPending -> lastSnapshot.rhrResting
+            else -> 60
+        }
 
         // Sleep Debt (Simple calc: Baseline 7.5h - Actual)
-        val sleepDebt = if (sleepData != null && sleepData.hasValidData()) {
-            ((7.5 - sleepData.durationHours) * 60).toInt().coerceAtLeast(0)
-        } else 0
+        val sleepDebt = when {
+            sleepData != null && sleepData.hasValidData() ->
+                ((7.5 - sleepData.durationHours) * 60).toInt().coerceAtLeast(0)
+            warmupHcPending -> lastSnapshot.sleepDebtMinutes
+            else -> 0
+        }
+
+        val sleepEfficiency = when {
+            sleepData != null -> sleepData.efficiency
+            warmupHcPending -> lastSnapshot.sleepEfficiency
+            else -> 0.0
+        }
 
         // Confidence calculation
         var confidence = 0.0
         if (hrv > 0) confidence += 0.4
         if (currentHR > 0) confidence += 0.3
-        if (sleepData != null) confidence += 0.3
+        if (sleepData != null) {
+            confidence += 0.3
+        } else if (warmupHcPending && lastSnapshot.sleepDebtMinutes > 0) {
+            confidence += 0.3
+        }
 
         val snapshot = HealthContextSnapshot(
             stepsLast5m = steps5,
@@ -114,13 +132,27 @@ class HealthContextRepository @Inject constructor(
             hrvRmssd = hrv,
             rhrResting = rhr,
             sleepDebtMinutes = sleepDebt,
-            sleepEfficiency = sleepData?.efficiency ?: 0.0,
+            sleepEfficiency = sleepEfficiency,
             timestamp = System.currentTimeMillis(),
             confidence = confidence.coerceIn(0.0, 1.0),
             source = "Merged(Unified+HC)",
             isValid = confidence > 0.3
         )
-        if (!snapshot.isValid && lastSnapshot.isValid) return lastSnapshot
+        // Do not freeze steps/FC when Unified refreshed but HC-only confidence is low (e.g. no HRV/sleep yet).
+        if (!snapshot.isValid && lastSnapshot.isValid) {
+            val merged = lastSnapshot.copy(
+                stepsLast5m = snapshot.stepsLast5m,
+                stepsLast15m = snapshot.stepsLast15m,
+                stepsLast60m = snapshot.stepsLast60m,
+                activityState = snapshot.activityState,
+                hrNow = if (snapshot.hrNow > 0) snapshot.hrNow else lastSnapshot.hrNow,
+                hrAvg15m = if (snapshot.hrAvg15m > 0) snapshot.hrAvg15m else lastSnapshot.hrAvg15m,
+                timestamp = snapshot.timestamp,
+                source = snapshot.source,
+            )
+            lastSnapshot = merged
+            return merged
+        }
 
         lastSnapshot = snapshot
         return snapshot

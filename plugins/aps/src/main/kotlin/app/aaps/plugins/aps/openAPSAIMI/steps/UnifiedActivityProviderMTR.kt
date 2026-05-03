@@ -7,27 +7,23 @@ import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-
+import kotlinx.coroutines.runBlocking
 /**
  * 🎛️ Unified Activity Provider - MTR Implementation
- * 
+ *
  * Orchestrates data retrieval from multiple sources (Wear OS, Health Connect, Phone)
  * based on user preferences and data freshness validation.
- * 
- * Logic:
- * - Queries PersistenceLayer for data within specified window (freshness check)
- * - Filters by source based on preferred Mode (Wear, Auto, HC Only)
- * - Returns the most recent valid data point
- * 
- * @author MTR & Lyra AI - AIMI Activity Orchestrator
+ *
+ * **Window totals:** Health Connect and phone sync store, on each [SC] row, both per-interval
+ * counts (`steps5min`, `steps15min`, …) for the same sync instant. For standard windows (5–180 min),
+ * the **latest** row’s matching field is used when fresh enough — summing only `steps5min` across
+ * sparse 5‑minute buckets **under-counted** 15/60 min totals and confused physio vs dashboard.
+ * Long or non-standard windows still use per-bucket max(`steps5min`) aggregation.
+ *
+ * DB reads are **synchronous** on the calling thread to avoid empty results from fire-and-forget
+ * async loads (race with immediate cache read).
  */
 @Singleton
 class UnifiedActivityProviderMTR @Inject constructor(
@@ -35,45 +31,30 @@ class UnifiedActivityProviderMTR @Inject constructor(
     private val sp: SP,
     private val aapsLogger: AAPSLogger
 ) : ActivityVitalsProvider {
-    @Volatile
-    private var latestStepsCache: StepsResult? = null
-
-    @Volatile
-    private var totalStepsCache: StepsResult? = null
-
-    @Volatile
-    private var latestHrCache: HrResult? = null
-    private data class StepsWindowCache(val start: Long, val end: Long, val rows: List<SC>)
-    private data class HrWindowCache(val start: Long, val end: Long, val rows: List<HR>)
-    private val stepsRecordsRef = AtomicReference<StepsWindowCache?>(null)
-    private val hrRecordsRef = AtomicReference<HrWindowCache?>(null)
-    private val stepsRefreshInFlight = AtomicBoolean(false)
-    private val hrRefreshInFlight = AtomicBoolean(false)
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     companion object {
         private const val TAG = "ActivityProvider"
-        
-        // Preference Key
+
         const val PREF_KEY_SOURCE_MODE = "aimi_activity_source_mode"
-        
-        // Mode Values
+
         const val MODE_PREFER_WEAR = "prefer_wear"
         const val MODE_AUTO_FALLBACK = "auto"
         const val MODE_HEALTH_CONNECT_ONLY = "hc_only"
         const val MODE_DISABLED = "disabled"
-        
-        // Default Mode
+
         const val DEFAULT_MODE = MODE_AUTO_FALLBACK
-        
-        // Known Source Identifiers
+
         private const val SOURCE_HC = "HealthConnect"
         private const val SOURCE_PHONE = "PhoneSensor"
         private const val SOURCE_GARMIN = "Garmin-Watchface"
-        
-        /**
-         * Static helper to get mode from any component context
-         */
+
+        /** HC / phone sync may lag; beyond this, prefer bucket aggregation. */
+        private const val MAX_ROW_AGE_MS = 10 * 60 * 1000L
+
+        private const val MINUTE_MS = 60_000L
+        /** Match requested window to [SC] column (±2.5 min). */
+        private const val WINDOW_SLACK_MS = 150_000L
+
         fun getMode(context: android.content.Context): String {
             val prefs = context.getSharedPreferences(context.packageName + "_preferences", android.content.Context.MODE_PRIVATE)
             return prefs.getString(PREF_KEY_SOURCE_MODE, DEFAULT_MODE) ?: DEFAULT_MODE
@@ -83,28 +64,22 @@ class UnifiedActivityProviderMTR @Inject constructor(
     override fun getLatestSteps(windowMs: Long): StepsResult? {
         val mode = getMode()
         if (mode == MODE_DISABLED) return null
-        if (Looper.myLooper() == Looper.getMainLooper()) return latestStepsCache
-        
+
         val now = System.currentTimeMillis()
         val start = now - windowMs
-        
-        try {
-            // Fetch all records in window
-            // Note: getStepsCountFromTimeToTime returns list ordered by ?? Usually time.
-            // We'll sort descending to be safe.
-            val records = stepsRecordsCached(start, now).sortedByDescending { it.timestamp }
-                
+
+        return try {
+            val records = loadStepsRecords(start, now).sortedByDescending { it.timestamp }
+
             if (records.isEmpty()) return null
-            
-            // Separate by source
+
             val garminRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_GARMIN })
             val wearRecord = selectLatestDeltaRecord(records.filter { isWearDevice(it.device) })
             val hcRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_HC })
             val phoneRecord = selectLatestDeltaRecord(records.filter { it.device == SOURCE_PHONE })
-            
+
             val result = when (mode) {
                 MODE_PREFER_WEAR -> {
-                    // Strict Wear OS preference; fallback to Garmin only if no wear sample is available
                     wearRecord?.let { toStepsResult(it) }
                         ?: garminRecord?.let { toStepsResult(it) }
                 }
@@ -112,7 +87,6 @@ class UnifiedActivityProviderMTR @Inject constructor(
                     hcRecord?.let { toStepsResult(it) }
                 }
                 MODE_AUTO_FALLBACK -> {
-                    // Priority: Garmin > Wear > HC > Phone
                     garminRecord?.let { toStepsResult(it) }
                         ?: wearRecord?.let { toStepsResult(it) }
                         ?: hcRecord?.let { toStepsResult(it) }
@@ -120,28 +94,24 @@ class UnifiedActivityProviderMTR @Inject constructor(
                 }
                 else -> null
             }
-            latestStepsCache = result
-            return result
-            
+            result
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "[$TAG] Error fetching steps", e)
-            return latestStepsCache
+            null
         }
     }
 
     fun getStepsTotalSince(startMs: Long): StepsResult? {
         val mode = getMode()
         if (mode == MODE_DISABLED) return null
-        if (Looper.myLooper() == Looper.getMainLooper()) return totalStepsCache
 
         val now = System.currentTimeMillis()
 
         return try {
-            val records = stepsRecordsCached(startMs, now).sortedBy { it.timestamp } // zeitlich vorwärts
+            val records = loadStepsRecords(startMs, now).sortedBy { it.timestamp }
 
             if (records.isEmpty()) return null
 
-            // Quelle nach Modus auswählen
             val filtered = when (mode) {
                 MODE_PREFER_WEAR ->
                     records.filter { isWearDevice(it.device) }
@@ -165,85 +135,76 @@ class UnifiedActivityProviderMTR @Inject constructor(
 
             if (filtered.isEmpty()) return null
 
-            // Sum one value per logical 5-minute bucket to avoid overcounting
-            // when multiple rows exist for the same interval (wear multi-window/retries).
-            val totalSteps = filtered
-                .groupBy { it.timestamp / (5 * 60 * 1000L) }
-                .values
-                .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
+            val durationMs = now - startMs
+            val latest = filtered.maxByOrNull { it.timestamp }!!
+            val stalenessMs = now - latest.timestamp
+
+            val fromPrefilledWindow = stepsFromPrefilledWindowFields(latest, durationMs, stalenessMs)
+            val bucketTotal = sumMaxSteps5PerFiveMinuteBucket(filtered)
+            val totalSteps = fromPrefilledWindow ?: bucketTotal
 
             val result = StepsResult(
                 steps = totalSteps,
                 timestamp = now,
-                source = filtered.first().device,
-                duration = now - startMs
+                source = latest.device,
+                duration = durationMs
             )
-            totalStepsCache = result
             result
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "[$TAG] Error fetching total steps", e)
-            totalStepsCache
+            null
         }
     }
 
     override fun getLatestHeartRate(windowMs: Long): HrResult? {
         val mode = getMode()
         if (mode == MODE_DISABLED) return null
-        if (Looper.myLooper() == Looper.getMainLooper()) return latestHrCache
-        
+
         val now = System.currentTimeMillis()
         val start = now - windowMs
-        
-        try {
-            val records = heartRatesCached(start, now).sortedByDescending { it.timestamp }
-                
+
+        return try {
+            val records = loadHrRecords(start, now).sortedByDescending { it.timestamp }
+
             if (records.isEmpty()) return null
-            
+
             val wearRecord = records.firstOrNull { isWearDevice(it.device) }
             val hcRecord = records.firstOrNull { it.device == SOURCE_HC }
-            
+
             val result = when (mode) {
                 MODE_PREFER_WEAR -> wearRecord?.let { toHrResult(it) }
                 MODE_HEALTH_CONNECT_ONLY -> hcRecord?.let { toHrResult(it) }
                 MODE_AUTO_FALLBACK -> {
-                    // Priority: Wear > HC
-                    wearRecord?.let { toHrResult(it) } 
+                    wearRecord?.let { toHrResult(it) }
                         ?: hcRecord?.let { toHrResult(it) }
                 }
                 else -> null
             }
-            latestHrCache = result
-            return result
-            
+            result
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "[$TAG] Error fetching HR", e)
-            return latestHrCache
+            null
         }
     }
-    
-    // Helpers
-    
+
     private fun getMode(): String {
         return sp.getString(PREF_KEY_SOURCE_MODE, DEFAULT_MODE)
     }
-    
+
     private fun isWearDevice(device: String?): Boolean {
         if (device == null) return false
         return device != SOURCE_HC && device != SOURCE_PHONE && device != SOURCE_GARMIN
     }
-    
+
     private fun toStepsResult(sc: SC): StepsResult {
-        // Steps5min is usually the "recent rate". 
-        // Or should we return sum of window? The method is getLatestSteps.
-        // Returning the latest record's steps5min gives "current activity level".
         return StepsResult(
-            steps = sc.steps5min, // Using 5min as standard accumulator
+            steps = sc.steps5min,
             timestamp = sc.timestamp,
             source = sc.device,
             duration = sc.duration
         )
     }
-    
+
     private fun toHrResult(hr: HR): HrResult {
         return HrResult(
             bpm = hr.beatsPerMinute,
@@ -254,57 +215,61 @@ class UnifiedActivityProviderMTR @Inject constructor(
 
     private fun selectLatestDeltaRecord(records: List<SC>): SC? {
         if (records.isEmpty()) return null
-        // Prefer 5-minute rows when available (true interval signal for AIMI activity gating).
         return records.firstOrNull { it.duration in 299_000L..301_000L } ?: records.first()
     }
 
-    private fun stepsRecordsCached(start: Long, end: Long): List<SC> {
-        refreshStepsAsync(start, end)
-        val cached = stepsRecordsRef.get() ?: return emptyList()
-        return if (cached.start == start && cached.end == end) cached.rows else emptyList()
-    }
-
-    private fun refreshStepsAsync(start: Long, end: Long) {
-        if (!stepsRefreshInFlight.compareAndSet(false, true)) return
-        ioScope.launch {
-            try {
-                stepsRecordsRef.set(
-                    StepsWindowCache(
-                        start = start,
-                        end = end,
-                        rows = persistenceLayer.getStepsCountFromTimeToTime(start, end)
-                    )
-                )
-            } catch (_: Exception) {
-                stepsRecordsRef.set(StepsWindowCache(start, end, emptyList()))
-            } finally {
-                stepsRefreshInFlight.set(false)
-            }
+    private fun loadStepsRecords(start: Long, end: Long): List<SC> {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            aapsLogger.warn(LTag.APS, "[$TAG] steps read skipped on main thread (avoid blocking UI)")
+            return emptyList()
+        }
+        return try {
+            runBlocking { persistenceLayer.getStepsCountFromTimeToTime(start, end) }
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "[$TAG] steps DB read failed", e)
+            emptyList()
         }
     }
 
-    private fun heartRatesCached(start: Long, end: Long): List<HR> {
-        refreshHeartRatesAsync(start, end)
-        val cached = hrRecordsRef.get() ?: return emptyList()
-        return if (cached.start == start && cached.end == end) cached.rows else emptyList()
+    private fun loadHrRecords(start: Long, end: Long): List<HR> {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            aapsLogger.warn(LTag.APS, "[$TAG] HR read skipped on main thread (avoid blocking UI)")
+            return emptyList()
+        }
+        return try {
+            runBlocking { persistenceLayer.getHeartRatesFromTimeToTime(start, end) }
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "[$TAG] HR DB read failed", e)
+            emptyList()
+        }
     }
 
-    private fun refreshHeartRatesAsync(start: Long, end: Long) {
-        if (!hrRefreshInFlight.compareAndSet(false, true)) return
-        ioScope.launch {
-            try {
-                hrRecordsRef.set(
-                    HrWindowCache(
-                        start = start,
-                        end = end,
-                        rows = persistenceLayer.getHeartRatesFromTimeToTime(start, end)
-                    )
-                )
-            } catch (_: Exception) {
-                hrRecordsRef.set(HrWindowCache(start, end, emptyList()))
-            } finally {
-                hrRefreshInFlight.set(false)
-            }
+    /**
+     * When [latest] is fresh, use the pre-aggregated window column that matches the requested span
+     * (same semantics as HC / phone sync rows).
+     */
+    private fun stepsFromPrefilledWindowFields(latest: SC, durationMs: Long, stalenessMs: Long): Int? {
+        if (stalenessMs > MAX_ROW_AGE_MS) return null
+        fun near(minutes: Int): Boolean {
+            val target = minutes * MINUTE_MS
+            return kotlin.math.abs(durationMs - target) <= WINDOW_SLACK_MS
         }
+        val v = when {
+            near(5) -> latest.steps5min
+            near(10) -> latest.steps10min
+            near(15) -> latest.steps15min
+            near(30) -> latest.steps30min
+            near(60) -> latest.steps60min
+            near(180) -> latest.steps180min
+            else -> return null
+        }
+        return v.coerceAtLeast(0)
+    }
+
+    private fun sumMaxSteps5PerFiveMinuteBucket(filtered: List<SC>): Int {
+        return filtered
+            .groupBy { it.timestamp / (5 * MINUTE_MS) }
+            .values
+            .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
     }
 }

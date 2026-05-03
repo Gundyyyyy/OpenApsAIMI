@@ -210,6 +210,11 @@ enum class BooleanKey(
      * Disable only for isolated tests/benchmarks that intentionally nest calls.
      */
     OApsAIMILoopExclusiveInvocationEnabled("key_aimi_loop_exclusive_invocation", true),
+    /**
+     * When true, runs the AIMI vs OpenAPS SMB counterfactual comparator (extra SMB pass + CSV).
+     * Default off to avoid cost on hot paths; enable for R&D or divergence analysis.
+     */
+    OApsAIMIAimiSmbComparatorEnabled("key_aimi_smb_comparator_enabled", false),
     /** Plateau + meaningful IOB + falling prediction → throttle SMB, bias TBR, no Red Carpet restore. */
     OApsAIMIIobSurveillanceGuard("key_aimi_iob_surveillance_guard", true),
     OApsAIMIUnifiedReactivityEnabled("key_use_unified_reactivity", true),  // 🎯 NEW: Enable UnifiedReactivityLearner

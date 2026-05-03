@@ -25,6 +25,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import app.aaps.core.interfaces.utils.DateUtil
+import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.interfaces.Preferences
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,7 +40,8 @@ class AimiSmbComparator @Inject constructor(
     private val aapsLogger: AAPSLogger,
     private val virtualGlucoseEngine: VirtualGlucoseEngine, // 🧪 NOUVEAU
     private val dateUtil: DateUtil,          // Dependency for time
-    private val storageHelper: AimiStorageHelper
+    private val storageHelper: AimiStorageHelper,
+    private val preferences: Preferences
 ) {
     private companion object {
         const val CSV_SCHEMA_VERSION = "3"
@@ -92,6 +95,9 @@ class AimiSmbComparator @Inject constructor(
         flatBGsDetected: Boolean,
         dynIsfMode: Boolean
     ) {
+        if (!preferences.get(BooleanKey.OApsAIMIAimiSmbComparatorEnabled)) {
+            return
+        }
         try {
             // Map Profile directly (values are already constrained)
             val profileSmb = mapProfile(profileAimi)

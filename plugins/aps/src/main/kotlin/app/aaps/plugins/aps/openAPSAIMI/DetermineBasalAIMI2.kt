@@ -3,7 +3,6 @@ package app.aaps.plugins.aps.openAPSAIMI
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Environment
-import android.os.Looper
 import androidx.collection.LongSparseArray
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.TDD
@@ -290,7 +289,7 @@ internal data class AimiDecisionContext(
                 json.put("outcome", oJson)
             }
             json.toString()
-        } catch(e: Exception) { "{ \"error\": \"JSON Generation Failed\" }" }
+        } catch (_: Exception) { "{ \"error\": \"JSON Generation Failed\" }" }
     }
 }
 
@@ -668,20 +667,20 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 determineBasalInvocationCaches.storeTir65180FromWarmup(tir1Day)
                 tirWarmupSnapshotRef.set(
                     TirWarmupSnapshot(
-                        tir1DayAbove = tirCalculator.averageTIR(tir1Day)?.abovePct() ?: 0.0,
-                        tir1DayInRange = tirCalculator.averageTIR(tir1Day)?.inRangePct() ?: 0.0,
-                        currentTirLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.belowPct() ?: 0.0,
-                        currentTirRange = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.inRangePct() ?: 0.0,
-                        currentTirAbove = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0))?.abovePct() ?: 0.0,
-                        lastHourTirLow = tirCalculator.averageTIR(tirCalculator.calculateHour(80.0, 140.0))?.belowPct() ?: 0.0,
-                        lastHourTirAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(72.0, 140.0))?.abovePct(),
-                        lastHourTirLow100 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 140.0))?.belowPct() ?: 0.0,
-                        lastHourTirAbove170 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 170.0))?.abovePct() ?: 0.0,
-                        lastHourTirAbove120 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 120.0))?.abovePct() ?: 0.0,
-                        tirBasal3InRange = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.inRangePct(),
-                        tirBasal3Below = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.belowPct(),
-                        tirBasal3Above = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0))?.abovePct(),
-                        tirBasalHourAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(65.0, 100.0))?.abovePct(),
+                        tir1DayAbove = tirCalculator.averageTIR(tir1Day).abovePct() ?: 0.0,
+                        tir1DayInRange = tirCalculator.averageTIR(tir1Day).inRangePct() ?: 0.0,
+                        currentTirLow = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0)).belowPct() ?: 0.0,
+                        currentTirRange = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0)).inRangePct() ?: 0.0,
+                        currentTirAbove = tirCalculator.averageTIR(tirCalculator.calculateDaily(65.0, 180.0)).abovePct() ?: 0.0,
+                        lastHourTirLow = tirCalculator.averageTIR(tirCalculator.calculateHour(80.0, 140.0)).belowPct() ?: 0.0,
+                        lastHourTirAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(72.0, 140.0)).abovePct(),
+                        lastHourTirLow100 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 140.0)).belowPct() ?: 0.0,
+                        lastHourTirAbove170 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 170.0)).abovePct() ?: 0.0,
+                        lastHourTirAbove120 = tirCalculator.averageTIR(tirCalculator.calculateHour(100.0, 120.0)).abovePct() ?: 0.0,
+                        tirBasal3InRange = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0)).inRangePct(),
+                        tirBasal3Below = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0)).belowPct(),
+                        tirBasal3Above = tirCalculator.averageTIR(tirCalculator.calculate(3, 65.0, 120.0)).abovePct(),
+                        tirBasalHourAbove = tirCalculator.averageTIR(tirCalculator.calculateHour(65.0, 100.0)).abovePct(),
                     )
                 )
             } catch (_: Exception) {
@@ -1510,7 +1509,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         this.bg = glucoseStatus.glucose
         val getlastBolusSMB = latestSmbCached()
         val lastBolusSMBTime = getlastBolusSMB?.timestamp ?: 0L
-        //val lastBolusSMBMinutes = lastBolusSMBTime / 60000
         this.lastBolusSMBUnit = getlastBolusSMB?.amount?.toFloat() ?: 0.0F
         val diff = abs(now - lastBolusSMBTime)
         this.lastsmbtime = (diff / (60 * 1000)).toInt()
@@ -5709,34 +5707,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return predictionCost + 0.5 * nnPenalty  // Pondération du terme de pénalité
     }
 
-
-    /**
-     * Détecte une montée glycémique significative basée sur les deltas réels.
-     * Utilisé pour éviter que les prédictions optimistes bloquent l'action.
-     *
-     * @param deltaVal Delta 5min actuel (mg/dL/5min)
-     * @param shortAvgDeltaVal Moyenne courte des deltas
-     * @param bgNow Glycémie actuelle
-     * @param targetBgVal Objectif glycémique
-     * @param mealModeActive Mode repas actif (seuils plus sensibles)
-     * @return true si une montée significative est détectée
-     */
-    private fun isRisingFast(
-        deltaVal: Double,
-        shortAvgDeltaVal: Double,
-        bgNow: Double,
-        targetBgVal: Double,
-        mealModeActive: Boolean
-    ): Boolean {
-        // Seuils ajustés selon le contexte repas
-        val deltaThreshold = if (mealModeActive) 2.0 else 4.0
-        val shortAvgThreshold = if (mealModeActive) 1.5 else 3.0
-        val bgMargin = if (mealModeActive) 0.0 else 10.0
-
-        return (deltaVal >= deltaThreshold || shortAvgDeltaVal >= shortAvgThreshold)
-            && bgNow >= targetBgVal - bgMargin
-    }
-
     private fun roundBasal(value: Double): Double {
         val safeValue = if (value < 0.0) 0.0 else value
         // Standard rounding to 2 decimals (OpenAPS style 0.00)
@@ -7543,21 +7513,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         )
     }
 
-    /** Compatibilité descendante — utilisé dans le Drift Terminator */
-    private fun isPostHypoProtectionCondition(
-        recentBGs: List<Float>,
-        reason: StringBuilder
-    ): Boolean {
-        val recentHypo = recentBGs.take(12).any { it < 70f }
-        if (recentHypo) {
-            reason.append("🛡️ Safety Net: Post-Hypo Rebound Brake ENGAGED (BG < 70 in last 60m)\n")
-            return true
-        }
-        return false
-    }
-
-
-
 
     @SuppressLint("DefaultLocale")
     private fun isAutodriveModeCondition(
@@ -7780,27 +7735,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         } else {
             rt.toInt()
         }
-    }
-
-    /** Renvoie (label du mode, runtime en minutes) du mode repas actif, sinon null */
-    private fun activeMealRuntimeMinutes(): Pair<String, Int>? {
-        return when {
-            mealTime   -> "meal" to runtimeToMinutes(mealruntime)
-            bfastTime  -> "bfast" to runtimeToMinutes(bfastruntime)
-            lunchTime  -> "lunch" to runtimeToMinutes(lunchruntime)
-            dinnerTime -> "dinner" to runtimeToMinutes(dinnerruntime)
-            highCarbTime -> "highcarb" to runtimeToMinutes(highCarbrunTime)
-            else -> null
-        }
-    }
-
-    /** Temps restant dans la fenêtre 0..windowMin (par défaut 30) ; null si hors fenêtre */
-    private fun remainingInWindow0to(rtMin: Int, windowMin: Int = 30): Int? {
-        if (rtMin !in 0..windowMin) return null
-        return (windowMin - rtMin).coerceAtLeast(1) // au moins 1 minute pour poser une TBR
-    }
-    private fun roundToPoint05(number: Float): Float {
-        return (number * 20.0).roundToInt() / 20.0f
     }
 
     private data class MealAggressionWeights(
@@ -8449,30 +8383,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         return 0.5f + sig * 0.7f  // multipliateur lissé entre 0,5 et 1,2
     }
 
-    private fun calculateDynamicThreshold(
-        iterationCount: Int,
-        delta: Float,
-        shortAvgDelta: Float,
-        longAvgDelta: Float
-    ): Float {
-        val baseThreshold = if (delta > 15f) 1.5f else 2.5f
-        // Réduit le seuil au fur et à mesure des itérations pour exiger une convergence plus fine
-        val iterationFactor = 1.0f / (1 + iterationCount / 100)
-        val trendFactor = when {
-            delta > 8 || shortAvgDelta > 4 || longAvgDelta > 3 -> 0.5f
-            delta < 5 && shortAvgDelta < 3 && longAvgDelta < 3 -> 1.5f
-            else -> 1.0f
-        }
-        return baseThreshold * iterationFactor * trendFactor
-    }
-
     private fun FloatArray.toDoubleArray(): DoubleArray {
         return this.map { it.toDouble() }.toDoubleArray()
     }
 
-    private fun interpolateFactor(value: Float, start1: Float, end1: Float, start2: Float, end2: Float): Float {
-        return start2 + (value - start1) * (end2 - start2) / (end1 - start1)
-    }
     private fun getRecentDeltas(): List<Double> {
         val data = iobCobCalculator.ads.getBucketedDataTableCopy() ?: return emptyList()
         if (data.isEmpty()) return emptyList()
@@ -10080,8 +9994,6 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         min_bg = pkpdTargetsMinBg
         target_bg = pkpdTargetsTargetBg
         max_bg = pkpdTargetsMaxBg
-        //fun safe(v: Double) = if (v.isFinite()) v else Double.POSITIVE_INFINITY
-        //val expectedDelta = calculateExpectedDelta(target_bg, eventualBG, bgi)
         val modelcal = runUamModelCalHypoGuardPostHypoAndSetPredictedSmb(
             rT = rT,
             bg = bg,
@@ -10629,36 +10541,15 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     )
 
     private data class ModeState(
-         var name: String = "",
-         var startMs: Long = 0L,
-         var pre1: Boolean = false,
-         var pre2: Boolean = false,
-         var pre1SentMs: Long = 0L,
-         var pre2SentMs: Long = 0L,
-         var tbrStartedMs: Long = 0L,      // 🆕 Track TBR activation
-         var degradeLevel: Int = 0          // 🆕 Track safety state
-    ) {
-         fun serialize(): String = "$name|$startMs|$pre1|$pre2|$pre1SentMs|$pre2SentMs|$tbrStartedMs|$degradeLevel"
-         companion object {
-             fun deserialize(s: String): ModeState {
-                 if (s.isBlank()) return ModeState()
-                 val p = s.split("|")
-                 if (p.size < 4) return ModeState()
-                 return try {
-                     ModeState(
-                         p[0], 
-                         p[1].toLong(), 
-                         p[2].toBoolean(), 
-                         p[3].toBoolean(),
-                         p.getOrNull(4)?.toLongOrNull() ?: 0L,
-                         p.getOrNull(5)?.toLongOrNull() ?: 0L,
-                         p.getOrNull(6)?.toLongOrNull() ?: 0L,
-                         p.getOrNull(7)?.toIntOrNull() ?: 0
-                     )
-                 } catch (e: Exception) { ModeState() }
-             }
-         }
-    }
+        var name: String = "",
+        var startMs: Long = 0L,
+        var pre1: Boolean = false,
+        var pre2: Boolean = false,
+        var pre1SentMs: Long = 0L,
+        var pre2SentMs: Long = 0L,
+        var tbrStartedMs: Long = 0L,
+        var degradeLevel: Int = 0,
+    )
 
     /**
      * Immutable snapshot for the TICK line and basal-neural step — keeps [logDecisionFinal]

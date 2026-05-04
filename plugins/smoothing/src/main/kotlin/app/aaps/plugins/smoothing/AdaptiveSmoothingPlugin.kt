@@ -16,9 +16,9 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.smoothing.Smoothing
 import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.core.ui.compose.icons.IcStats
-import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.LongNonKey
+import app.aaps.core.keys.interfaces.Preferences
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -46,7 +46,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     rh: ResourceHelper,
     private val config: Config,
     private val persistenceLayer: PersistenceLayer,
-    private val sp: SP,
+    private val preferences: Preferences,
     private val iobCobCalculator: IobCobCalculator
 ) : PluginBase(
     PluginDescription()
@@ -598,9 +598,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     private fun loadPersistedParameters() {
         try {
-            learnedR = sp.getDouble(DoubleNonKey.UkfLearnedR.key, DoubleNonKey.UkfLearnedR.defaultValue)
-            lastProcessedTimestamp = sp.getLong(LongNonKey.UkfLastProcessedTimestamp.key, LongNonKey.UkfLastProcessedTimestamp.defaultValue)
-            lastSensorChangeTimestamp = sp.getLong(LongNonKey.UkfSensorChangeTimestamp.key, LongNonKey.UkfSensorChangeTimestamp.defaultValue)
+            learnedR = preferences.get(DoubleNonKey.UkfLearnedR)
+            lastProcessedTimestamp = preferences.get(LongNonKey.UkfLastProcessedTimestamp)
+            lastSensorChangeTimestamp = preferences.get(LongNonKey.UkfSensorChangeTimestamp)
         } catch (e: Exception) {
             learnedR = DoubleNonKey.UkfLearnedR.defaultValue
         }
@@ -608,9 +608,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     private fun savePersistedParameters() {
         try {
-            sp.putDouble(DoubleNonKey.UkfLearnedR.key, learnedR)
-            sp.putLong(LongNonKey.UkfLastProcessedTimestamp.key, lastProcessedTimestamp)
-            sp.putLong(LongNonKey.UkfSensorChangeTimestamp.key, lastSensorChangeTimestamp)
+            preferences.put(DoubleNonKey.UkfLearnedR, learnedR)
+            preferences.put(LongNonKey.UkfLastProcessedTimestamp, lastProcessedTimestamp)
+            preferences.put(LongNonKey.UkfSensorChangeTimestamp, lastSensorChangeTimestamp)
         } catch (e: Exception) { }
     }
 

@@ -5,7 +5,6 @@ import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.db.PersistenceLayer
-import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.LongNonKey
 import app.aaps.core.interfaces.smoothing.SmoothingContext
@@ -25,19 +24,15 @@ import kotlin.math.sqrt
 class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
 
     @Mock lateinit var persistenceLayer: PersistenceLayer
-    @Mock lateinit var sp: SP
 
     private lateinit var plugin: AdaptiveSmoothingPlugin
 
     @BeforeEach
     fun setUpPlugin() {
         runBlocking {
-            whenever(sp.getDouble(eq(DoubleNonKey.UkfLearnedR.key), eq(DoubleNonKey.UkfLearnedR.defaultValue)))
-                .thenReturn(DoubleNonKey.UkfLearnedR.defaultValue)
-            whenever(sp.getLong(eq(LongNonKey.UkfLastProcessedTimestamp.key), eq(LongNonKey.UkfLastProcessedTimestamp.defaultValue)))
-                .thenReturn(LongNonKey.UkfLastProcessedTimestamp.defaultValue)
-            whenever(sp.getLong(eq(LongNonKey.UkfSensorChangeTimestamp.key), eq(LongNonKey.UkfSensorChangeTimestamp.defaultValue)))
-                .thenReturn(LongNonKey.UkfSensorChangeTimestamp.defaultValue)
+            whenever(preferences.get(DoubleNonKey.UkfLearnedR)).thenReturn(DoubleNonKey.UkfLearnedR.defaultValue)
+            whenever(preferences.get(LongNonKey.UkfLastProcessedTimestamp)).thenReturn(LongNonKey.UkfLastProcessedTimestamp.defaultValue)
+            whenever(preferences.get(LongNonKey.UkfSensorChangeTimestamp)).thenReturn(LongNonKey.UkfSensorChangeTimestamp.defaultValue)
 
             whenever(persistenceLayer.observeChanges(eq(TE::class.java))).thenReturn(emptyFlow())
 
@@ -52,7 +47,7 @@ class AdaptiveSmoothingPluginTest : TestBaseWithProfile() {
             rh = rh,
             config = config,
             persistenceLayer = persistenceLayer,
-            sp = sp,
+            preferences = preferences,
             iobCobCalculator = iobCobCalculator
         )
     }

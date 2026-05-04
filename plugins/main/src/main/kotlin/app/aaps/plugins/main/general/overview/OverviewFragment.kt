@@ -751,7 +751,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, View.OnLongClic
 
                 // Automation buttons
                 binding.buttonsLayout.userButtonsLayout.removeAllViews()
-                if (!runningMode.isSuspended() && pump.isInitialized() && profile != null && !config.isEnabled(ExternalOptions.SHOW_USER_ACTIONS_ON_WATCH_ONLY))
+                if (!runningMode.pausesLoopExecution() && pump.isInitialized() && profile != null && !config.isEnabled(ExternalOptions.SHOW_USER_ACTIONS_ON_WATCH_ONLY))
                     for (event in runnableEvents) {
                             context?.let { context ->
                                 SingleClickButton(context, null, app.aaps.core.ui.R.attr.customBtnStyle).also {

@@ -87,8 +87,8 @@ import app.aaps.core.objects.extensions.generateCOBString
 import app.aaps.core.objects.extensions.round
 import app.aaps.core.objects.extensions.toStringShort
 import app.aaps.core.objects.extensions.valueToUnits
+import app.aaps.core.objects.runningMode.PumpCommandGate
 import app.aaps.core.objects.runningMode.RunningModeGuard
-import app.aaps.core.objects.runningMode.TbrGate
 import app.aaps.core.objects.wizard.BolusWizard
 import app.aaps.core.objects.wizard.QuickWizard
 import app.aaps.core.objects.wizard.QuickWizardEntry
@@ -730,9 +730,22 @@ class DataHandlerMobile @Inject constructor(
         )
     }
 
+    private fun rejectIfAapsClient(): Boolean {
+        if (config.AAPSCLIENT) {
+            sendError(rh.gs(R.string.wear_remote_insulin_not_allowed_in_client))
+            return true
+        }
+        return false
+    }
+
     private suspend fun handleWizardPreCheck(command: EventData.ActionWizardPreCheck) {
+        if (rejectIfAapsClient()) return
+        runningModeGuard.rejectionMessage(PumpCommandGate.CommandKind.BOLUS)?.let {
+            sendError(it)
+            return
+        }
         val pump = activePlugin.activePump
-        if (!pump.isInitialized() || loop.runningMode().isSuspended()) {
+        if (!pump.isInitialized()) {
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_pump_not_available))
             return
         }
@@ -907,6 +920,11 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private suspend fun handleQuickWizardPreCheck(command: EventData.ActionQuickWizardPreCheck) {
+        if (rejectIfAapsClient()) return
+        runningModeGuard.rejectionMessage(PumpCommandGate.CommandKind.BOLUS)?.let {
+            sendError(it)
+            return
+        }
         val actualBg = iobCobCalculator.ads.actualBg()
         val profile = profileFunction.getProfile()
         val profileName = profileFunction.getProfileName()
@@ -929,7 +947,7 @@ class DataHandlerMobile @Inject constructor(
             return
         }
         val pump = activePlugin.activePump
-        if (!pump.isInitialized() || loop.runningMode().isSuspended()) {
+        if (!pump.isInitialized()) {
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_pump_not_available))
             return
         }
@@ -986,10 +1004,17 @@ class DataHandlerMobile @Inject constructor(
         val insulinAfterConstraints = constraintChecker.applyBolusConstraints(ConstraintObject(command.insulin, aapsLogger)).value()
         val cob = iobCobCalculator.ads.getLastAutosensData("carbsDialog", aapsLogger, dateUtil)?.cob ?: 0.0
         var carbsAfterConstraints = constraintChecker.applyCarbsConstraints(ConstraintObject(command.carbs, aapsLogger)).value()
-        val pump = activePlugin.activePump
-        if (insulinAfterConstraints > 0 && (!pump.isInitialized() || runBlocking { loop.runningMode() }.isSuspended())) {
-            sendError(rh.gs(app.aaps.core.ui.R.string.wizard_pump_not_available))
-            return
+        if (insulinAfterConstraints > 0) {
+            if (rejectIfAapsClient()) return
+            runningModeGuard.rejectionMessage(PumpCommandGate.CommandKind.BOLUS)?.let {
+                sendError(it)
+                return
+            }
+            val pump = activePlugin.activePump
+            if (!pump.isInitialized()) {
+                sendError(rh.gs(app.aaps.core.ui.R.string.wizard_pump_not_available))
+                return
+            }
         }
         if (insulinAfterConstraints == 0.0 && command.carbs == 0) {
             sendError(rh.gs(app.aaps.core.ui.R.string.bolus_equal_zero_no_action))
@@ -1054,6 +1079,11 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun handleFillPresetPreCheck(command: EventData.ActionFillPresetPreCheck) {
+        if (rejectIfAapsClient()) return
+        runningModeGuard.rejectionMessage(PumpCommandGate.CommandKind.BOLUS)?.let {
+            sendError(it)
+            return
+        }
         val amount: Double = when (command.button) {
             1    -> preferences.get(DoubleKey.ActionsFillButton1)
             2    -> preferences.get(DoubleKey.ActionsFillButton2)
@@ -1074,6 +1104,11 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun handleFillPreCheck(command: EventData.ActionFillPreCheck) {
+        if (rejectIfAapsClient()) return
+        runningModeGuard.rejectionMessage(PumpCommandGate.CommandKind.BOLUS)?.let {
+            sendError(it)
+            return
+        }
         val insulinAfterConstraints = constraintChecker.applyBolusConstraints(ConstraintObject(command.insulin, aapsLogger)).value()
         var message = rh.gs(app.aaps.core.ui.R.string.prime_fill) + ": " + insulinAfterConstraints + rh.gs(R.string.units_short)
         if (insulinAfterConstraints - command.insulin != 0.0) message += "\n" + rh.gs(app.aaps.core.ui.R.string.constraint_applied)
@@ -2017,7 +2052,7 @@ class DataHandlerMobile @Inject constructor(
             // Pre-check: if the mode forbids a new bolus, surface the rejection to Wear
             // without touching commandQueue.
             if (detailedBolusInfo.insulin > 0) {
-                runningModeGuard.rejectionMessage(TbrGate.CommandKind.BOLUS)?.let {
+                runningModeGuard.rejectionMessage(PumpCommandGate.CommandKind.BOLUS)?.let {
                     sendError(it)
                     return
                 }
@@ -2061,7 +2096,7 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun doFillBolus(amount: Double) {
-        runningModeGuard.rejectionMessage(TbrGate.CommandKind.BOLUS)?.let {
+        runningModeGuard.rejectionMessage(PumpCommandGate.CommandKind.BOLUS)?.let {
             sendError(it)
             return
         }

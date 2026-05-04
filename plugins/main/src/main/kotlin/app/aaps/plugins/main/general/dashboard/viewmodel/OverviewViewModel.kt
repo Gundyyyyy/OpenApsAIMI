@@ -645,6 +645,8 @@ class OverviewViewModel(
             resourceHelper.gs(R.string.dashboard_tir_stats_placeholder)
         }
 
+        val loopRunningMode = loop.runningMode()
+
         // 12. AIMI Insights (Autodrive V3)
         val request = lastApsRequest
         val rt = request?.rawData() as? RT
@@ -675,8 +677,8 @@ class OverviewViewModel(
             deltaText = deltaText,
             iobText = iobText,
             cobText = cobText,
-            loopStatusText = loopStatusText(loop.runningMode()),
-            loopIsRunning = !loop.runningMode().isSuspended(),
+            loopStatusText = loopStatusText(loopRunningMode),
+            loopIsRunning = !loopRunningMode.pausesLoopExecution(),
             timeAgo = timeAgo,
             timeAgoDescription = timeAgoLong,
             isGlucoseActual = DashboardCoherentGlucose.isDisplayActual(

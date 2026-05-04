@@ -645,7 +645,10 @@ class OverviewViewModel(
             resourceHelper.gs(R.string.dashboard_tir_stats_placeholder)
         }
 
-        val loopRunningMode = loop.runningMode()
+        // Display-only: read RM from DB like [OverviewDataCacheImpl.updateRunningModeFromDatabase].
+        // Avoid [Loop.runningMode] / [runningModePreCheck] here — they reconcile pump vs mode, may write RM,
+        // emit [EventRefreshOverview], and amplify refresh work under [updateMutex] (dashboard can look "frozen").
+        val loopRunningMode = persistenceLayer.getRunningModeActiveAt(dateUtil.now()).mode
 
         // 12. AIMI Insights (Autodrive V3)
         val request = lastApsRequest

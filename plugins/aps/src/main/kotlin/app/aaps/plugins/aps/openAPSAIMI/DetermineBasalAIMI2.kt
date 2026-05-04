@@ -1508,10 +1508,18 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val honeymoon = preferences.get(BooleanKey.OApsAIMIhoneymoon)
         this.bg = glucoseStatus.glucose
         val getlastBolusSMB = latestSmbCached()
-        val lastBolusSMBTime = getlastBolusSMB?.timestamp ?: 0L
-        this.lastBolusSMBUnit = getlastBolusSMB?.amount?.toFloat() ?: 0.0F
-        val diff = abs(now - lastBolusSMBTime)
-        this.lastsmbtime = (diff / (60 * 1000)).toInt()
+        val cacheSmbTimestamp = getlastBolusSMB?.timestamp ?: 0L
+        // latestSmbCached() triggers async refresh — cache can lag one or more loop ticks after a legacy prebolus.
+        // If DB/cache is older than [internalLastSmbMillis], do not overwrite [lastBolusSMBUnit] (set synchronously in markLegacyMealDecision),
+        // or legacy meal prebolus can fire twice within the same runtime window.
+        if (cacheSmbTimestamp >= internalLastSmbMillis) {
+            this.lastBolusSMBUnit = getlastBolusSMB?.amount?.toFloat() ?: 0.0F
+            val diff = abs(now - cacheSmbTimestamp)
+            this.lastsmbtime = (diff / (60 * 1000)).toInt()
+        } else {
+            val diff = abs(now - internalLastSmbMillis)
+            this.lastsmbtime = (diff / (60 * 1000)).toInt()
+        }
         this.maxIob = preferences.get(DoubleKey.ApsSmbMaxIob)
 // Tarciso Dynamic Max IOB
         // [FIX] User Request: Strict MaxIOB Limit (Preference Only).
@@ -1799,7 +1807,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         if (recentBolusCount < 2 && !internalBlock && !iobSafetyBlock) {
             // 🍱 Legacy Meal Prebolus Support for T3c (Already handled by top-level call above)
-            // internalLastSmbMillis is now updated inside applyLegacyMealModes.
+            // internalLastSmbMillis + lastBolusSMBUnit for legacy prebolus: see [markLegacyMealDecision] (async SMB cache can lag).
         } else {
             val reason = when {
                 iobSafetyBlock -> "IOB_LIMIT (${"%.2f".format(iob)}U > MaxIOB)"
@@ -9159,6 +9167,13 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         fun rbf(key: DoubleKey) = preferences.get(key)
         fun markLegacyMealDecision() {
             physioAdapter.setFinalLoopDecisionType(if ((rT.units ?: 0.0) > 0.0) "smb" else "none")
+            val units = rT.units ?: 0.0
+            if (units > 0.0) {
+                lastBolusSMBUnit = units.toFloat()
+                lastSmbCapped = units
+                lastSmbFinal = units
+                internalLastSmbMillis = dateUtil.now()
+            }
         }
         
         // ─────────────────────────────────────────────────────────────────────

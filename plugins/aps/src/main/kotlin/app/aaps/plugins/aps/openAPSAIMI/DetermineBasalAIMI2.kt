@@ -320,6 +320,16 @@ private const val MEAL_ADVISOR_IOB_DISCOUNT_FACTOR = 0.7
  */
 private const val MEAL_ADVISOR_MIN_CARB_COVERAGE = 0.25
 
+/**
+ * When [TrajectoryType.TIGHT_SPIRAL] is active with high trajectory energy and IOB already elevated,
+ * SMB caps must not stay at the high-BG ceiling ([DoubleKey.OApsAIMIHighBGMaxSMB]) — see
+ * [DetermineBasalaimiSMB2.applyTrajectoryTightSpiralStandardSmbCapIfNeeded].
+ */
+private const val TIGHT_SPIRAL_SMB_CAP_ENERGY_U = 3.5
+
+/** IOB floor (U): only clamp SMB when stack is already material (avoids blocking a lone high-BG SMB). */
+private const val TIGHT_SPIRAL_SMB_CAP_IOB_U = 4.0
+
 /** Bundles locals produced by [DetermineBasalaimiSMB2.runEarlyDetermineBasalStages]. */
 private data class AimiDetermineBasalEarlyTickState(
     val originalProfile: OapsProfileAimi,
@@ -4857,7 +4867,32 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
     /**
-     * Pont **TIGHT_SPIRAL** ([trajectoryGuard]) : réduction proactive de basale sur [rT] selon énergie / CGate.
+     * When spiral energy and IOB exceed safety thresholds, clamp [maxSMB] and [maxSMBHB] to the user’s
+     * standard SMB cap ([DoubleKey.OApsAIMIMaxSMB]) so high-BG SMB headroom cannot stack insulin during
+     * a tight spiral. Invoked from [runTrajectoryTightSpiralSafetyBridge] and again after
+     * [applyIsfBoundsAndPhysioMultipliersAfterEndoActivity] so physio SMB scaling cannot re-expand past it.
+     */
+    private fun applyTrajectoryTightSpiralStandardSmbCapIfNeeded(energy: Double, iobNow: Double) {
+        if (energy <= TIGHT_SPIRAL_SMB_CAP_ENERGY_U || iobNow <= TIGHT_SPIRAL_SMB_CAP_IOB_U) return
+        val stdMaxSMB = preferences.get(DoubleKey.OApsAIMIMaxSMB)
+        if (!stdMaxSMB.isFinite() || stdMaxSMB <= 0.0) return
+        val prevMb = maxSMB
+        val prevHb = maxSMBHB
+        maxSMB = minOf(maxSMB, stdMaxSMB)
+        maxSMBHB = minOf(maxSMBHB, stdMaxSMB)
+        if (maxSMB == prevMb && maxSMBHB == prevHb) return
+        consoleLog.add(
+            "🌀🛡️ TRAJ_SPIRAL SMB-cap: E=${"%.1f".format(Locale.US, energy)}U " +
+                "IOB=${"%.1f".format(Locale.US, iobNow)}U " +
+                "maxSMB ${"%.2f".format(Locale.US, prevMb)}→${"%.2f".format(Locale.US, maxSMB)}U " +
+                "maxSMBHB ${"%.2f".format(Locale.US, prevHb)}→${"%.2f".format(Locale.US, maxSMBHB)}U " +
+                "(≤OApsAIMIMaxSMB ${"%.2f".format(Locale.US, stdMaxSMB)}U)"
+        )
+    }
+
+    /**
+     * Pont **TIGHT_SPIRAL** ([trajectoryGuard]) : réduction proactive de basale sur [rT] selon énergie / CGate,
+     * plus plafond SMB standard si énergie / IOB dépassent les seuils (voir [applyTrajectoryTightSpiralStandardSmbCapIfNeeded]).
      * [physioMultipliers] = même instance que le tick (T9 bootstrap), pas un membre de classe.
      * **Ne retourne pas** — les garde-fous LGS aval peuvent encore abaisser le TBR. Appelé après [applyTrajectoryAnalysis], avant [applyContextModule].
      */
@@ -4917,6 +4952,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         lastSafetySource = "TrajBridge_Tier${when { energy > 3.5 -> 1; energy > 2.5 -> 2; else -> 3 }}"
         logDecisionFinal("TRAJ_SAFETY", rT, bg, delta)
+        applyTrajectoryTightSpiralStandardSmbCapIfNeeded(energy = energy, iobNow = iobNow)
     }
 
     /**
@@ -5110,8 +5146,9 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
     /**
-     * [applyTrajectoryAnalysis] → [runTrajectoryTightSpiralSafetyBridge] → [applyContextModule] →
+     * [applyTrajectoryAnalysis] → [runTrajectoryTightSpiralSafetyBridge] (basal + [applyTrajectoryTightSpiralStandardSmbCapIfNeeded]) → [applyContextModule] →
      * [runTddRatesAndIsfFusionAfterContext] → microbolus dynamiques (prefs prébolus ou [calculateDynamicMicroBolus]).
+     * Le plafond SMB spiral est ré-appliqué après [applyIsfBoundsAndPhysioMultipliersAfterEndoActivity] dans le tick principal.
      * Lit les champs d’instance courants (BG, delta, IOB, COB, …) comme l’ancien bloc dans [determine_basal].
      */
     private fun runTrajectoryContextModuleTddIsfAndDynamicPbolusPrep(
@@ -9985,6 +10022,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             physioMultipliers = physioMultipliers,
             exerciseInsulinLockoutActive = exerciseInsulinLockoutActive,
         )
+        trajectoryGuard.getLastAnalysis()?.takeIf { it.classification == TrajectoryType.TIGHT_SPIRAL }?.let { analysis ->
+            applyTrajectoryTightSpiralStandardSmbCapIfNeeded(
+                energy = analysis.metrics.energyBalance,
+                iobNow = iob_data.iob,
+            )
+        }
         val (
             bgi,
             deviation,

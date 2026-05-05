@@ -52,8 +52,8 @@ internal fun AimiDashboardComposeEmbedded(
     onShellBindingReady: (DashboardShellBinding) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Flip to false once Compose graph renderer reaches full parity and runtime validation is green.
-    val attachLegacyGraphBackendForCompose = embeddedState.graphUiState.attachLegacyGraphBackend
+    // Product decision: Compose dashboard stays on Vico path permanently (no legacy graph fallback).
+    val attachLegacyGraphBackendForCompose = false
     var auditorHost by remember { mutableStateOf<FrameLayout?>(null) }
     var glucoseGraphView by remember { mutableStateOf<GlucoseGraphView?>(null) }
 

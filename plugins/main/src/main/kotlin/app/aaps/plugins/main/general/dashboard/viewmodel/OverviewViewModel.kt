@@ -26,6 +26,7 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.iob.GlucoseStatusProvider
 import app.aaps.core.interfaces.overview.LastBgData
 import app.aaps.core.interfaces.plugin.ActivePlugin
+import app.aaps.core.interfaces.profile.EffectiveProfile
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.resources.ResourceHelper
@@ -77,8 +78,10 @@ import io.reactivex.rxjava3.kotlin.plusAssign
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
@@ -127,6 +130,28 @@ class OverviewViewModel(
      * activity %, TBR, steps, HR, etc.).
      */
     private val updateMutex = Mutex()
+
+    /**
+     * Coalesces high-frequency overview signals (RM/EPS/TE, bucketed BG, pump, loop GUI, …) into a single
+     * [updateStatus] after a short quiet window. Cancelling the previous job avoids piling N full dashboard
+     * recomputes (TIR-of-day, steps, HR, …) under [updateMutex] when the bus chatters — the main cause of
+     * persistent “frozen” hybrid UI while work catches up.
+     *
+     * Use [launchUpdate] (no debounce) for [refreshAll] and any path that must run immediately with other work
+     * in the same mutex block.
+     */
+    private var debouncedStatusJob: Job? = null
+
+    private fun scheduleDebouncedStatusRefresh(debounceMs: Long = 120L) {
+        val scope = updateScope ?: return
+        debouncedStatusJob?.cancel()
+        debouncedStatusJob = scope.launch {
+            delay(debounceMs)
+            updateMutex.withLock {
+                updateStatus()
+            }
+        }
+    }
 
     private fun launchUpdate(block: suspend () -> Unit) {
         updateScope?.launch {
@@ -234,28 +259,28 @@ class OverviewViewModel(
             .toObservable(EventBucketedDataCreated::class.java)
             .debounce(1L, TimeUnit.SECONDS)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+            .subscribe({ scheduleDebouncedStatusRefresh() }, fabricPrivacy::logException)
 
         disposables += rxBus
             .toObservable(EventPumpStatusChanged::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+            .subscribe({ scheduleDebouncedStatusRefresh() }, fabricPrivacy::logException)
 
         // End of loop.invoke() — keeps hybrid dashboard in sync with classic overview when APS enacts changes.
         disposables += rxBus
             .toObservable(EventLoopUpdateGui::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+            .subscribe({ scheduleDebouncedStatusRefresh() }, fabricPrivacy::logException)
 
         disposables += rxBus
             .toObservable(EventAcceptOpenLoopChange::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+            .subscribe({ scheduleDebouncedStatusRefresh() }, fabricPrivacy::logException)
 
         disposables += rxBus
             .toObservable(EventNewOpenLoopNotification::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+            .subscribe({ scheduleDebouncedStatusRefresh() }, fabricPrivacy::logException)
 
         disposables += activePlugin.activeOverview.overviewBus
             .toObservable(EventUpdateOverviewGraph::class.java)
@@ -267,14 +292,14 @@ class OverviewViewModel(
             .toObservable(EventUpdateOverviewIobCob::class.java)
             .debounce(1L, TimeUnit.SECONDS)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+            .subscribe({ scheduleDebouncedStatusRefresh() }, fabricPrivacy::logException)
 
         // Same bus as OverviewFragment.updateSensitivity() — keeps activity % / AIMI metrics in sync after autosens refresh.
         disposables += activePlugin.activeOverview.overviewBus
             .toObservable(EventUpdateOverviewSensitivity::class.java)
             .debounce(1L, TimeUnit.SECONDS)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+            .subscribe({ scheduleDebouncedStatusRefresh() }, fabricPrivacy::logException)
 
         disposables += rxBus
             .toObservable(EventPreferenceChange::class.java)
@@ -300,7 +325,7 @@ class OverviewViewModel(
         disposables += rxBus
             .toObservable(EventInitializationChanged::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ launchUpdate { updateStatus() } }, fabricPrivacy::logException)
+            .subscribe({ scheduleDebouncedStatusRefresh() }, fabricPrivacy::logException)
 
         fun <T : Any> observePersistenceChanges(clazz: Class<T>, onEmit: suspend () -> Unit) {
             scope.launch {
@@ -323,10 +348,10 @@ class OverviewViewModel(
         observePersistenceChanges(TT::class.java) { updateAdjustments() }
         observePersistenceChanges(EB::class.java) { updateAdjustments() }
         // Same persistence streams as [OverviewFragment.onResume] (EPS / RM → scheduleUpdateGUI / processAps).
-        observePersistenceChanges(EPS::class.java) { launchUpdate { updateStatus() } }
-        observePersistenceChanges(RM::class.java) { launchUpdate { updateStatus() } }
+        observePersistenceChanges(EPS::class.java) { scheduleDebouncedStatusRefresh() }
+        observePersistenceChanges(RM::class.java) { scheduleDebouncedStatusRefresh() }
         // Cannula / sensor ages on the hybrid card
-        observePersistenceChanges(TE::class.java) { launchUpdate { updateStatus() } }
+        observePersistenceChanges(TE::class.java) { scheduleDebouncedStatusRefresh() }
 
         // Same preference-driven refresh as overview [merge(...).onEach { scheduleUpdateGUI() }].
         scope.launch {
@@ -354,7 +379,7 @@ class OverviewViewModel(
                     .debounce(400L)
                     .collect {
                         try {
-                            launchUpdate { updateStatus() }
+                            scheduleDebouncedStatusRefresh()
                         } catch (e: Exception) {
                             fabricPrivacy.logException(e)
                         }
@@ -371,7 +396,7 @@ class OverviewViewModel(
                     .debounce(400L)
                     .collect {
                         try {
-                            launchUpdate { updateStatus() }
+                            scheduleDebouncedStatusRefresh()
                         } catch (e: Exception) {
                             fabricPrivacy.logException(e)
                         }
@@ -396,6 +421,7 @@ class OverviewViewModel(
         refreshAdaptiveSmoothingQualityFromPlugin()
         val lastBg = lastBgData.lastBg()
         val now = dateUtil.now()
+        val profile: EffectiveProfile? = profileFunction.getProfile()
         val gs = glucoseStatusProvider.glucoseStatusData
         val smoothing = activePlugin.activeSmoothing
         val displayMgdl = DashboardCoherentGlucose.displayMgdl(lastBg, gs, smoothing, now)
@@ -412,7 +438,9 @@ class OverviewViewModel(
         val deltaText = deltaMgdlForDisplay?.let { v ->
             "Δ " + profileUtil.fromMgdlToSignedStringInUnits(v)
         } ?: ("Δ " + resourceHelper.gs(app.aaps.core.ui.R.string.value_unavailable_short))
-        val iobText = totalIobText()
+        val bolusSnap = bolusIob()
+        val basalSnap = basalIob()
+        val iobText = formatDashboardIobHeader(bolusSnap, basalSnap)
         val cobText = iobCobCalculator.getCobInfo("Dashboard COB")
             .displayText(resourceHelper, decimalFormatter)
             ?: resourceHelper.gs(app.aaps.core.ui.R.string.value_unavailable_short)
@@ -470,8 +498,8 @@ class OverviewViewModel(
         }
         
         // 5. Basal (current profile basal rate)
-        val basalText = profileFunction.getProfile()?.let { profile ->
-            val currentBasal = profile.getBasal(dateUtil.now())
+        val basalText = profile?.let { p ->
+            val currentBasal = p.getBasal(now)
             decimalFormatter.to2Decimal(currentBasal) + " IE"
         }
         
@@ -479,8 +507,8 @@ class OverviewViewModel(
 
         // 6. Activity % — delta vs scheduled basal during an active TBR (not the same framing as the "% of profile" on the TBR line).
         val activityPctText = activeTempBasal?.let { tbr ->
-            profileFunction.getProfile()?.let { profile ->
-                val currentBasal = profile.getBasal(dateUtil.now())
+            profile?.let { p ->
+                val currentBasal = p.getBasal(now)
                 if (currentBasal > 0) {
                     if (tbr.rate <= 1e-4) {
                         resourceHelper.gs(R.string.dashboard_activity_tbr_basal_delivery_stopped)
@@ -497,9 +525,7 @@ class OverviewViewModel(
         val pumpBatteryText = activePlugin.activePump.batteryLevel.value?.let { "$it%" }
 
         // 8. IOB (same formatting as the rest of AAPS — avoids mixing "IE" + locale-decimal vs treatment screens)
-        val bolusForSensorLine = bolusIob()
-        val basalForSensorLine = basalIob()
-        val totalIobForSensorLine = bolusForSensorLine.iob + basalForSensorLine.basaliob
+        val totalIobForSensorLine = bolusSnap.iob + basalSnap.basaliob
         val lastSensorValueText =
             if (totalIobForSensorLine >= 0) {
                 resourceHelper.gs(app.aaps.core.ui.R.string.format_insulin_units, totalIobForSensorLine)
@@ -514,8 +540,8 @@ class OverviewViewModel(
 
         val tbrRateText = activeTempBasal?.let { tbr ->
             val rateUh = decimalFormatter.to2Decimal(tbr.rate) + " U/h"
-            val pctStr = profileFunction.getProfile()?.let { profile ->
-                val currentBasal = profile.getBasal(dateUtil.now())
+            val pctStr = profile?.let { p ->
+                val currentBasal = p.getBasal(now)
                 if (currentBasal > 0) {
                     val pct = ((tbr.rate / currentBasal) * 100).toInt()
                     " ($pct%)"
@@ -540,7 +566,6 @@ class OverviewViewModel(
         var a1c: Double? = null
         
         try {
-            val now = System.currentTimeMillis()
             val from = dateUtil.beginOfDay(now) // Start of today (Midnight)
             
             // --- TODAY CLINICAL STATS COMPUTATION ---
@@ -648,7 +673,7 @@ class OverviewViewModel(
         // Display-only: read RM from DB like [OverviewDataCacheImpl.updateRunningModeFromDatabase].
         // Avoid [Loop.runningMode] / [runningModePreCheck] here — they reconcile pump vs mode, may write RM,
         // emit [EventRefreshOverview], and amplify refresh work under [updateMutex] (dashboard can look "frozen").
-        val loopRunningMode = persistenceLayer.getRunningModeActiveAt(dateUtil.now()).mode
+        val loopRunningMode = persistenceLayer.getRunningModeActiveAt(now).mode
 
         // 12. AIMI Insights (Autodrive V3)
         val request = lastApsRequest
@@ -701,8 +726,8 @@ class OverviewViewModel(
             isAimiContextActive = preferences.get(app.aaps.core.keys.StringKey.OApsAIMIContextStorage).length > 5,
             // For GlucoseCircleView
             glucoseValue = displayMgdl,
-            targetLow = profileFunction.getProfile()?.getTargetLowMgdl(),
-            targetHigh = profileFunction.getProfile()?.getTargetHighMgdl(),
+            targetLow = profile?.getTargetLowMgdl(),
+            targetHigh = profile?.getTargetHighMgdl(),
             
             // Circle-Top Hybrid Dashboard fields
             glucoseMgdl = displayMgdl?.toInt(),
@@ -752,32 +777,24 @@ class OverviewViewModel(
 
     /**
      * Calculates total IOB text for display.
-     * 
+     *
      * CRITICAL FIX: Removed abs() that was causing IOB to appear increasing
      * when basal IOB was negative (during low TBR).
-     * 
-     * Scenario that was broken:
-     * - T1: Bolus IOB = 1.0 U, Basal IOB = -1.0 U → total = abs(0.0) = 0.0 U ✓
-     * - T2: Bolus IOB = 0.5 U, Basal IOB = -1.5 U → total = abs(-1.0) = 1.0 U ✗ (INCREASED!)
-     * 
+     *
      * Total IOB can be negative (insulin debt from low TBR), which is valid
      * and important clinical information to display.
      */
-    private suspend fun totalIobText(): String {
-        val bolus = bolusIob()
-        val basal = basalIob()
-        
-        // FIXED: No abs() - total can be negative (insulin debt)
+    private suspend fun totalIobText(): String =
+        formatDashboardIobHeader(bolusIob(), basalIob())
+
+    /** Shared by [updateStatus] (single IOB fetch) and [totalIobText]. */
+    private fun formatDashboardIobHeader(bolus: IobTotal, basal: IobTotal): String {
         val total = bolus.iob + basal.basaliob
-        
-        // Display with sign to show positive/negative IOB
         val formattedTotal = if (total >= 0) {
             resourceHelper.gs(app.aaps.core.ui.R.string.format_insulin_units, total)
         } else {
-            // Negative IOB (insulin debt) - show with minus sign
             "-" + resourceHelper.gs(app.aaps.core.ui.R.string.format_insulin_units, -total)
         }
-        
         return "IOB: $formattedTotal"
     }
 

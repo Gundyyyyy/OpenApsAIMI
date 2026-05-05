@@ -26,8 +26,6 @@ import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ue.ValueWithUnit
 import app.aaps.core.interfaces.aps.APSResult
-import io.reactivex.rxjava3.core.Completable
-import io.reactivex.rxjava3.core.Single
 import kotlinx.coroutines.flow.Flow
 import kotlin.reflect.KClass
 
@@ -1512,7 +1510,7 @@ interface PersistenceLayer {
      * @param gitRemote gitRemote (shortened)
      * @param commitHash commitHash
      */
-    fun insertVersionChangeIfChanged(versionName: String, versionCode: Int, gitRemote: String?, commitHash: String?): Completable
+    suspend fun insertVersionChangeIfChanged(versionName: String, versionCode: Int, gitRemote: String?, commitHash: String?)
 
     /**
      * Get list of db changed records in db since time

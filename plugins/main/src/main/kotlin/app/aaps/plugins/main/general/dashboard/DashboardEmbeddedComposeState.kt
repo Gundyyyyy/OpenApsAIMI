@@ -7,7 +7,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
 import app.aaps.core.interfaces.overview.graph.ChartTbrSegment
-import app.aaps.plugins.main.BuildConfig
 import app.aaps.plugins.main.general.dashboard.viewmodel.AdjustmentCardState
 import app.aaps.plugins.main.general.overview.notifications.NotificationStore
 
@@ -25,7 +24,7 @@ class DashboardEmbeddedComposeState {
         val rangeHours: Int = 6,
         val updateMessage: String = "",
         val freshnessConfig: GraphFreshnessConfig = GraphFreshnessConfig(),
-        val attachLegacyGraphBackend: Boolean = BuildConfig.AIMI_DASHBOARD_LEGACY_GRAPH_FALLBACK,
+        val attachLegacyGraphBackend: Boolean = false,
     )
 
     data class GraphRenderInput(

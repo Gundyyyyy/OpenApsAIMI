@@ -1307,7 +1307,8 @@ internal class DashboardShellController(
 
     private fun shouldAttachLegacyGraphBackend(): Boolean {
         val composeState = host.embeddedComposeState
-        return !host.embeddedInComposeMainShell() || composeState?.graphUiState?.attachLegacyGraphBackend != false
+        if (host.embeddedInComposeMainShell()) return false
+        return composeState?.graphUiState?.attachLegacyGraphBackend != false
     }
 
     private fun graphFreshnessConfigFromPreferences(): DashboardEmbeddedComposeState.GraphFreshnessConfig {

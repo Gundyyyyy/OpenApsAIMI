@@ -240,8 +240,6 @@ class OmnipodDashPumpPlugin @Inject constructor(
         }
     }
 
-    override fun isConfigured(): Boolean = podStateManager.isUniqueIdSet
-
     override fun isInitialized(): Boolean {
         return podStateManager.isPodRunning
     }

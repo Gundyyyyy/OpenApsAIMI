@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -37,8 +36,9 @@ import app.aaps.ui.compose.overview.graphs.GraphViewModel
 /**
  * AIMI dashboard column for the Compose main shell.
  *
- * **Simple mode (product)**: one-screen layout — no vertical scroll; the graph expands to fill
- * remaining height so glucose + actions + chart stay visible without scrolling.
+ * **Simple mode (product)**: one-screen layout — hero + notifications use intrinsic height; the
+ * graph card uses [Modifier.weight] on the remaining space so the full Vico stack (therapy belt,
+ * BG chart, IOB chart) stays in the same viewport without relying on outer vertical scroll.
  *
  * **Extended mode**: scrollable column for extra metrics and insights.
  */
@@ -88,10 +88,8 @@ internal fun AimiDashboardComposeEmbedded(
         val graphModifierBase = Modifier
             .fillMaxWidth()
             .padding(start = bodyHorizontalPadding, end = bodyHorizontalPadding)
-        val graphMinHeight = dimensionResource(R.dimen.dashboard_graph_height_min)
         val configuration = LocalConfiguration.current
         val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val compactPortrait = !isLandscape && configuration.screenHeightDp <= 740
         val landscapeHeroScrollState = rememberScrollState()
 
         val graphCard: @Composable (Modifier) -> Unit = { graphMod ->
@@ -181,11 +179,7 @@ internal fun AimiDashboardComposeEmbedded(
                 )
             }
         } else {
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .then(if (compactPortrait) Modifier.verticalScroll(rememberScrollState()) else Modifier),
-            ) {
+            Column(modifier = modifier.fillMaxSize()) {
                 DashboardCircleTopCompose(
                     viewModel = viewModel,
                     embeddedState = embeddedState,
@@ -206,14 +200,7 @@ internal fun AimiDashboardComposeEmbedded(
                 )
                 graphCard(
                     graphModifierBase
-                        .then(
-                            if (compactPortrait) {
-                                Modifier.heightIn(min = graphMinHeight)
-                            } else {
-                                Modifier
-                                    .weight(1f)
-                            },
-                        )
+                        .weight(1f)
                         .padding(bottom = bodyVerticalPadding),
                 )
             }

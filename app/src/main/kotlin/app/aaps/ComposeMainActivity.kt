@@ -888,7 +888,6 @@ class ComposeMainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (!config.appInitialized) return
-        enforceDashboardToggleDisabledForCompose()
         refreshOnResume()
         // After the activity resumes: hybrid dashboard [OverviewViewModel] may have been stopped in
         // [onStop]; an Rx event fired only here would be dropped if sent synchronously in [onResume].
@@ -949,15 +948,18 @@ class ComposeMainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Compose main shell uses [AimiDashboardComposeRootView] for home — not [OverviewEntryFragment] /
+     * [DashboardFragment]. Keep the legacy "use dashboard layout" pref off so settings export/import
+     * and any classic entry path do not imply the XML dashboard is active.
+     *
+     * [BooleanKey.OverviewDashboardExtendedMetrics] and [BooleanKey.OverviewShowHybridDashboardAimiPulse]
+     * are left to the user: resetting them on every resume broke simple/extended toggles and hid the
+     * IOB strip when users expected both charts in simple mode.
+     */
     private fun enforceDashboardToggleDisabledForCompose() {
         if (preferences.get(BooleanKey.OverviewUseDashboardLayout)) {
             preferences.put(BooleanKey.OverviewUseDashboardLayout, false)
-        }
-        if (preferences.get(BooleanKey.OverviewShowHybridDashboardAimiPulse)) {
-            preferences.put(BooleanKey.OverviewShowHybridDashboardAimiPulse, false)
-        }
-        if (preferences.get(BooleanKey.OverviewDashboardExtendedMetrics)) {
-            preferences.put(BooleanKey.OverviewDashboardExtendedMetrics, false)
         }
     }
 

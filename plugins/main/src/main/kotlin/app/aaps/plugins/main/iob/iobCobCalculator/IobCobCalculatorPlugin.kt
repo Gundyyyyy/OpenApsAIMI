@@ -442,13 +442,20 @@ class IobCobCalculatorPlugin @Inject constructor(
     private class ScheduledHistoryData(
         val oldDataTimestamp: Long,
         var reloadBgData: Boolean,
-        var triggeredByNewBG: Boolean
+        var triggeredByNewBG: Boolean,
+        val traceId: String
     )
 
     private var scheduledData: ScheduledHistoryData? = null
 
+    private fun generateCalculationTraceId(triggeredByNewBG: Boolean, oldDataTimestamp: Long): String {
+        val trigger = if (triggeredByNewBG) "bg" else "db"
+        return "$trigger-${oldDataTimestamp.toString(16)}-${SystemClock.elapsedRealtime().toString(16)}"
+    }
+
     @Synchronized
     fun scheduleHistoryDataChange(oldDataTimestamp: Long, reloadBgData: Boolean, triggeredByNewBG: Boolean = false) {
+        val scheduledAt = SystemClock.elapsedRealtime()
         // if there is nothing scheduled or asking reload deeper to the past
         if (scheduledData == null || oldDataTimestamp < (scheduledData?.oldDataTimestamp ?: 0L)) {
             // cancel waiting task to prevent sending multiple posts
@@ -456,14 +463,42 @@ class IobCobCalculatorPlugin @Inject constructor(
             // merge flags from previously scheduled event
             val mergedReload = reloadBgData || (scheduledData?.reloadBgData ?: false)
             val mergedTriggeredByNewBG = triggeredByNewBG || (scheduledData?.triggeredByNewBG ?: false)
-            val data = ScheduledHistoryData(oldDataTimestamp, mergedReload, mergedTriggeredByNewBG)
+            val traceId = generateCalculationTraceId(mergedTriggeredByNewBG, oldDataTimestamp)
+            val data = ScheduledHistoryData(oldDataTimestamp, mergedReload, mergedTriggeredByNewBG, traceId)
             scheduledData = data
+            aapsLogger.debug(
+                LTag.AUTOSENS,
+                "scheduleHistoryDataChange accepted ts=${dateUtil.dateAndTimeAndSecondsString(oldDataTimestamp)} " +
+                    "reload=$mergedReload bgTrigger=$mergedTriggeredByNewBG traceId=${data.traceId}"
+            )
             scheduledHistoryPost = historyWorker?.schedule(
                 {
                     synchronized(this) {
-                        aapsLogger.debug(LTag.AUTOSENS, "Running newHistoryData")
+                        val runStartedAt = SystemClock.elapsedRealtime()
+                        val queuedForMs = runStartedAt - scheduledAt
+                        aapsLogger.debug(
+                            LTag.AUTOSENS,
+                            "Running newHistoryData queuedFor=${queuedForMs}ms reload=${data.reloadBgData} " +
+                                "bgTrigger=${data.triggeredByNewBG} traceId=${data.traceId}"
+                        )
+                        val clearStartedAt = SystemClock.elapsedRealtime()
                         runBlocking { persistenceLayer.clearCachedTddData(MidnightTime.calc(data.oldDataTimestamp)) }
-                        newHistoryData(data.oldDataTimestamp, data.reloadBgData, data.triggeredByNewBG)
+                        val clearElapsedMs = SystemClock.elapsedRealtime() - clearStartedAt
+                        aapsLogger.debug(
+                            LTag.AUTOSENS,
+                            "clearCachedTddData finished in ${clearElapsedMs}ms traceId=${data.traceId}"
+                        )
+                        newHistoryData(
+                            oldDataTimestamp = data.oldDataTimestamp,
+                            bgDataReload = data.reloadBgData,
+                            triggeredByNewBG = data.triggeredByNewBG,
+                            traceId = data.traceId
+                        )
+                        val totalElapsedMs = SystemClock.elapsedRealtime() - runStartedAt
+                        aapsLogger.debug(
+                            LTag.AUTOSENS,
+                            "newHistoryData pipeline finished in ${totalElapsedMs}ms traceId=${data.traceId}"
+                        )
                         scheduledData = null
                         scheduledHistoryPost = null
                     }
@@ -474,13 +509,18 @@ class IobCobCalculatorPlugin @Inject constructor(
             scheduledData?.let {
                 if (!it.reloadBgData) it.reloadBgData = reloadBgData
                 if (!it.triggeredByNewBG) it.triggeredByNewBG = triggeredByNewBG
+                aapsLogger.debug(
+                    LTag.AUTOSENS,
+                    "scheduleHistoryDataChange merged into pending ts=${dateUtil.dateAndTimeAndSecondsString(it.oldDataTimestamp)} " +
+                        "reload=${it.reloadBgData} bgTrigger=${it.triggeredByNewBG} traceId=${it.traceId}"
+                )
             }
         }
     }
 
     // When historical data is changed (coming from NS etc.) finished calculations after this date must be invalidated
-    private fun newHistoryData(oldDataTimestamp: Long, bgDataReload: Boolean, triggeredByNewBG: Boolean) {
-        calculationWorkflow.stopCalculation(CalculationWorkflow.MAIN_CALCULATION, "onEventNewHistoryData")
+    private fun newHistoryData(oldDataTimestamp: Long, bgDataReload: Boolean, triggeredByNewBG: Boolean, traceId: String = generateCalculationTraceId(triggeredByNewBG, oldDataTimestamp)) {
+        calculationWorkflow.stopCalculation(CalculationWorkflow.MAIN_CALCULATION, "onEventNewHistoryData traceId=$traceId")
         synchronized(dataLock) {
 
             // clear up 5 min back for proper COB calculation
@@ -510,7 +550,7 @@ class IobCobCalculatorPlugin @Inject constructor(
             overviewData = overviewData,
             cache = cache.get(),
             signals = signals,
-            reason = if (triggeredByNewBG) "NewBG" else "DBChange",
+            reason = if (triggeredByNewBG) "NewBG traceId=$traceId" else "DBChange traceId=$traceId",
             end = System.currentTimeMillis(),
             bgDataReload = bgDataReload,
             triggeredByNewBG = triggeredByNewBG

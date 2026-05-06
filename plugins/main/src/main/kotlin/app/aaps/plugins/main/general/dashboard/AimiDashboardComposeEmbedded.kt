@@ -88,7 +88,6 @@ internal fun AimiDashboardComposeEmbedded(
         val graphModifierBase = Modifier
             .fillMaxWidth()
             .padding(start = bodyHorizontalPadding, end = bodyHorizontalPadding)
-        val graphMaxHeightSimple = dimensionResource(R.dimen.dashboard_graph_height_max_simple)
         val graphMinHeight = dimensionResource(R.dimen.dashboard_graph_height_min)
         val configuration = LocalConfiguration.current
         val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -213,7 +212,6 @@ internal fun AimiDashboardComposeEmbedded(
                             } else {
                                 Modifier
                                     .weight(1f)
-                                    .heightIn(max = graphMaxHeightSimple)
                             },
                         )
                         .padding(bottom = bodyVerticalPadding),

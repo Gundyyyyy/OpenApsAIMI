@@ -63,8 +63,9 @@ class PrepareBucketedDataWorker(
         val bucketedDataPoints = bucketedData
             .filter { it.timestamp in newFromTime..newToTime }
             .map { inMemoryGlucoseValue ->
-                // Use recalculated (smoothed value with fallback to original)
-                val valueInUnits = profileUtil.fromMgdlToUnits(inMemoryGlucoseValue.recalculated)
+                // Use recalculated (smoothed value with fallback to original), always mg/dL in cache
+                val mgdl = inMemoryGlucoseValue.recalculated
+                val valueInUnits = profileUtil.fromMgdlToUnits(mgdl)
                 val range = when {
                     valueInUnits > highMark -> BgRange.HIGH
                     valueInUnits < lowMark  -> BgRange.LOW
@@ -72,7 +73,7 @@ class PrepareBucketedDataWorker(
                 }
                 BgDataPoint(
                     timestamp = inMemoryGlucoseValue.timestamp,
-                    value = valueInUnits,
+                    value = mgdl,
                     range = range,
                     type = BgType.BUCKETED,
                     filledGap = inMemoryGlucoseValue.filledGap

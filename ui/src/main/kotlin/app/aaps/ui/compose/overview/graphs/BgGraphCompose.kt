@@ -5,6 +5,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +54,6 @@ import com.patrykandpatrick.vico.compose.common.component.LineComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.TextComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
-import java.util.Locale
 import kotlin.math.abs
 
 /** Series identifiers */
@@ -78,6 +78,10 @@ private val PREDICTION_SERIES = listOf(SERIES_PRED_IOB, SERIES_PRED_COB, SERIES_
  *
  * Layer 0 (start axis): BG readings — regular (outlined circles) + bucketed (filled, range-colored)
  * Layer 1 (end axis, hidden): Basal — profile (dashed step) + actual delivered (solid step + area fill)
+ *
+ * **BG start-axis Y** follows legacy [app.aaps.core.graph.data.GlucoseValueDataPoint] / GraphView:
+ * display units from General → Units (mg/dL or mmol/L). Cache [BgDataPoint.value] stays mg/dL; conversion
+ * happens when building Vico series so ticks and data share one coordinate space.
  *
  * Basal Y-axis is scaled so maxBasal = 25% of chart height (maxY = maxBasal * 4).
  *
@@ -132,8 +136,6 @@ fun BgGraphCompose(
     val rawPredictions by viewModel.predictionsFlow.collectAsStateWithLifecycle()
     val predictions = if (showPredictions) rawPredictions else emptyList()
     val rawBasalData by viewModel.basalGraphFlow.collectAsStateWithLifecycle()
-    val targetData by viewModel.targetLineFlow.collectAsStateWithLifecycle()
-
     // Basal on BG graph is deprecated — now shown as flipped overlay on IOB graph instead.
     // Keep the layer structure intact (dummy data) to avoid chart restructuring.
     @Suppress("DEPRECATION")
@@ -142,13 +144,21 @@ fun BgGraphCompose(
     val showActivityOnMainChart = SeriesType.ACTIVITY in bgOverlays && !dashboardSplitActivityToStrip
     val activityData by viewModel.activityGraphFlow.collectAsStateWithLifecycle()
     val chartConfig by viewModel.chartConfigFlow.collectAsStateWithLifecycle()
+    val generalUnits by viewModel.generalUnits.collectAsStateWithLifecycle()
     val vicoChartLook by viewModel.vicoChartLookFlow.collectAsStateWithLifecycle()
 
-    val startAxisMaxY = remember(bgReadings, bucketedData, predictions, chartConfig.highMark) {
-        val allBgValues = (bgReadings + bucketedData).map { it.value }
-        val fromBg = if (allBgValues.isNotEmpty()) allBgValues.max() else chartConfig.highMark
-        val predMax = predictions.maxOfOrNull { it.value }
-        maxOf(fromBg, predMax ?: fromBg, chartConfig.highMark)
+    val targetData by viewModel.targetLineFlow.collectAsStateWithLifecycle()
+
+    // Y-axis matches legacy GraphView: display units (mg/dL or mmol/L per General → Units).
+    // [BgDataPoint.value] / target line / DB remain mg/dL; convert at Vico series build.
+    val startAxisMaxY = remember(bgReadings, bucketedData, predictions, chartConfig, targetData, generalUnits) {
+        val bgDisplay = (bgReadings + bucketedData).map { viewModel.glucoseMgdlToChartY(it.value) }
+        val fromBg = if (bgDisplay.isNotEmpty()) bgDisplay.max() else chartConfig.highMark
+        val predMax = predictions.maxOfOrNull { viewModel.glucoseMgdlToChartY(it.value) }
+        val targetMax =
+            targetData.targets.maxOfOrNull { viewModel.glucoseMgdlToChartY(it.value) }
+                ?: Double.NEGATIVE_INFINITY
+        maxOf(fromBg, predMax ?: fromBg, chartConfig.highMark, targetMax)
     }
 
     // Use derived time range or fall back to default (last GRAPH_TIME_RANGE_HOURS hours)
@@ -207,7 +217,7 @@ fun BgGraphCompose(
         currentTargetData: TargetLineData,
         currentEpsPoints: List<EpsGraphPoint>,
         currentActivityData: ActivityGraphData,
-        currentMaxBgY: Double
+        currentMaxBgY: Double,
     ) {
         val regularPoints = seriesRegistry[SERIES_REGULAR] ?: emptyList()
         val bucketedPoints = seriesRegistry[SERIES_BUCKETED] ?: emptyList()
@@ -222,7 +232,7 @@ fun BgGraphCompose(
 
                 if (regularPoints.isNotEmpty()) {
                     val dataPoints = regularPoints
-                        .map { timestampToX(it.timestamp, minTimestamp) to it.value }
+                        .map { timestampToX(it.timestamp, minTimestamp) to viewModel.glucoseMgdlToChartY(it.value) }
                         .sortedBy { it.first }
                     series(x = dataPoints.map { it.first }, y = dataPoints.map { it.second })
                     activeSeries.add(SERIES_REGULAR)
@@ -230,7 +240,7 @@ fun BgGraphCompose(
 
                 if (bucketedPoints.isNotEmpty()) {
                     val dataPoints = bucketedPoints
-                        .map { timestampToX(it.timestamp, minTimestamp) to it.value }
+                        .map { timestampToX(it.timestamp, minTimestamp) to viewModel.glucoseMgdlToChartY(it.value) }
                         .sortedBy { it.first }
                     series(x = dataPoints.map { it.first }, y = dataPoints.map { it.second })
                     activeSeries.add(SERIES_BUCKETED)
@@ -238,7 +248,7 @@ fun BgGraphCompose(
 
                 if (smbPoints.isNotEmpty()) {
                     val dataPoints = smbPoints
-                        .map { timestampToX(it.timestamp, minTimestamp) to it.value }
+                        .map { timestampToX(it.timestamp, minTimestamp) to viewModel.glucoseMgdlToChartY(it.value) }
                         .sortedBy { it.first }
                     series(x = dataPoints.map { it.first }, y = dataPoints.map { it.second })
                     activeSeries.add(SERIES_DASHBOARD_SMB)
@@ -249,7 +259,7 @@ fun BgGraphCompose(
                     val predPoints = seriesRegistry[predSeries]
                     if (predPoints != null && predPoints.isNotEmpty()) {
                         val dataPoints = predPoints
-                            .map { timestampToX(it.timestamp, minTimestamp) to it.value }
+                            .map { timestampToX(it.timestamp, minTimestamp) to viewModel.glucoseMgdlToChartY(it.value) }
                             .sortedBy { it.first }
                         series(x = dataPoints.map { it.first }, y = dataPoints.map { it.second })
                         activeSeries.add(predSeries)
@@ -289,7 +299,7 @@ fun BgGraphCompose(
             lineSeries {
                 if (currentTargetData.targets.size >= 2) {
                     val pts = currentTargetData.targets
-                        .map { timestampToX(it.timestamp, minTimestamp) to it.value }
+                        .map { timestampToX(it.timestamp, minTimestamp) to viewModel.glucoseMgdlToChartY(it.value) }
                         .sortedBy { it.first }
                     series(x = pts.map { it.first }, y = pts.map { it.second })
                 } else {
@@ -365,6 +375,7 @@ fun BgGraphCompose(
         activityData,
         showActivityOnMainChart,
         chartConfig,
+        generalUnits,
         stableTimeRange,
         dashboardSmbMarkers,
         dashboardSplitActivityToStrip,
@@ -375,7 +386,9 @@ fun BgGraphCompose(
             seriesRegistry[key] = points
         }
         val sortedBgAsc = bgReadings.sortedBy { it.timestamp }
-        val fallbackSmbY = (chartConfig.lowMark + chartConfig.highMark) / 2.0
+        val fallbackSmbY = viewModel.glucoseDisplayYToMgdl(
+            (chartConfig.lowMark + chartConfig.highMark) / 2.0,
+        )
         seriesRegistry[SERIES_DASHBOARD_SMB] =
             if (dashboardSplitActivityToStrip) {
                 emptyList()
@@ -394,9 +407,16 @@ fun BgGraphCompose(
                     )
                 }
             }
-        // maxBgY clamped against highMark (same as legacy GraphData.maxY logic)
-        val allBgValues = (bgReadings + bucketedData).map { it.value }
-        val maxBgY = if (allBgValues.isNotEmpty()) maxOf(allBgValues.max(), chartConfig.highMark) else chartConfig.highMark
+        // Activity layer shares BG axis — scale in display units (legacy GraphData maxY).
+        val bgDisplay = (bgReadings + bucketedData).map { viewModel.glucoseMgdlToChartY(it.value) }
+        val targetPeakDisplay =
+            targetData.targets.maxOfOrNull { viewModel.glucoseMgdlToChartY(it.value) }
+                ?: Double.NEGATIVE_INFINITY
+        val maxBgY = if (bgDisplay.isNotEmpty()) {
+            maxOf(bgDisplay.max(), chartConfig.highMark, targetPeakDisplay)
+        } else {
+            maxOf(chartConfig.highMark, targetPeakDisplay)
+        }
         rebuildChart(basalData, targetData, epsPoints, activityData, maxBgY)
     }
 
@@ -408,9 +428,8 @@ fun BgGraphCompose(
     // Time formatter and axis configuration
     val timeFormatter = rememberTimeFormatter(minTimestamp)
     val bottomAxisItemPlacer = rememberBottomAxisItemPlacer(minTimestamp)
-    val generalUnits by viewModel.generalUnits.collectAsStateWithLifecycle()
-    val bgStartAxisValueFormatter = remember(generalUnits) {
-        CartesianValueFormatter { _, y, _ -> viewModel.formatBgVerticalAxisValue(y) }
+    val bgStartAxisValueFormatter = remember {
+        CartesianValueFormatter { _, y, _ -> viewModel.formatBgChartAxisTick(y) }
     }
 
     // =========================================================================
@@ -682,16 +701,14 @@ fun BgGraphCompose(
     )
     val axisLabelColor = if (dashboardSoftTherapyVisuals) scheme.onSurfaceVariant.copy(alpha = 0.72f) else scheme.onSurface
     val gridGuideAlpha = if (dashboardSoftTherapyVisuals) 0.22f else 0.5f
-    // Dashboard soft BG axis: same tick spacing as Overview (48 mg/dL ≈ 2.67 mmol/L) — fewer labels, shorter chart feel.
+    // Dashboard soft BG axis: ~48 mg/dL steps in chart Y space (display units — see legacy GraphData).
     val yAxisStep =
-        if (dashboardSoftTherapyVisuals && lockStartAxisYFromZero) {
-            if (generalUnits.lowercase(Locale.ROOT) == "mmol") {
-                48.0 / 18.0
+        remember(generalUnits, dashboardSoftTherapyVisuals, lockStartAxisYFromZero) {
+            if (dashboardSoftTherapyVisuals && lockStartAxisYFromZero) {
+                viewModel.chartBgSoftAxisStep()
             } else {
-                48.0
+                1.0
             }
-        } else {
-            1.0
         }
     val decorations = remember(comfortCorridorDecoration, tbrDecoration, nowLine) {
         buildList {
@@ -738,65 +755,67 @@ fun BgGraphCompose(
     // Chart — multi layer
     // =========================================================================
 
-    CartesianChartHost(
-        chart = rememberCartesianChart(
-            // Layer 0: BG (start axis, visible)
-            rememberLineCartesianLayer(
-                lineProvider = LineCartesianLayer.LineProvider.series(bgLines),
-                rangeProvider = startAxisRangeProvider,
-                verticalAxisPosition = Axis.Position.Vertical.Start
-            ),
-            // Layer 1: Basal (end axis, hidden — no endAxis parameter)
-            rememberLineCartesianLayer(
-                lineProvider = LineCartesianLayer.LineProvider.series(basalLines),
-                rangeProvider = endAxisRangeProvider,
-                verticalAxisPosition = Axis.Position.Vertical.End
-            ),
-            // Layer 2: Target line (start axis — shares BG Y-axis range)
-            rememberLineCartesianLayer(
-                lineProvider = LineCartesianLayer.LineProvider.series(targetLines),
-                rangeProvider = startAxisRangeProvider,
-                verticalAxisPosition = Axis.Position.Vertical.Start
-            ),
-            // Layer 3: EPS (end axis — shares basalMaxY range, EPS Y-values normalized in rebuildChart)
-            rememberLineCartesianLayer(
-                lineProvider = LineCartesianLayer.LineProvider.series(epsLines),
-                rangeProvider = endAxisRangeProvider,
-                verticalAxisPosition = Axis.Position.Vertical.End
-            ),
-            // Layer 4: Activity (start axis — shares BG Y-axis range, values normalized in rebuildChart)
-            rememberLineCartesianLayer(
-                lineProvider = LineCartesianLayer.LineProvider.series(activityLines),
-                rangeProvider = startAxisRangeProvider,
-                verticalAxisPosition = Axis.Position.Vertical.Start
-            ),
-            startAxis = VerticalAxis.rememberStart(
-                itemPlacer = VerticalAxis.ItemPlacer.step({ yAxisStep }),
-                valueFormatter = bgStartAxisValueFormatter,
-                label = rememberTextComponent(
-                    style = TextStyle(color = axisLabelColor),
-                    minWidth = TextComponent.MinWidth.fixed(30.dp)
+    key(generalUnits) {
+        CartesianChartHost(
+            chart = rememberCartesianChart(
+                // Layer 0: BG (start axis, visible)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(bgLines),
+                    rangeProvider = startAxisRangeProvider,
+                    verticalAxisPosition = Axis.Position.Vertical.Start
                 ),
-                guideline = LineComponent(fill = Fill(scheme.outlineVariant.copy(alpha = gridGuideAlpha)))
-            ),
-            bottomAxis = HorizontalAxis.rememberBottom(
-                valueFormatter = timeFormatter,
-                itemPlacer = bottomAxisItemPlacer,
-                label = rememberTextComponent(
-                    style = TextStyle(color = axisLabelColor)
+                // Layer 1: Basal (end axis, hidden — no endAxis parameter)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(basalLines),
+                    rangeProvider = endAxisRangeProvider,
+                    verticalAxisPosition = Axis.Position.Vertical.End
                 ),
-                guideline = LineComponent(fill = Fill(scheme.outlineVariant.copy(alpha = gridGuideAlpha)))
+                // Layer 2: Target line (start axis — shares BG Y-axis range)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(targetLines),
+                    rangeProvider = startAxisRangeProvider,
+                    verticalAxisPosition = Axis.Position.Vertical.Start
+                ),
+                // Layer 3: EPS (end axis — shares basalMaxY range, EPS Y-values normalized in rebuildChart)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(epsLines),
+                    rangeProvider = endAxisRangeProvider,
+                    verticalAxisPosition = Axis.Position.Vertical.End
+                ),
+                // Layer 4: Activity (start axis — shares BG Y-axis range, values normalized in rebuildChart)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(activityLines),
+                    rangeProvider = startAxisRangeProvider,
+                    verticalAxisPosition = Axis.Position.Vertical.Start
+                ),
+                startAxis = VerticalAxis.rememberStart(
+                    itemPlacer = VerticalAxis.ItemPlacer.step({ yAxisStep }),
+                    valueFormatter = bgStartAxisValueFormatter,
+                    label = rememberTextComponent(
+                        style = TextStyle(color = axisLabelColor),
+                        minWidth = TextComponent.MinWidth.fixed(30.dp)
+                    ),
+                    guideline = LineComponent(fill = Fill(scheme.outlineVariant.copy(alpha = gridGuideAlpha)))
+                ),
+                bottomAxis = HorizontalAxis.rememberBottom(
+                    valueFormatter = timeFormatter,
+                    itemPlacer = bottomAxisItemPlacer,
+                    label = rememberTextComponent(
+                        style = TextStyle(color = axisLabelColor)
+                    ),
+                    guideline = LineComponent(fill = Fill(scheme.outlineVariant.copy(alpha = gridGuideAlpha)))
+                ),
+                decorations = decorations,
+                marker = if (dashboardSmbTapController != null) dashboardSmbTapMarker else null,
+                markerController = dashboardSmbTapController ?: defaultMarkerController,
+                getXStep = { 1.0 }
             ),
-            decorations = decorations,
-            marker = if (dashboardSmbTapController != null) dashboardSmbTapMarker else null,
-            markerController = dashboardSmbTapController ?: defaultMarkerController,
-            getXStep = { 1.0 }
-        ),
-        modelProducer = modelProducer,
-        modifier = modifier.fillMaxWidth(),
-        scrollState = scrollState,
-        zoomState = zoomState
-    )
+            modelProducer = modelProducer,
+            modifier = modifier.fillMaxWidth(),
+            scrollState = scrollState,
+            zoomState = zoomState
+        )
+    }
 }
 
 private fun interpolateBgForDashboardMarker(

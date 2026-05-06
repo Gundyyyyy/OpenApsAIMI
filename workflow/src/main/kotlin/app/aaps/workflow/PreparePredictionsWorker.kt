@@ -90,10 +90,11 @@ class PreparePredictionsWorker(
         val predictionDataPoints = apsResult?.predictionsAsGv
             ?.filter { it.value >= 40 }
             ?.map { gv ->
-                val valueInUnits = profileUtil.fromMgdlToUnits(gv.value)
+                val mgdl = gv.value
+                val valueInUnits = profileUtil.fromMgdlToUnits(mgdl)
                 BgDataPoint(
                     timestamp = gv.timestamp,
-                    value = valueInUnits,
+                    value = mgdl,
                     range = when {
                         valueInUnits > highMarkInUnits -> BgRange.HIGH
                         valueInUnits < lowMarkInUnits  -> BgRange.LOW

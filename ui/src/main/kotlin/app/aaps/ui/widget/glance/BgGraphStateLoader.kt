@@ -1,6 +1,5 @@
 package app.aaps.ui.widget.glance
 
-import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.iob.IobCobCalculator
@@ -58,11 +57,9 @@ class BgGraphStateLoader @Inject constructor(
         val now = dateUtil.now()
         val fromTime = now - HISTORY_WINDOW_MS
 
-        val units = profileFunction.getUnits()
-        val (yMinFloor, yMaxFloor) = when (units) {
-            GlucoseUnit.MGDL -> Y_MIN_MGDL to Y_MAX_MGDL
-            GlucoseUnit.MMOL -> Y_MIN_MMOL to Y_MAX_MMOL
-        }
+        // [OverviewDataCache.bucketedDataFlow] values are mg/dL (same as Vico graph coordinates).
+        val yMinFloor = Y_MIN_MGDL
+        val yMaxFloor = Y_MAX_MGDL
 
         val bucketed = cache.bucketedDataFlow.value
         val dataMax = bucketed.asSequence()
@@ -114,7 +111,5 @@ class BgGraphStateLoader @Inject constructor(
 
         const val Y_MIN_MGDL = 40.0
         const val Y_MAX_MGDL = 220.0
-        const val Y_MIN_MMOL = 2.2
-        const val Y_MAX_MMOL = 12.2
     }
 }

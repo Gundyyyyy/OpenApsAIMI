@@ -270,9 +270,8 @@ class OverviewDataImpl @Inject constructor(
             predictionsGraphSeries = PointsWithLabelGraphSeries<DataPointWithLabelInterface>()
             return
         }
-        val units = profileUtil.units
         val arr = points.map { p ->
-            val mgdl = profileUtil.convertToMgdl(p.value, units)
+            val mgdl = p.value
             val gv = GV(
                 timestamp = p.timestamp,
                 raw = mgdl,

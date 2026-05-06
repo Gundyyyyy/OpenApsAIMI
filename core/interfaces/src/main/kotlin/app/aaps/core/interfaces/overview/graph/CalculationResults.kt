@@ -44,11 +44,12 @@ data class TimeRange(
 )
 
 /**
- * Individual BG data point
+ * Graph point for Compose/Vico caches and workers.
+ * [value] is always **mg/dL** (internal chart coordinates); axis formatters convert for display.
  */
 data class BgDataPoint(
     val timestamp: Long,
-    val value: Double,             // Already converted to user's units (mg/dL or mmol/L)
+    val value: Double,
     val range: BgRange,            // Range classification (high/in-range/low)
     val type: BgType,              // Type determines rendering style and color
     val filledGap: Boolean = false, // For bucketed data - if true, render semi-transparent
@@ -220,9 +221,10 @@ data class BasalGraphData(
  * Target line data for BG graph overlay.
  * Step-function showing target midpoint: TT midpoint when active, profile target midpoint otherwise.
  * Rendered as a step line on the BG (start) Y-axis.
+ * [GraphDataPoint.value] is **mg/dL** (same coordinates as [BgDataPoint.value]).
  */
 data class TargetLineData(
-    val targets: List<GraphDataPoint>  // step-function transition points (timestamp, value in user units)
+    val targets: List<GraphDataPoint>
 )
 
 // ============================================================================

@@ -87,6 +87,7 @@ import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.loop.events.EventLoopSetLastRunGui
 import app.aaps.plugins.aps.loop.extensions.json
 import io.reactivex.rxjava3.disposables.CompositeDisposable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.FlowPreview
@@ -585,26 +586,39 @@ class LoopPlugin @Inject constructor(
             } ?: return
 
             val waitStartedAt = SystemClock.elapsedRealtime()
-            invokeMutex.withLock {
-                val waitedMs = SystemClock.elapsedRealtime() - waitStartedAt
-                if (waitedMs >= 250L) {
-                    aapsLogger.warn(
-                        LTag.APS,
-                        "Loop invoke contention: waited ${waitedMs}ms for initiator=${next.initiator}"
+            try {
+                invokeMutex.withLock {
+                    val waitedMs = SystemClock.elapsedRealtime() - waitStartedAt
+                    if (waitedMs >= 250L) {
+                        aapsLogger.warn(
+                            LTag.APS,
+                            "Loop invoke contention: waited ${waitedMs}ms for initiator=${next.initiator}"
+                        )
+                    }
+                    val queuedForMs = SystemClock.elapsedRealtime() - next.requestedAtElapsedMs
+                    if (queuedForMs >= 500L) {
+                        aapsLogger.warn(
+                            LTag.APS,
+                            "Loop invoke queued for ${queuedForMs}ms initiator=${next.initiator}"
+                        )
+                    }
+                    executeInvokeInternal(
+                        initiator = next.initiator,
+                        allowNotification = next.allowNotification,
+                        tempBasalFallback = next.tempBasalFallback
                     )
                 }
-                val queuedForMs = SystemClock.elapsedRealtime() - next.requestedAtElapsedMs
-                if (queuedForMs >= 500L) {
-                    aapsLogger.warn(
-                        LTag.APS,
-                        "Loop invoke queued for ${queuedForMs}ms initiator=${next.initiator}"
-                    )
+            } catch (e: CancellationException) {
+                synchronized(invokeCoalescingLock) {
+                    invokeDrainActive = false
                 }
-                executeInvokeInternal(
-                    initiator = next.initiator,
-                    allowNotification = next.allowNotification,
-                    tempBasalFallback = next.tempBasalFallback
-                )
+                throw e
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "Loop invoke failed; resetting coalescing drain state", e)
+                synchronized(invokeCoalescingLock) {
+                    invokeDrainActive = false
+                }
+                throw e
             }
         }
     }

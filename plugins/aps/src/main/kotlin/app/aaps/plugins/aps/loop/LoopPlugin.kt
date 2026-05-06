@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.SystemClock
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import app.aaps.core.data.configuration.Constants
@@ -93,6 +94,8 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -159,6 +162,17 @@ class LoopPlugin @Inject constructor(
     private var prevCarbsreq = 0
     override var lastRun: LastRun? = null
     override var closedLoopEnabled: Constraint<Boolean>? = null
+    private val invokeMutex = Mutex()
+    private val invokeCoalescingLock = Any()
+    private var invokeDrainActive: Boolean = false
+    private var pendingInvokeRequest: LoopInvokeRequest? = null
+
+    private data class LoopInvokeRequest(
+        val initiator: String,
+        val allowNotification: Boolean,
+        val tempBasalFallback: Boolean,
+        val requestedAtElapsedMs: Long
+    )
 
     private var handler: Handler? = null
 
@@ -519,7 +533,87 @@ class LoopPlugin @Inject constructor(
         return false
     }
 
+    private fun mergeInvokeRequests(current: LoopInvokeRequest?, incoming: LoopInvokeRequest): LoopInvokeRequest {
+        if (current == null) return incoming
+        val mergedInitiator = buildString {
+            append(current.initiator)
+            if (!current.initiator.contains(incoming.initiator)) {
+                append(" + ")
+                append(incoming.initiator)
+            }
+        }
+        return LoopInvokeRequest(
+            initiator = mergedInitiator,
+            allowNotification = current.allowNotification || incoming.allowNotification,
+            tempBasalFallback = current.tempBasalFallback || incoming.tempBasalFallback,
+            requestedAtElapsedMs = minOf(current.requestedAtElapsedMs, incoming.requestedAtElapsedMs)
+        )
+    }
+
     override suspend fun invoke(initiator: String, allowNotification: Boolean, tempBasalFallback: Boolean) {
+        val incoming = LoopInvokeRequest(
+            initiator = initiator,
+            allowNotification = allowNotification,
+            tempBasalFallback = tempBasalFallback,
+            requestedAtElapsedMs = SystemClock.elapsedRealtime()
+        )
+
+        val shouldDrain = synchronized(invokeCoalescingLock) {
+            pendingInvokeRequest = mergeInvokeRequests(pendingInvokeRequest, incoming)
+            if (invokeDrainActive) {
+                false
+            } else {
+                invokeDrainActive = true
+                true
+            }
+        }
+        if (!shouldDrain) {
+            aapsLogger.debug(LTag.APS, "invoke coalesced into pending queue for initiator=$initiator")
+            return
+        }
+
+        while (true) {
+            val next = synchronized(invokeCoalescingLock) {
+                val req = pendingInvokeRequest
+                if (req == null) {
+                    invokeDrainActive = false
+                    null
+                } else {
+                    pendingInvokeRequest = null
+                    req
+                }
+            } ?: return
+
+            val waitStartedAt = SystemClock.elapsedRealtime()
+            invokeMutex.withLock {
+                val waitedMs = SystemClock.elapsedRealtime() - waitStartedAt
+                if (waitedMs >= 250L) {
+                    aapsLogger.warn(
+                        LTag.APS,
+                        "Loop invoke contention: waited ${waitedMs}ms for initiator=${next.initiator}"
+                    )
+                }
+                val queuedForMs = SystemClock.elapsedRealtime() - next.requestedAtElapsedMs
+                if (queuedForMs >= 500L) {
+                    aapsLogger.warn(
+                        LTag.APS,
+                        "Loop invoke queued for ${queuedForMs}ms initiator=${next.initiator}"
+                    )
+                }
+                executeInvokeInternal(
+                    initiator = next.initiator,
+                    allowNotification = next.allowNotification,
+                    tempBasalFallback = next.tempBasalFallback
+                )
+            }
+        }
+    }
+
+    private suspend fun executeInvokeInternal(
+        initiator: String,
+        allowNotification: Boolean,
+        tempBasalFallback: Boolean
+    ) {
         try {
             aapsLogger.debug(LTag.APS, "invoke from $initiator")
             val currentMode = runningModeRecord()

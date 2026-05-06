@@ -139,6 +139,14 @@ class PreferencesImpl @Inject constructor(
         sp.putString(key.key, value)
         // Ensure StateFlow exists so observers (e.g. graph unit switch) always get updates.
         stringFlows.getOrPut(key.key) { MutableStateFlow(value) }.value = value
+        // Unit doubles (high/low marks, LGS, …) are read via [valueInCurrentUnitsDetect]. When only
+        // General → Units changes, SP raw doubles are unchanged but display values must refresh so
+        // Vico Y-range ([ChartConfig]) and other observers stay aligned with BG series in mmol/L.
+        if (key.key == StringKey.GeneralUnits.key) {
+            for (uk in UnitDoubleKey.entries) {
+                unitDoubleFlows[uk.key]?.value = get(uk)
+            }
+        }
     }
 
     override fun observe(key: StringNonPreferenceKey): StateFlow<String> =

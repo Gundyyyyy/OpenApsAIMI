@@ -62,13 +62,14 @@ import io.socket.emitter.Emitter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -104,6 +105,8 @@ class NSClientService : DaggerService() {
         private const val WATCHDOG_INTERVAL_MINUTES = 2
         private const val WATCHDOG_RECONNECT_IN = 15
         private const val WATCHDOG_MAX_CONNECTIONS = 5
+        private const val CONNECTIVITY_RESTART_DEBOUNCE_MS = 1500L
+        private const val RESEND_UPLOAD_TIMEOUT_MS = 120_000L
     }
 
     private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -121,6 +124,12 @@ class NSClientService : DaggerService() {
     internal var lastAckTime: Long = 0
     private var nsApiHashCode = ""
     private val reconnections = ArrayList<Long>()
+    private val resendMutex = Mutex()
+    private val resendStateLock = Any()
+    private var resendDrainActive: Boolean = false
+    private var pendingResendReason: String? = null
+    private var pendingResendQueuedAtMs: Long = 0L
+    private var lastConnectivityRestartAtMs: Long = 0L
 
     var isConnected = false
     var hasWriteAuth = false
@@ -154,6 +163,12 @@ class NSClientService : DaggerService() {
         receiverDelegate.connectivityStatusFlow
             .drop(1) // skip initial value
             .onEach {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastConnectivityRestartAtMs < CONNECTIVITY_RESTART_DEBOUNCE_MS) {
+                    nsClientRepository.addLog("● NSCLIENT", "Restart skipped by connectivity debounce")
+                    return@onEach
+                }
+                lastConnectivityRestartAtMs = now
                 latestDateInReceivedData = 0
                 destroy()
                 initialize()
@@ -585,19 +600,63 @@ class NSClientService : DaggerService() {
         nsClientRepository.addLog("► ALARMACK ", alarmAck.level.toString() + " " + alarmAck.group + " " + alarmAck.silenceTime)
     }
 
-    @Synchronized
-    fun resend(reason: String) = runBlocking {
-        if (!isConnected || !hasWriteAuth) return@runBlocking
-        scope.async {
-            if (socket?.connected() != true) return@async
-            // if (lastAckTime > System.currentTimeMillis() - 10 * 1000L) {
-            //     aapsLogger.debug(LTag.NSCLIENT, "Skipping resend by lastAckTime: " + (System.currentTimeMillis() - lastAckTime) / 1000L + " sec")
-            //     return@async
-            // }
-            nsClientRepository.addLog("● QUEUE", "Resend started: $reason")
-            dataSyncSelectorV1.doUpload()
-            nsClientRepository.addLog("● QUEUE", "Resend ended: $reason")
-        }.join()
+    private fun mergeResendReason(current: String?, incoming: String): String =
+        when {
+            current.isNullOrBlank() -> incoming
+            current.contains(incoming) -> current
+            else -> "$current | $incoming"
+        }
+
+    fun resend(reason: String) {
+        val shouldStartDrain = synchronized(resendStateLock) {
+            pendingResendReason = mergeResendReason(pendingResendReason, reason)
+            if (pendingResendQueuedAtMs == 0L) pendingResendQueuedAtMs = SystemClock.elapsedRealtime()
+            if (resendDrainActive) {
+                false
+            } else {
+                resendDrainActive = true
+                true
+            }
+        }
+        if (!shouldStartDrain) return
+        scope.launch {
+            while (true) {
+                val nextReasonAndQueueAt = synchronized(resendStateLock) {
+                    val reasonSnapshot = pendingResendReason
+                    val queuedAt = pendingResendQueuedAtMs
+                    if (reasonSnapshot == null) {
+                        resendDrainActive = false
+                        null
+                    } else {
+                        pendingResendReason = null
+                        pendingResendQueuedAtMs = 0L
+                        reasonSnapshot to queuedAt
+                    }
+                } ?: break
+                val (nextReason, queuedAtMs) = nextReasonAndQueueAt
+                resendMutex.withLock {
+                    if (!isConnected || !hasWriteAuth || socket?.connected() != true) {
+                        nsClientRepository.addLog("● QUEUE", "Resend skipped (not connected/auth): $nextReason")
+                        continue
+                    }
+                    val queuedForMs =
+                        if (queuedAtMs > 0L) (SystemClock.elapsedRealtime() - queuedAtMs).coerceAtLeast(0L) else 0L
+                    nsClientRepository.addLog("● QUEUE", "Resend started: $nextReason (queued=${queuedForMs}ms)")
+                    val uploadStartedAt = SystemClock.elapsedRealtime()
+                    val completed = withTimeoutOrNull(RESEND_UPLOAD_TIMEOUT_MS) {
+                        dataSyncSelectorV1.doUpload()
+                        true
+                    } == true
+                    val uploadElapsedMs = SystemClock.elapsedRealtime() - uploadStartedAt
+                    if (completed) {
+                        nsClientRepository.addLog("● QUEUE", "Resend ended: $nextReason (${uploadElapsedMs}ms)")
+                    } else {
+                        aapsLogger.warn(LTag.NSCLIENT, "Resend timed out after ${uploadElapsedMs}ms reason=$nextReason")
+                        nsClientRepository.addLog("● QUEUE", "Resend timeout: $nextReason (${uploadElapsedMs}ms)")
+                    }
+                }
+            }
+        }
     }
 
     fun restart() {

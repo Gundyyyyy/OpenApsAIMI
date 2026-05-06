@@ -2,9 +2,9 @@ package app.aaps.implementation.userEntry
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.aaps.core.data.configuration.Constants
@@ -19,6 +19,7 @@ import app.aaps.core.interfaces.userEntry.UserEntryPresentationHelper
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.Translator
+import app.aaps.core.ui.R
 import app.aaps.core.ui.compose.icons.IcAaps
 import app.aaps.core.ui.compose.icons.IcAction
 import app.aaps.core.ui.compose.icons.IcActivity
@@ -111,7 +112,7 @@ class UserEntryPresentationHelperImpl @Inject constructor(
         Sources.DanaRC              -> IcPluginDanaI
         Sources.DanaRS              -> IcPluginDanaI
         Sources.DanaRv2             -> IcPluginDanaI
-        Sources.Database            -> Icons.Default.Delete
+        Sources.Database            -> Icons.Default.Storage
         Sources.Dexcom              -> IcByoda
         Sources.DiaconnG8           -> IcPluginDiaconn
         Sources.EOPatch2            -> IcPluginEopatch
@@ -184,7 +185,7 @@ class UserEntryPresentationHelperImpl @Inject constructor(
         is ValueWithUnit.Minute               -> "${valueWithUnit.value}${translator.translate(valueWithUnit)}"
         is ValueWithUnit.Percent              -> "${valueWithUnit.value}${translator.translate(valueWithUnit)}"
         is ValueWithUnit.Insulin              -> decimalFormatter.to2Decimal(valueWithUnit.value) + translator.translate(valueWithUnit)
-        is ValueWithUnit.InsulinConcentration -> "${rh.gs(app.aaps.core.ui.R.string.ins_concentration_confirmed, valueWithUnit.value)}"
+        is ValueWithUnit.InsulinConcentration -> "${rh.gs(R.string.ins_concentration_confirmed, valueWithUnit.value)}"
         is ValueWithUnit.UnitPerHour          -> decimalFormatter.to2Decimal(valueWithUnit.value) + translator.translate(valueWithUnit)
         is ValueWithUnit.SimpleInt            -> valueWithUnit.value.toString()
         is ValueWithUnit.SimpleString         -> valueWithUnit.value
@@ -197,13 +198,13 @@ class UserEntryPresentationHelperImpl @Inject constructor(
         is ValueWithUnit.Timestamp            -> dateUtil.dateAndTimeAndSecondsString(valueWithUnit.value)
 
         is ValueWithUnit.Mgdl                 -> {
-            if (profileUtil.units == GlucoseUnit.MGDL) decimalFormatter.to0Decimal(valueWithUnit.value) + rh.gs(app.aaps.core.ui.R.string.mgdl)
-            else decimalFormatter.to1Decimal(valueWithUnit.value * Constants.MGDL_TO_MMOLL) + rh.gs(app.aaps.core.ui.R.string.mmol)
+            if (profileUtil.units == GlucoseUnit.MGDL) decimalFormatter.to0Decimal(valueWithUnit.value) + rh.gs(R.string.mgdl)
+            else decimalFormatter.to1Decimal(valueWithUnit.value * Constants.MGDL_TO_MMOLL) + rh.gs(R.string.mmol)
         }
 
         is ValueWithUnit.Mmoll                -> {
-            if (profileUtil.units == GlucoseUnit.MMOL) decimalFormatter.to1Decimal(valueWithUnit.value) + rh.gs(app.aaps.core.ui.R.string.mmol)
-            else decimalFormatter.to0Decimal(valueWithUnit.value * Constants.MMOLL_TO_MGDL) + rh.gs(app.aaps.core.ui.R.string.mgdl)
+            if (profileUtil.units == GlucoseUnit.MMOL) decimalFormatter.to1Decimal(valueWithUnit.value) + rh.gs(R.string.mmol)
+            else decimalFormatter.to0Decimal(valueWithUnit.value * Constants.MMOLL_TO_MGDL) + rh.gs(R.string.mgdl)
         }
 
         ValueWithUnit.UNKNOWN                 -> ""
@@ -215,24 +216,24 @@ class UserEntryPresentationHelperImpl @Inject constructor(
     }
 
     private fun getCsvHeader() = rh.gs(
-        app.aaps.core.ui.R.string.ue_csv_header,
-        csvString(app.aaps.core.ui.R.string.ue_timestamp),
-        csvString(app.aaps.core.ui.R.string.date),
-        csvString(app.aaps.core.ui.R.string.ue_utc_offset),
-        csvString(app.aaps.core.ui.R.string.ue_action),
-        csvString(app.aaps.core.ui.R.string.event_type),
-        csvString(app.aaps.core.ui.R.string.ue_source),
-        csvString(app.aaps.core.ui.R.string.careportal_note),
-        csvString(app.aaps.core.ui.R.string.ue_string),
-        csvString(app.aaps.core.ui.R.string.event_time_label),
-        csvString(if (profileUtil.units == GlucoseUnit.MGDL) app.aaps.core.ui.R.string.mgdl else app.aaps.core.ui.R.string.mmol),
-        csvString(app.aaps.core.ui.R.string.shortgram),
-        csvString(app.aaps.core.ui.R.string.insulin_unit_shortname),
-        csvString(app.aaps.core.ui.R.string.profile_ins_units_per_hour),
-        csvString(app.aaps.core.ui.R.string.shortpercent),
+        R.string.ue_csv_header,
+        csvString(R.string.ue_timestamp),
+        csvString(R.string.date),
+        csvString(R.string.ue_utc_offset),
+        csvString(R.string.ue_action),
+        csvString(R.string.event_type),
+        csvString(R.string.ue_source),
+        csvString(R.string.careportal_note),
+        csvString(R.string.ue_string),
+        csvString(R.string.event_time_label),
+        csvString(if (profileUtil.units == GlucoseUnit.MGDL) R.string.mgdl else R.string.mmol),
+        csvString(R.string.shortgram),
+        csvString(R.string.insulin_unit_shortname),
+        csvString(R.string.profile_ins_units_per_hour),
+        csvString(R.string.shortpercent),
         csvString(app.aaps.core.interfaces.R.string.shorthour),
         csvString(app.aaps.core.interfaces.R.string.shortminute),
-        csvString(app.aaps.core.ui.R.string.ue_none)
+        csvString(R.string.ue_none)
     ) + "\n"
 
     private fun getCsvEntry(entry: UE): String {
@@ -262,7 +263,7 @@ class UserEntryPresentationHelperImpl @Inject constructor(
                 is ValueWithUnit.Minute               -> minute = valueWithUnit.value.toString()
                 is ValueWithUnit.Percent              -> percent = valueWithUnit.value.toString()
                 is ValueWithUnit.Insulin              -> insulin = decimalFormatter.to2Decimal(valueWithUnit.value)
-                is ValueWithUnit.InsulinConcentration -> simpleString = simpleString.addWithSeparator(rh.gs(app.aaps.core.ui.R.string.ins_concentration_confirmed, valueWithUnit.value))
+                is ValueWithUnit.InsulinConcentration -> simpleString = simpleString.addWithSeparator(rh.gs(R.string.ins_concentration_confirmed, valueWithUnit.value))
                 is ValueWithUnit.UnitPerHour          -> unitPerHour = decimalFormatter.to2Decimal(valueWithUnit.value)
                 is ValueWithUnit.SimpleInt            -> noUnit = noUnit.addWithSeparator(valueWithUnit.value)
                 is ValueWithUnit.SimpleString         -> simpleString = simpleString.addWithSeparator(valueWithUnit.value)

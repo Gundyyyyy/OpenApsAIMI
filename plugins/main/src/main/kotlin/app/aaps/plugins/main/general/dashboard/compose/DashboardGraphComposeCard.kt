@@ -294,7 +294,9 @@ internal fun DashboardGraphComposeCard(
             ) {
                 if (!useVicoGraph) {
                     val yAxisLabels = remember(renderInput, generalUnits) {
-                        graphYAxisLabels(renderInput) { y -> graphViewModel.formatBgVerticalAxisValue(y) }
+                        graphYAxisLabels(renderInput) { y ->
+                            graphViewModel.formatBgAxisLabelFromMgdl(y)
+                        }
                     }
                     Column(
                         modifier = Modifier

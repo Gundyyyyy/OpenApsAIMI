@@ -190,17 +190,36 @@ class GraphViewModel @AssistedInject constructor(
     fun updateGraphConfig(config: GraphConfig) = graphConfigRepository.update(config)
 
     /**
-     * Formats a BG chart Y value. [mgdlY] is always in mg/dL (internal chart coordinates);
-     * output follows [ProfileFunction.getUnits] (General → Units).
+     * Converts a BG value from mg/dL (DB / [BgDataPoint.value]) to the Y coordinate used on the chart.
+     * Uses [ProfileUtil.units] (same source as [app.aaps.core.graph.data.GlucoseValueDataPoint.getY]) so the
+     * graph tracks General → Units even if a pref snapshot in Compose lags by a frame.
      */
-    fun formatBgVerticalAxisValue(mgdlY: Double): String {
-        val u = profileFunction.getUnits()
-        val v = profileUtil.fromMgdlToUnits(mgdlY, u)
-        return when (u) {
-            GlucoseUnit.MMOL -> decimalFormatter.to1Decimal(v)
-            GlucoseUnit.MGDL -> decimalFormatter.to0Decimal(v)
+    fun glucoseMgdlToChartY(mgdl: Double): Double =
+        profileUtil.fromMgdlToUnits(mgdl, profileUtil.units)
+
+    /** Inverse of [glucoseMgdlToChartY] (e.g. SMB fallback interpolation among mg/dL points). */
+    fun glucoseDisplayYToMgdl(displayY: Double): Double =
+        profileUtil.convertToMgdl(displayY, profileUtil.units)
+
+    /**
+     * Formats a Y tick on the BG chart when Y is already in **display units** (same space as legacy GraphView).
+     * Reads [ProfileUtil.units] on each call so axis labels match the setting immediately.
+     */
+    fun formatBgChartAxisTick(chartYInDisplayUnits: Double): String =
+        when (profileUtil.units) {
+            GlucoseUnit.MMOL -> decimalFormatter.to1Decimal(chartYInDisplayUnits)
+            GlucoseUnit.MGDL -> decimalFormatter.to0Decimal(chartYInDisplayUnits)
         }
-    }
+
+    /** ~48 mg/dL grid spacing on the dashboard BG axis, in current display units. */
+    fun chartBgSoftAxisStep(): Double =
+        if (profileUtil.units == GlucoseUnit.MGDL) 48.0 else 48.0 * GlucoseUnit.MGDL_TO_MMOLL
+
+    /**
+     * Formats a vertical label when the value is still in **mg/dL** (e.g. Canvas dashboard stub axis from raw points).
+     */
+    fun formatBgAxisLabelFromMgdl(mgdlY: Double): String =
+        formatBgChartAxisTick(glucoseMgdlToChartY(mgdlY))
 
     // Individual series flows - each can trigger independent recomposition
     val bgReadingsFlow: StateFlow<List<BgDataPoint>> = cache.bgReadingsFlow

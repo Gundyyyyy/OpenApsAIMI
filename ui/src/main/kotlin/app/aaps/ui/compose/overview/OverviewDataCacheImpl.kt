@@ -884,10 +884,11 @@ class OverviewDataCacheImpl @AssistedInject constructor(
         var time = fromTime
         while (time < endTime) {
             val tt = persistenceLayer.getTemporaryTargetActiveAt(time)
+            // Same Y space as BG series (mg/dL); axis formatters convert for display.
             val value = if (tt != null) {
-                profileUtil.fromMgdlToUnits(tt.target())
+                tt.target()
             } else {
-                profileUtil.fromMgdlToUnits((profile.getTargetLowMgdl(time) + profile.getTargetHighMgdl(time)) / 2)
+                (profile.getTargetLowMgdl(time) + profile.getTargetHighMgdl(time)) / 2
             }
             if (value != lastTarget) {
                 targets.add(GraphDataPoint(time, value))

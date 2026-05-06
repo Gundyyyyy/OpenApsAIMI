@@ -96,7 +96,7 @@ class PreferencesImpl @Inject constructor(
 
     override fun put(key: StringNonPreferenceKey, value: String) {
         sp.putString(key.key, value)
-        stringFlows[key.key]?.value = value
+        stringFlows.getOrPut(key.key) { MutableStateFlow(value) }.value = value
     }
 
     override fun observe(key: StringNonPreferenceKey): StateFlow<String> =

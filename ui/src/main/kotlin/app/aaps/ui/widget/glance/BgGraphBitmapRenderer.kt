@@ -8,8 +8,8 @@ import app.aaps.core.interfaces.overview.graph.BgRange
 import app.aaps.core.interfaces.overview.graph.BgType
 
 /**
- * Inputs for [BgGraphBitmapRenderer]. All BG values are in user units
- * (mg/dL or mmol/L), matching [BgDataPoint.value].
+ * Inputs for [BgGraphBitmapRenderer]. [BgDataPoint.value] and Y bounds are **mg/dL**
+ * (same coordinate space as the main graph pipeline).
  */
 data class BgGraphInput(
     val bucketed: List<BgDataPoint>,

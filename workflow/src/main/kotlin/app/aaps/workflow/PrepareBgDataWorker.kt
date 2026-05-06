@@ -53,10 +53,11 @@ class PrepareBgDataWorker(
         val bgDataPoints = bgReadingsArray
             .filter { it.timestamp in fromTime..toTime }
             .map { bg ->
-                val valueInUnits = profileUtil.fromMgdlToUnits(bg.value)
+                val mgdl = bg.value
+                val valueInUnits = profileUtil.fromMgdlToUnits(mgdl)
                 BgDataPoint(
                     timestamp = bg.timestamp,
-                    value = valueInUnits,
+                    value = mgdl,
                     range = when {
                         valueInUnits > highMarkInUnits -> BgRange.HIGH
                         valueInUnits < lowMarkInUnits  -> BgRange.LOW

@@ -260,13 +260,14 @@ class UnifiedReactivityLearner @Inject constructor(
         }
 
         if (hyperAdjustment > 1.0) {
-            // SÉCURITÉ : On autorise l'augmentation même si hypo_count > 0, 
-            // mais avec un amorti de sécurité si des hypos sont présentes.
-            // EXCEPTION : Si la montée est confirmée (isConfirmedRise), on ignore l'amorti hypo
-            // car l'urgence hyperglycémique prime sur la prudence passée.
+            // SÉCURITÉ : On autorise l'augmentation même si hypo_count > 0,
+            // avec amorti progressif selon la charge hypo récente.
+            // EXCEPTION : Si la montée est confirmée (isConfirmedRise), on ignore l'amorti hypo.
             val safetyDamping = when {
                 isConfirmedRise -> 1.0
-                perf.hypo_count > 0 -> 0.5
+                perf.hypo_count >= 3 -> 0.50
+                perf.hypo_count == 2 -> 0.70
+                perf.hypo_count == 1 -> 0.85
                 else -> 1.0
             }
             val finalHyperAdj = 1.0 + (hyperAdjustment - 1.0) * safetyDamping
@@ -320,20 +321,30 @@ class UnifiedReactivityLearner @Inject constructor(
             globalFactor = (targetFactor * alpha + globalFactor * (1 - alpha)).coerceIn(0.5, 1.5)
         }
 
-        // 🛡️ Floor release: avoid being indefinitely stuck at 0.50 when hyper is sustained and no recent hypos.
-        val canReleaseFloor = globalFactor <= 0.52 &&
-            perf.hypo_count == 0 &&
-            perf.cv_percent < 45 &&
-            (perf.tir_above_180 > 40 || (isConfirmedRise && perf.tir_above_180 > 30))
+        // 🛡️ Floor release: keep an escape path for real meal rises even with generally good TIR.
+        val belowFloorBand = globalFactor <= 0.55
+        val acceptableCv = perf.cv_percent < 45
+        val sustainedHyper = perf.tir_above_180 > 25
+        val acuteRiseHyper = isConfirmedRise && perf.tir_above_180 > 10
+        val acuteRiseWithGoodTir = isConfirmedRise && perf.tir70_180 > 80
+        val riseAgainstSlowShortTerm = isConfirmedRise && shortTermFactor < 1.0
+        val canReleaseFloor = belowFloorBand &&
+            acceptableCv &&
+            ((perf.hypo_count == 0 && sustainedHyper) || acuteRiseHyper || acuteRiseWithGoodTir || riseAgainstSlowShortTerm)
         if (canReleaseFloor) {
-            val released = (globalFactor + 0.03).coerceAtMost(0.65)
+            val releaseStep = when {
+                isConfirmedRise && perf.tir_above_180 > 25 -> 0.10
+                isConfirmedRise -> 0.07
+                else -> 0.04
+            }
+            val released = (globalFactor + releaseStep).coerceAtMost(0.95)
             if (released > globalFactor) {
                 floorReleased = true
                 globalFactor = released
-                reasons.add("Floor release +0.03 (sustained hyper, no recent hypo)")
+                reasons.add("Floor release +${"%.2f".format(releaseStep)} (rise=$isConfirmedRise, TIR>180=${perf.tir_above_180.toInt()}%)")
             }
         }
-        if (globalFactor <= 0.5001) {
+        if (globalFactor <= 0.5501) {
             floorLockReason = when {
                 perf.hypo_count > 0 -> "Recent hypo burden"
                 perf.cv_percent > 40 -> "High variability (CV)"
@@ -344,8 +355,8 @@ class UnifiedReactivityLearner @Inject constructor(
         
         val reasonsStr = reasons.joinToString(", ")
         log.info(LTag.APS, "UnifiedReactivityLearner: Nouveau globalFactor = ${"%.3f".format(globalFactor)} | $reasonsStr")
-        if (globalFactor <= 0.5001) {
-            log.info(LTag.APS, "UnifiedReactivityLearner: Floor lock active at 0.50 | reason=$floorLockReason")
+        if (globalFactor <= 0.5501) {
+            log.info(LTag.APS, "UnifiedReactivityLearner: Floor lock active (<=0.55) | reason=$floorLockReason")
         } else if (floorReleased) {
             log.info(LTag.APS, "UnifiedReactivityLearner: Floor released progressively to ${"%.3f".format(globalFactor)}")
         }
@@ -361,7 +372,7 @@ class UnifiedReactivityLearner @Inject constructor(
             shortTermFactor = shortTermFactor,
             previousFactor = previousFactor,
             adjustmentReason = reasonsStr,
-            floorLocked = globalFactor <= 0.5001,
+            floorLocked = globalFactor <= 0.5501,
             floorLockReason = floorLockReason,
             floorReleased = floorReleased
         )

@@ -60,6 +60,7 @@ import io.socket.client.IO
 import io.socket.client.Socket
 import io.socket.emitter.Emitter
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -621,38 +622,48 @@ class NSClientService : DaggerService() {
         if (!shouldStartDrain) return
         scope.launch {
             while (true) {
-                val nextReasonAndQueueAt = synchronized(resendStateLock) {
-                    val reasonSnapshot = pendingResendReason
-                    val queuedAt = pendingResendQueuedAtMs
-                    if (reasonSnapshot == null) {
+                try {
+                    val nextReasonAndQueueAt = synchronized(resendStateLock) {
+                        val reasonSnapshot = pendingResendReason
+                        val queuedAt = pendingResendQueuedAtMs
+                        if (reasonSnapshot == null) {
+                            resendDrainActive = false
+                            null
+                        } else {
+                            pendingResendReason = null
+                            pendingResendQueuedAtMs = 0L
+                            reasonSnapshot to queuedAt
+                        }
+                    } ?: break
+                    val (nextReason, queuedAtMs) = nextReasonAndQueueAt
+                    resendMutex.withLock {
+                        if (!isConnected || !hasWriteAuth || socket?.connected() != true) {
+                            nsClientRepository.addLog("● QUEUE", "Resend skipped (not connected/auth): $nextReason")
+                            continue
+                        }
+                        val queuedForMs =
+                            if (queuedAtMs > 0L) (SystemClock.elapsedRealtime() - queuedAtMs).coerceAtLeast(0L) else 0L
+                        nsClientRepository.addLog("● QUEUE", "Resend started: $nextReason (queued=${queuedForMs}ms)")
+                        val uploadStartedAt = SystemClock.elapsedRealtime()
+                        val completed = withTimeoutOrNull(RESEND_UPLOAD_TIMEOUT_MS) {
+                            dataSyncSelectorV1.doUpload()
+                            true
+                        } == true
+                        val uploadElapsedMs = SystemClock.elapsedRealtime() - uploadStartedAt
+                        if (completed) {
+                            nsClientRepository.addLog("● QUEUE", "Resend ended: $nextReason (${uploadElapsedMs}ms)")
+                        } else {
+                            aapsLogger.warn(LTag.NSCLIENT, "Resend timed out after ${uploadElapsedMs}ms reason=$nextReason")
+                            nsClientRepository.addLog("● QUEUE", "Resend timeout: $nextReason (${uploadElapsedMs}ms)")
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    synchronized(resendStateLock) { resendDrainActive = false }
+                    throw e
+                } catch (e: Exception) {
+                    aapsLogger.error(LTag.NSCLIENT, "resend drain failed; resetting state", e)
+                    synchronized(resendStateLock) {
                         resendDrainActive = false
-                        null
-                    } else {
-                        pendingResendReason = null
-                        pendingResendQueuedAtMs = 0L
-                        reasonSnapshot to queuedAt
-                    }
-                } ?: break
-                val (nextReason, queuedAtMs) = nextReasonAndQueueAt
-                resendMutex.withLock {
-                    if (!isConnected || !hasWriteAuth || socket?.connected() != true) {
-                        nsClientRepository.addLog("● QUEUE", "Resend skipped (not connected/auth): $nextReason")
-                        continue
-                    }
-                    val queuedForMs =
-                        if (queuedAtMs > 0L) (SystemClock.elapsedRealtime() - queuedAtMs).coerceAtLeast(0L) else 0L
-                    nsClientRepository.addLog("● QUEUE", "Resend started: $nextReason (queued=${queuedForMs}ms)")
-                    val uploadStartedAt = SystemClock.elapsedRealtime()
-                    val completed = withTimeoutOrNull(RESEND_UPLOAD_TIMEOUT_MS) {
-                        dataSyncSelectorV1.doUpload()
-                        true
-                    } == true
-                    val uploadElapsedMs = SystemClock.elapsedRealtime() - uploadStartedAt
-                    if (completed) {
-                        nsClientRepository.addLog("● QUEUE", "Resend ended: $nextReason (${uploadElapsedMs}ms)")
-                    } else {
-                        aapsLogger.warn(LTag.NSCLIENT, "Resend timed out after ${uploadElapsedMs}ms reason=$nextReason")
-                        nsClientRepository.addLog("● QUEUE", "Resend timeout: $nextReason (${uploadElapsedMs}ms)")
                     }
                 }
             }

@@ -42,8 +42,8 @@ class CalculationWorkflowImpl @Inject constructor(
 
     private val mainCache: OverviewDataCache get() = mainCacheProvider.get()
     private companion object {
-        const val STOP_CALCULATION_TIMEOUT_MS = 15_000L
-        const val STOP_CALCULATION_POLL_MS = 100L
+        const val STOP_CALCULATION_TIMEOUT_MS = 3_000L
+        const val STOP_CALCULATION_POLL_MS = 50L
         const val TRACE_TOKEN = "traceId="
         const val TRACE_TAG_PREFIX = "calc-trace:"
     }
@@ -88,7 +88,6 @@ class CalculationWorkflowImpl @Inject constructor(
                 aapsLogger.debug(LTag.WORKER, "Calculation thread stopped: $from (${elapsed}ms)")
                 return
             }
-            SystemClock.sleep(STOP_CALCULATION_POLL_MS)
         }
         val elapsed = SystemClock.elapsedRealtime() - stopStartedAt
         aapsLogger.warn(

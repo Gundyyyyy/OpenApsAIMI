@@ -2,6 +2,7 @@ package app.aaps.implementation.userEntry
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
@@ -41,6 +42,7 @@ import app.aaps.core.ui.compose.icons.IcLoopClosed
 import app.aaps.core.ui.compose.icons.IcMdi
 import app.aaps.core.ui.compose.icons.IcNote
 import app.aaps.core.ui.compose.icons.IcPatchPump
+import app.aaps.core.ui.compose.icons.IcPluginAutomation
 import app.aaps.core.ui.compose.icons.IcPluginAutotune
 import app.aaps.core.ui.compose.icons.IcPluginCombo
 import app.aaps.core.ui.compose.icons.IcPluginConfigBuilder
@@ -95,7 +97,7 @@ class UserEntryPresentationHelperImpl @Inject constructor(
         Sources.Actions             -> IcAction
         Sources.Aidex               -> IcXDrip
         Sources.Announcement        -> IcAnnouncement
-        Sources.Automation          -> IcAutomation
+        Sources.Automation          -> IcPluginAutomation
         Sources.Autotune            -> IcPluginAutotune
         Sources.BG                  -> IcGenericCgm
         Sources.BatteryChange       -> IcPumpBattery
@@ -158,7 +160,7 @@ class UserEntryPresentationHelperImpl @Inject constructor(
         Sources.SMS                 -> IcPluginSms
         Sources.Scene               -> IcAutomation
         Sources.SensorInsert        -> IcCgmInsert
-        Sources.SettingsExport      -> IcAutomation
+        Sources.SettingsExport      -> Icons.Default.FileUpload
         Sources.SiBionic            -> IcGenericCgm
         Sources.Sino                -> IcGenericCgm
         Sources.SiteRotationDialog  -> IcSiteRotation

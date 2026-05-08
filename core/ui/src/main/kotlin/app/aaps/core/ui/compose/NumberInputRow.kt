@@ -94,11 +94,15 @@ fun NumberInputRow(
     var isError by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
 
-    // Sync text field when value changes externally (e.g., +/- buttons) and not focused
+    // Sync text field when value changes externally (e.g., +/- buttons, quick-add buttons,
+    // ViewModel updates). Skip only when the field's current text already parses to `value` —
+    // that preserves mid-entry states like "2." which would otherwise be clobbered to "2".
     LaunchedEffect(value) {
-        if (!isFocused) {
+        val parsed = textFieldValue.text.trim().replace(",", ".").toDoubleOrNull()
+        val emptyMatches = textFieldValue.text.isEmpty() && value == 0.0
+        if (parsed != value && !emptyMatches) {
             val text = if (value == 0.0) "" else effectiveValueFormat.format(value)
-            textFieldValue = TextFieldValue(text)
+            textFieldValue = TextFieldValue(text, selection = TextRange(text.length))
             isError = false
         }
     }

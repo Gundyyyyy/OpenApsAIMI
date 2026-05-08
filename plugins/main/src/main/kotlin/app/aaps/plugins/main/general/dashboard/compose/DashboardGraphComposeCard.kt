@@ -429,7 +429,7 @@ internal fun DashboardGraphComposeCard(
                             val interChartSpacing = 4.dp
                             val bgDesiredHeight = graphConfig.bgHeight.dp
                             val iobDesiredHeight = graphConfig.iobHeight.dp
-                            val (bgHeight, iobHeight): Pair<Dp, Dp> =
+                            val (bgHeight, iobHeight) =
                                 if (expandGraphVertically) {
                                     val chartBudget =
                                         (maxHeight - beltHeight - interChartSpacing).coerceAtLeast(0.dp)

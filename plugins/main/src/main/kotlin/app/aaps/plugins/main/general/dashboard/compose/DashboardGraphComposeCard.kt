@@ -4,6 +4,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,6 +39,7 @@ import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import app.aaps.core.interfaces.overview.graph.ChartSmbMarker
 import app.aaps.core.interfaces.overview.graph.SeriesType
 import app.aaps.core.ui.compose.AapsTheme
@@ -416,53 +418,85 @@ internal fun DashboardGraphComposeCard(
                             bgOverlays = bgOverlaysForEffects,
                         )
                         val nowTs by graphViewModel.nowTimestamp.collectAsStateWithLifecycle()
-                        // Fixed BG height like Overview ([GraphsSection] uses graphConfig.bgHeight) — never weight(1f)
-                        // here, or the Vico host fills all space between belt and IOB and looks like an empty "second graph".
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
+                        // In simple mode this card is sized with weight(1f). On short viewports, fixed
+                        // BG/IOB heights can clip the secondary graph. Fit both charts to available height.
+                        BoxWithConstraints(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (expandGraphVertically) Modifier.fillMaxHeight() else Modifier),
                         ) {
-                            // Same stack order / overlap as [app.aaps.ui.compose.overview.graphs.GraphsSection]
-                            TreatmentBeltGraphCompose(
-                                viewModel = graphViewModel,
-                                scrollState = scrollState,
-                                zoomState = zoomState,
-                                derivedTimeRange = chartTimeRange,
-                                nowTimestamp = nowTs,
+                            val beltHeight = 48.dp
+                            val interChartSpacing = 4.dp
+                            val bgDesiredHeight = graphConfig.bgHeight.dp
+                            val iobDesiredHeight = graphConfig.iobHeight.dp
+                            val (bgHeight, iobHeight) =
+                                if (expandGraphVertically) {
+                                    val chartBudget =
+                                        (maxHeight - beltHeight - interChartSpacing).coerceAtLeast(0.dp)
+                                    val desiredChartsTotal = (bgDesiredHeight + iobDesiredHeight).coerceAtLeast(1.dp)
+                                    if (chartBudget > 0.dp && chartBudget < desiredChartsTotal) {
+                                        val bgRatio = bgDesiredHeight.value / desiredChartsTotal.value
+                                        val bgScaled = (chartBudget * bgRatio.toFloat()).coerceAtLeast(56.dp)
+                                        val iobScaled = (chartBudget - bgScaled).coerceAtLeast(56.dp)
+                                        if (bgScaled + iobScaled > chartBudget) {
+                                            // If min guards exceed the budget, preserve BG and shrink IOB gracefully.
+                                            val adjustedIob = (chartBudget - bgScaled).coerceAtLeast(0.dp)
+                                            bgScaled to adjustedIob
+                                        } else {
+                                            bgScaled to iobScaled
+                                        }
+                                    } else {
+                                        bgDesiredHeight to iobDesiredHeight
+                                    }
+                                } else {
+                                    bgDesiredHeight to iobDesiredHeight
+                                }
+                            Column(
                                 modifier = Modifier.fillMaxWidth(),
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .offset(y = (-16).dp)
-                                    .height(graphConfig.bgHeight.dp),
                             ) {
-                                DashboardBgGraphVico(
-                                    graphViewModel = graphViewModel,
-                                    graphRenderInput = renderInput,
-                                    scrollState = scrollState,
-                                    zoomState = zoomState,
-                                    derivedTimeRange = chartTimeRange,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .offset(y = (-8).dp),
-                            ) {
-                                SecondaryGraphCompose(
+                                // Same stack order / overlap as [app.aaps.ui.compose.overview.graphs.GraphsSection]
+                                TreatmentBeltGraphCompose(
                                     viewModel = graphViewModel,
-                                    seriesTypes = listOf(SeriesType.IOB),
                                     scrollState = scrollState,
                                     zoomState = zoomState,
                                     derivedTimeRange = chartTimeRange,
                                     nowTimestamp = nowTs,
-                                    activityOverlay = false,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(graphConfig.iobHeight.dp),
-                                )
+                                        .offset(y = (-16).dp)
+                                        .height(bgHeight),
+                                ) {
+                                    DashboardBgGraphVico(
+                                        graphViewModel = graphViewModel,
+                                        graphRenderInput = renderInput,
+                                        scrollState = scrollState,
+                                        zoomState = zoomState,
+                                        derivedTimeRange = chartTimeRange,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(interChartSpacing))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .offset(y = (-8).dp),
+                                ) {
+                                    SecondaryGraphCompose(
+                                        viewModel = graphViewModel,
+                                        seriesTypes = listOf(SeriesType.IOB),
+                                        scrollState = scrollState,
+                                        zoomState = zoomState,
+                                        derivedTimeRange = chartTimeRange,
+                                        nowTimestamp = nowTs,
+                                        activityOverlay = false,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(iobHeight),
+                                    )
+                                }
                             }
                         }
                     } else {

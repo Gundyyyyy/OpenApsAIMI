@@ -575,11 +575,13 @@ open class OpenAPSSMBPlugin @Inject constructor(
         JsonObject(emptyMap())
             .put(BooleanKey.ApsUseDynamicSensitivity, preferences)
             .put(IntKey.ApsDynIsfAdjustmentFactor, preferences)
+            .put(BooleanKey.ApsUseSmb, preferences)
 
     override fun applyConfiguration(configuration: JsonObject) {
         configuration
             .store(BooleanKey.ApsUseDynamicSensitivity, preferences)
             .store(IntKey.ApsDynIsfAdjustmentFactor, preferences)
+            .store(BooleanKey.ApsUseSmb, preferences)
     }
 
     override fun getPreferenceScreenContent() = PreferenceSubScreenDef(

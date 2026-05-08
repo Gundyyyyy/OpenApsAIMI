@@ -524,11 +524,13 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
         JsonObject(emptyMap())
             .put(BooleanKey.ApsUseDynamicSensitivity, preferences)
             .put(IntKey.ApsDynIsfAdjustmentFactor, preferences)
+            .put(BooleanKey.ApsUseSmb, preferences)
 
     override fun applyConfiguration(configuration: JsonObject) {
         configuration
             .store(BooleanKey.ApsUseDynamicSensitivity, preferences)
             .store(IntKey.ApsDynIsfAdjustmentFactor, preferences)
+            .store(BooleanKey.ApsUseSmb, preferences)
     }
 
     // Rounds value to 'digits' decimal places

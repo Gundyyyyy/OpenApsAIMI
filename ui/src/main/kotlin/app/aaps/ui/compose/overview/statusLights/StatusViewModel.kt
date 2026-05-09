@@ -31,9 +31,14 @@ import app.aaps.core.ui.compose.icons.IcPumpCartridge
 import app.aaps.core.ui.compose.pump.tickerFlow
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -57,34 +62,112 @@ class StatusViewModel @Inject constructor(
     private val decimalFormatter: DecimalFormatter,
     private val processedDeviceStatusData: ProcessedDeviceStatusData
 ) : ViewModel() {
+    private enum class PerformanceProfile(
+        val coalesceDebounceMs: Long,
+        val nsSourceDebounceMs: Long,
+        val tickMinIntervalMs: Long,
+    ) {
+        BALANCED(
+            coalesceDebounceMs = 100L,
+            nsSourceDebounceMs = 300L,
+            tickMinIntervalMs = 60_000L,
+        ),
+        SAFE(
+            coalesceDebounceMs = 220L,
+            nsSourceDebounceMs = 450L,
+            tickMinIntervalMs = 180_000L,
+        ),
+    }
+
+    private enum class RefreshReason {
+        Initialization,
+        TherapyChange,
+        PumpStatus,
+        NsClientStatus,
+        Tick,
+        Manual,
+    }
+
+    private companion object {
+        private val CANNULA_USAGE_REASONS = setOf(
+            RefreshReason.Initialization,
+            RefreshReason.TherapyChange,
+            RefreshReason.Manual,
+        )
+    }
 
     private val _uiState = MutableStateFlow(StatusUiState())
     val uiState: StateFlow<StatusUiState> = _uiState.asStateFlow()
+    private val pendingReasons = MutableStateFlow<Set<RefreshReason>>(emptySet())
+    private val performanceProfile = MutableStateFlow(detectPerformanceProfile())
+    private var cannulaUsageJob: Job? = null
+    private var lastTickRefreshAtMs: Long = 0L
 
     init {
+        observeRefreshRequests()
         setupEventListeners()
-        refreshState()
+        requestRefresh(RefreshReason.Initialization)
     }
 
     private fun setupEventListeners() {
         rxBus.toFlow(EventInitializationChanged::class.java)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { requestRefresh(RefreshReason.Initialization) }.launchIn(viewModelScope)
         persistenceLayer.observeChanges(TE::class.java)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { requestRefresh(RefreshReason.TherapyChange) }.launchIn(viewModelScope)
         rxBus.toFlow(EventPumpStatusChanged::class.java)
-            .onEach { refreshState() }.launchIn(viewModelScope)
-        rxBus.toFlow(EventNsClientStatusUpdated::class.java)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { requestRefresh(RefreshReason.PumpStatus) }.launchIn(viewModelScope)
+        performanceProfile
+            .flatMapLatest { profile ->
+                rxBus.toFlow(EventNsClientStatusUpdated::class.java)
+                    .debounce(profile.nsSourceDebounceMs)
+            }
+            .onEach { requestRefresh(RefreshReason.NsClientStatus) }.launchIn(viewModelScope)
         tickerFlow(60_000L)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { requestRefresh(RefreshReason.Tick) }.launchIn(viewModelScope)
     }
 
     fun refreshState() {
+        requestRefresh(RefreshReason.Manual)
+    }
+
+    private fun requestRefresh(reason: RefreshReason) {
+        pendingReasons.update { it + reason }
+    }
+
+    private fun observeRefreshRequests() {
         viewModelScope.launch {
+            performanceProfile
+                .flatMapLatest { profile ->
+                    pendingReasons
+                        .filter { it.isNotEmpty() }
+                        .debounce(profile.coalesceDebounceMs)
+                }
+                .collectLatest { reasons ->
+                    pendingReasons.update { current -> current - reasons }
+                    refreshStateInternal(reasons)
+                }
+        }
+    }
+
+    private suspend fun refreshStateInternal(reasons: Set<RefreshReason>) {
+            val profile = performanceProfile.value
+            val now = dateUtil.now()
+            val tickOnly = reasons == setOf(RefreshReason.Tick)
+            if (tickOnly && (now - lastTickRefreshAtMs) < profile.tickMinIntervalMs) return
+            if (tickOnly) lastTickRefreshAtMs = now
+
             val pump = activePlugin.activePump
             val pumpDescription = pump.pumpDescription
             val isInitialized = pump.isInitialized()
             val isPatchPump = pumpDescription.isPatchPump
+
+            // NS client status can arrive in bursts; in AAPSCLIENT this event only changes
+            // the followed pump payload, so refresh only insulin status in this narrow path.
+            if (config.AAPSCLIENT && reasons == setOf(RefreshReason.NsClientStatus)) {
+                val insulinStatus = buildInsulinStatus(isPatchPump, pumpDescription.maxReservoirReading.toDouble())
+                _uiState.update { state -> state.copy(insulinStatus = insulinStatus) }
+                return
+            }
 
             // Build status items (without expensive TDD calculation)
             val sensorStatus = buildSensorStatus()
@@ -113,14 +196,28 @@ class StatusViewModel @Inject constructor(
                 )
             }
 
-            // Calculate cannula usage in background (expensive operation)
-            viewModelScope.launch {
-                val cannulaStatusWithUsage = buildCannulaStatus(isPatchPump, includeTddCalculation = true)
-                _uiState.update { state ->
-                    state.copy(cannulaStatus = cannulaStatusWithUsage)
+            // Calculate cannula usage only when the source data can actually change.
+            if (reasons.any { it in CANNULA_USAGE_REASONS }) {
+                cannulaUsageJob?.cancel()
+                cannulaUsageJob = viewModelScope.launch {
+                    val cannulaStatusWithUsage = buildCannulaStatus(isPatchPump, includeTddCalculation = true)
+                    _uiState.update { state ->
+                        state.copy(cannulaStatus = cannulaStatusWithUsage)
+                    }
                 }
             }
-        }
+    }
+
+    override fun onCleared() {
+        cannulaUsageJob?.cancel()
+        super.onCleared()
+    }
+
+    private fun detectPerformanceProfile(): PerformanceProfile {
+        // Keep performance policy independent from Simple Mode so advanced plugin preferences
+        // (including AIMI Compose settings) remain visible and unaffected.
+        val cpuCores = Runtime.getRuntime().availableProcessors()
+        return if (cpuCores <= 8) PerformanceProfile.SAFE else PerformanceProfile.BALANCED
     }
 
     private suspend fun buildSensorStatus(): StatusItem {

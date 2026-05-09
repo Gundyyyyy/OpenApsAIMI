@@ -1,0 +1,159 @@
+# Non-Regression Checklist
+
+Purpose: enforce repeatable quality gates to prevent freezes and functional regressions after merges, especially on high-risk paths (AIMI, adaptive smoothie, dashboard skins, ML permissions, physio, hormonitor structure).
+
+Use this file for every merge from `dev` and every release candidate.
+
+---
+
+## 1) Mandatory Pre-Merge Checks
+
+- [ ] Working tree clean before merge (`git status`).
+- [ ] Merge target and source branches explicitly documented.
+- [ ] Conflict files listed and reviewed one by one (no blind conflict resolution).
+- [ ] For each conflict, decision recorded: keep ours / keep theirs / combine.
+- [ ] If conflict touches async code, mark with `ASYNC IMPACT`.
+
+Notes:
+- No opportunistic refactor during merge conflict resolution.
+- Keep method signatures and contracts unchanged unless explicitly required.
+
+---
+
+## 2) Critical Domain Regression Gates
+
+### AIMI plugin
+- [ ] Loop behavior unchanged (no accidental SMB disabling).
+- [ ] AIMI configuration import/export keys preserved.
+- [ ] No regression on JSON/CSV writes used by AIMI workflows.
+
+### Adaptive Smoothie plugin
+- [ ] Plugin activation/state transitions unchanged.
+- [ ] No regression on data flow feeding smoothing decisions.
+- [ ] No new blocking call on main thread.
+
+### Dashboard + Skin switching
+- [ ] Embedded dashboard renders correctly.
+- [ ] User can switch back to original overview skin.
+- [ ] No freeze/jank when opening dashboard repeatedly.
+- [ ] No broken FAB/top bar/bottom bar visibility transitions.
+
+### ML permissions and storage
+- [ ] JSON/CSV write paths still allowed and reachable.
+- [ ] No new permission requirement missing at runtime.
+- [ ] Storage fallback/error path validated (no silent failure loops).
+
+### Physio part
+- [ ] Inputs/outputs used by physio layer are unchanged or intentionally migrated.
+- [ ] No data type/unit mismatch introduced.
+- [ ] No async race introduced between producer/consumer.
+
+### Hormonitor study structure
+- [ ] Required structural flows/interfaces remain intact.
+- [ ] No rename/removal of expected keys or records.
+- [ ] Historical compatibility preserved for study data consumption.
+
+---
+
+## 3) Stability and Freeze Prevention Gates
+
+### Event orchestration
+- [ ] No direct "refresh all" on every event burst.
+- [ ] Event streams are debounced/coalesced where needed.
+- [ ] Refresh work is cancellable (`collectLatest` or equivalent).
+
+### Coroutine safety
+- [ ] No unbounded parallel job spawning from frequent events.
+- [ ] Expensive jobs are single-flight (cancel previous before new launch).
+- [ ] Heavy work (`DB`, `TDD`, parsing, file I/O) off main thread.
+
+### Compose/UI performance
+- [ ] No avoidable recomposition storms introduced.
+- [ ] Layout measurement loops avoided on hot screens.
+- [ ] UI state updates scoped to minimal changed fields.
+
+### Blocking call checks
+- [ ] No new `runBlocking` in UI/ViewModel hot paths.
+- [ ] No `Thread.sleep` on any UI-related execution path.
+- [ ] No synchronous I/O in frequently triggered callbacks.
+
+---
+
+## 4) Smoke Test Matrix (Required)
+
+Run after merge and before release build:
+
+### Core runtime
+- [ ] App starts cleanly after cold launch.
+- [ ] No ANR/freeze in first 5 minutes idle.
+
+### Dashboard / Overview
+- [ ] Open dashboard, interact for 3 minutes, no freeze.
+- [ ] Switch skin dashboard <-> original overview, no regressions.
+- [ ] Graph interactions remain responsive.
+
+### AIMI / Smoothie
+- [ ] AIMI plugin enabled path validated.
+- [ ] Adaptive smoothie enabled path validated.
+- [ ] SMB-related indicators/settings remain coherent with behavior.
+
+### AAPSClient / NS flow (if applicable)
+- [ ] With incoming status bursts, UI remains responsive for 5-10 minutes.
+- [ ] Status lights/chips update without stutter or lockups.
+
+### Permissions / storage
+- [ ] JSON and CSV writes succeed on device.
+- [ ] Missing-permission scenario handled without infinite retries/freezes.
+
+Pass criteria:
+- No freeze, no ANR, no blocking UI behavior, no critical feature regression.
+
+---
+
+## 5) PR Gate (Copy/Paste in PR description)
+
+```
+## Non-Regression Gate
+- [ ] AIMI verified
+- [ ] Adaptive Smoothie verified
+- [ ] Dashboard + skin switching verified
+- [ ] ML JSON/CSV permissions and writes verified
+- [ ] Physio path verified
+- [ ] Hormonitor structure verified
+- [ ] Async/freeze checklist reviewed
+- [ ] Smoke tests passed
+```
+
+---
+
+## 6) Freeze Incident Log (Append-only)
+
+When a freeze is reported, append an entry:
+
+```
+Date:
+Branch/Build:
+Area:
+Symptom:
+Repro steps:
+Suspected commit(s):
+Root cause:
+Fix commit:
+Validation done:
+Status: OPEN / MONITORING / CLOSED
+```
+
+Rule:
+- Never close an incident without reproducible validation notes.
+
+---
+
+## 7) Release Go/No-Go
+
+Release is `NO-GO` if any of the following is true:
+
+- Any checklist item above is unchecked.
+- Any OPEN freeze incident on same area/build.
+- Any known regression in AIMI, adaptive smoothie, dashboard skin switching, ML permissions, physio, or hormonitor structure.
+
+Release is `GO` only when all gates are green and documented.

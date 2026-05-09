@@ -18,6 +18,7 @@ import app.aaps.core.interfaces.rx.events.EventPumpStatusChanged
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
+import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.interfaces.IntPreferenceKey
 import app.aaps.core.keys.interfaces.Preferences
@@ -99,14 +100,23 @@ class StatusViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(StatusUiState())
     val uiState: StateFlow<StatusUiState> = _uiState.asStateFlow()
     private val pendingReasons = MutableStateFlow<Set<RefreshReason>>(emptySet())
-    private val performanceProfile = MutableStateFlow(detectPerformanceProfile())
+    private val performanceProfile = MutableStateFlow(PerformanceProfile.BALANCED)
     private var cannulaUsageJob: Job? = null
     private var lastTickRefreshAtMs: Long = 0L
 
     init {
+        observePerformanceProfile()
         observeRefreshRequests()
         setupEventListeners()
         requestRefresh(RefreshReason.Initialization)
+    }
+
+    private fun observePerformanceProfile() {
+        preferences.observe(BooleanKey.GeneralLowEndStabilityMode)
+            .onEach { enabled ->
+                performanceProfile.value = if (enabled) PerformanceProfile.SAFE else PerformanceProfile.BALANCED
+            }
+            .launchIn(viewModelScope)
     }
 
     private fun setupEventListeners() {
@@ -211,13 +221,6 @@ class StatusViewModel @Inject constructor(
     override fun onCleared() {
         cannulaUsageJob?.cancel()
         super.onCleared()
-    }
-
-    private fun detectPerformanceProfile(): PerformanceProfile {
-        // Keep performance policy independent from Simple Mode so advanced plugin preferences
-        // (including AIMI Compose settings) remain visible and unaffected.
-        val cpuCores = Runtime.getRuntime().availableProcessors()
-        return if (cpuCores <= 8) PerformanceProfile.SAFE else PerformanceProfile.BALANCED
     }
 
     private suspend fun buildSensorStatus(): StatusItem {

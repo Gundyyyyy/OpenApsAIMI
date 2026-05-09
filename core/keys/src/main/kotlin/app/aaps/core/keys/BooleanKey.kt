@@ -25,6 +25,7 @@ enum class BooleanKey(
 ) : BooleanPreferenceKey {
 
     GeneralSimpleMode("simple_mode", true, R.string.pref_title_simple_mode),
+    GeneralLowEndStabilityMode("general_low_end_stability_mode", false, R.string.pref_title_low_end_stability_mode),
     GeneralInsulinConcentration(
         "insulin_concentration_enabled", false, R.string.pref_title_insulin_concentration, R.string.pref_summary_insulin_concentration,
         defaultedBySM = true,

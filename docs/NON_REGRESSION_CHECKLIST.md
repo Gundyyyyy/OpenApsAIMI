@@ -100,6 +100,7 @@ Run after merge and before release build:
 ### AAPSClient / NS flow (if applicable)
 - [ ] With incoming status bursts, UI remains responsive for 5-10 minutes.
 - [ ] Status lights/chips update without stutter or lockups.
+- [ ] Validate with `Low-end device stability mode` ON and OFF (no functional regression in both modes).
 
 ### Permissions / storage
 - [ ] JSON and CSV writes succeed on device.

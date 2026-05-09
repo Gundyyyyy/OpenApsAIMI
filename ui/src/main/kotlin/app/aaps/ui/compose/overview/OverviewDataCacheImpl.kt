@@ -198,6 +198,10 @@ class OverviewDataCacheImpl @AssistedInject constructor(
         scope.launch { updateTbrFromDatabase() }
     }
 
+    override fun refreshNsClientStatus() {
+        scope.launch { rebuildNsClientStatus() }
+    }
+
     // Secondary graph flows
     private val _iobGraphFlow = MutableStateFlow(IobGraphData(emptyList(), emptyList()))
     override val iobGraphFlow: StateFlow<IobGraphData> = _iobGraphFlow.asStateFlow()
@@ -973,7 +977,7 @@ class OverviewDataCacheImpl @AssistedInject constructor(
             }
             // Match original format: "ᴪ 93%" or "93%"
             val value = buildString {
-                if (isCharging) append("\u26A1 ")
+                if (isCharging) append("\u26A1")
                 append("$minBattery%")
             }
             val dialogText = buildString {

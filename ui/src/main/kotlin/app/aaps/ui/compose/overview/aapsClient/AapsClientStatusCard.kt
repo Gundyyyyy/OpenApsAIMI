@@ -40,7 +40,8 @@ import app.aaps.core.ui.R
 fun AapsClientStatusCard(
     statusData: AapsClientStatusData,
     flavorTint: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onExpand: (() -> Unit)? = null
 ) {
     val items = listOfNotNull(statusData.pump, statusData.openAps, statusData.uploader)
     if (items.isEmpty()) return
@@ -56,25 +57,27 @@ fun AapsClientStatusCard(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-        ) {
+        Column {
             // Header row — compact chips + expand/collapse toggle
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(flavorTint),
+                    .background(flavorTint)
+                    .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .clickable { expanded = !expanded }
+                        .clickable {
+                            if (!expanded) onExpand?.invoke()
+                            expanded = !expanded
+                        }
                         .padding(vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     items.forEach { item ->
-                        AapsClientStatusChip(item = item)
+                        AapsClientStatusChip(item = item, modifier = Modifier.weight(1f, fill = false))
                     }
                 }
                 Icon(
@@ -83,7 +86,10 @@ fun AapsClientStatusCard(
                         if (expanded) R.string.collapse else R.string.expand
                     ),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.clickable { expanded = !expanded }
+                    modifier = Modifier.clickable {
+                        if (!expanded) onExpand?.invoke()
+                        expanded = !expanded
+                    }
                 )
             }
 
@@ -93,7 +99,7 @@ fun AapsClientStatusCard(
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically()
             ) {
-                Column(modifier = Modifier.padding(top = 4.dp)) {
+                Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
                     items.forEachIndexed { index, item ->
                         if (index > 0) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

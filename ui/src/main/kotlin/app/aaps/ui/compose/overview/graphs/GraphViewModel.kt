@@ -111,7 +111,7 @@ data class SensitivityUiState(
 
 @Stable
 class GraphViewModel @AssistedInject constructor(
-    @Assisted cache: OverviewDataCache,
+    @Assisted private val cache: OverviewDataCache,
     private val graphConfigRepository: GraphConfigRepository,
     private val aapsLogger: AAPSLogger,
     private val preferences: Preferences,
@@ -187,6 +187,7 @@ class GraphViewModel @AssistedInject constructor(
 
     // NSClient status (pump/openAPS/uploader from Nightscout)
     val nsClientStatusFlow = cache.nsClientStatusFlow
+    fun refreshNsClientStatus() = cache.refreshNsClientStatus()
 
     // =========================================================================
     // BG Info Section (Overview info display)

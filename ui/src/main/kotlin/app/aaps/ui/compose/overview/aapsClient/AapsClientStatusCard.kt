@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -36,6 +38,7 @@ import app.aaps.core.interfaces.overview.graph.AapsClientStatusData
 import app.aaps.core.interfaces.overview.graph.AapsClientStatusItem
 import app.aaps.core.ui.R
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AapsClientStatusCard(
     statusData: AapsClientStatusData,
@@ -65,15 +68,15 @@ fun AapsClientStatusCard(
                     .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
+                FlowRow(
                     modifier = Modifier
                         .weight(1f)
                         .clickable { expanded = !expanded }
                         .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
                 ) {
                     items.forEach { item ->
-                        AapsClientStatusChip(item = item, modifier = Modifier.weight(1f, fill = false))
+                        AapsClientStatusChip(item = item)
                     }
                 }
                 Icon(
@@ -105,6 +108,7 @@ fun AapsClientStatusCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Preview(showBackground = true)
 @Composable
 private fun AapsClientStatusCardCollapsedPreview() {
@@ -138,6 +142,7 @@ private fun AapsClientStatusCardCollapsedPreview() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Preview(showBackground = true)
 @Composable
 private fun AapsClientStatusCardMixedLevelsPreview() {

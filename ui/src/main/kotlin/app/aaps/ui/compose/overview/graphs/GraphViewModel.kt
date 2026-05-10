@@ -111,7 +111,7 @@ data class SensitivityUiState(
 
 @Stable
 class GraphViewModel @AssistedInject constructor(
-    @Assisted private val cache: OverviewDataCache,
+    @Assisted cache: OverviewDataCache,
     private val graphConfigRepository: GraphConfigRepository,
     private val aapsLogger: AAPSLogger,
     private val preferences: Preferences,

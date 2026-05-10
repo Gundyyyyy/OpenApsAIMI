@@ -46,9 +46,9 @@ enum class EquilWorkflow {
             add(EquilWizardStep.PASSWORD)
             if (insulinSelectionEnabled) add(EquilWizardStep.SELECT_INSULIN)
             add(EquilWizardStep.FILL)
+            if (siteRotationEnabled) add(EquilWizardStep.SITE_LOCATION)
             add(EquilWizardStep.ATTACH)
             add(EquilWizardStep.AIR)
-            if (siteRotationEnabled) add(EquilWizardStep.SITE_LOCATION)
             add(EquilWizardStep.CONFIRM)
         }
 
@@ -57,9 +57,9 @@ enum class EquilWorkflow {
             add(EquilWizardStep.ASSEMBLE)
             if (insulinSelectionEnabled) add(EquilWizardStep.SELECT_INSULIN)
             add(EquilWizardStep.FILL)
+            if (siteRotationEnabled) add(EquilWizardStep.SITE_LOCATION)
             add(EquilWizardStep.ATTACH)
             add(EquilWizardStep.AIR)
-            if (siteRotationEnabled) add(EquilWizardStep.SITE_LOCATION)
             add(EquilWizardStep.CONFIRM)
         }
 

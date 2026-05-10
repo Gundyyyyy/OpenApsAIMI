@@ -198,10 +198,6 @@ class OverviewDataCacheImpl @AssistedInject constructor(
         scope.launch { updateTbrFromDatabase() }
     }
 
-    override fun refreshNsClientStatus() {
-        scope.launch { rebuildNsClientStatus() }
-    }
-
     // Secondary graph flows
     private val _iobGraphFlow = MutableStateFlow(IobGraphData(emptyList(), emptyList()))
     override val iobGraphFlow: StateFlow<IobGraphData> = _iobGraphFlow.asStateFlow()

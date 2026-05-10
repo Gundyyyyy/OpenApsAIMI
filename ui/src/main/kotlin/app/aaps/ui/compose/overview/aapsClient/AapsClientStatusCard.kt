@@ -40,8 +40,7 @@ import app.aaps.core.ui.R
 fun AapsClientStatusCard(
     statusData: AapsClientStatusData,
     flavorTint: Color,
-    modifier: Modifier = Modifier,
-    onExpand: (() -> Unit)? = null
+    modifier: Modifier = Modifier
 ) {
     val items = listOfNotNull(statusData.pump, statusData.openAps, statusData.uploader)
     if (items.isEmpty()) return
@@ -69,10 +68,7 @@ fun AapsClientStatusCard(
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .clickable {
-                            if (!expanded) onExpand?.invoke()
-                            expanded = !expanded
-                        }
+                        .clickable { expanded = !expanded }
                         .padding(vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
@@ -86,10 +82,7 @@ fun AapsClientStatusCard(
                         if (expanded) R.string.collapse else R.string.expand
                     ),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.clickable {
-                        if (!expanded) onExpand?.invoke()
-                        expanded = !expanded
-                    }
+                    modifier = Modifier.clickable { expanded = !expanded }
                 )
             }
 

@@ -187,7 +187,6 @@ class GraphViewModel @AssistedInject constructor(
 
     // NSClient status (pump/openAPS/uploader from Nightscout)
     val nsClientStatusFlow = cache.nsClientStatusFlow
-    fun refreshNsClientStatus() = cache.refreshNsClientStatus()
 
     // =========================================================================
     // BG Info Section (Overview info display)

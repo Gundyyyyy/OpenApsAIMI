@@ -124,7 +124,6 @@ interface OverviewDataCache {
     // NSClient status (pump/openAPS/uploader from Nightscout) — only for AAPSCLIENT builds
     // =========================================================================
     val nsClientStatusFlow: StateFlow<AapsClientStatusData>
-    fun refreshNsClientStatus()
 
     fun reset()
 }

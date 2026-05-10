@@ -184,8 +184,7 @@ fun OverviewScreenSplit(
                     }
                     AapsClientStatusCard(
                         statusData = nsClientStatus,
-                        flavorTint = flavorTint,
-                        onExpand = graphViewModel::refreshNsClientStatus
+                        flavorTint = flavorTint
                     )
                 }
             }

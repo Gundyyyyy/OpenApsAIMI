@@ -188,10 +188,11 @@ class AppRepository @Inject internal constructor(
             removed.add(Pair("CHANGES HeartRate", database.heartRateDao.deleteTrackedChanges()))
             removed.add(Pair("CHANGES StepsCount", database.stepsCountDao.deleteTrackedChanges()))
         }
+        repositoryScope.launch { _databaseClearedFlow.emit(Unit) }
         val ret = StringBuilder()
         removed
             .filter { it.second > 0 }
-            .map { ret.append(it.first + " " + it.second + "<br>") }
+            .forEach { ret.append(it.first + " " + it.second + "<br>") }
         return ret.toString()
     }
 

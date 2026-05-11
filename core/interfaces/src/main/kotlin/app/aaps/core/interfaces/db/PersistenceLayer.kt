@@ -62,6 +62,12 @@ interface PersistenceLayer {
      */
     fun observeAnyChange(): Flow<Set<KClass<*>>>
 
+    /**
+     * Emits Unit once whenever all tables are wiped (clearDatabases).
+     * Observers that cache DB-derived state (e.g. status lights) should subscribe and refresh.
+     */
+    val databaseClearedFlow: Flow<Unit>
+
     // BS
     /**
      * Get last bolus
@@ -150,7 +156,6 @@ interface PersistenceLayer {
      * @return List of inserted/updated records
      */
     suspend fun insertOrUpdateBolus(bolus: BS, action: Action, source: Sources, note: String? = null): TransactionResult<BS>
-
 
     /**
      * Insert record
@@ -544,7 +549,6 @@ interface PersistenceLayer {
      */
     suspend fun insertOrUpdateEffectiveProfileSwitch(effectiveProfileSwitch: EPS): TransactionResult<EPS>
 
-
     /**
      * Invalidate record with id
      *
@@ -648,7 +652,6 @@ interface PersistenceLayer {
      * @return List of inserted/updated records
      */
     suspend fun insertOrUpdateProfileSwitch(profileSwitch: PS, action: Action, source: Sources, note: String? = null, listValues: List<ValueWithUnit>): TransactionResult<PS>
-
 
     /**
      * Invalidate record with id

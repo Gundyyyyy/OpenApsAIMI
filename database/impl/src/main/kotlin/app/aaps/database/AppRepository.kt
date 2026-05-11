@@ -72,10 +72,18 @@ class AppRepository @Inject internal constructor(
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
 
+    private val _databaseClearedFlow = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
+
     /**
      * Observe ALL database changes as Flow
      */
     fun changeFlow(): Flow<List<DBEntry>> = _changeFlow.asSharedFlow()
+
+    fun databaseClearedFlow(): Flow<Unit> = _databaseClearedFlow.asSharedFlow()
 
     /**
      * Observe database changes filtered by entity type
@@ -127,7 +135,10 @@ class AppRepository @Inject internal constructor(
         return result
     }
 
-    fun clearDatabases() = database.clearAllTables()
+    fun clearDatabases() {
+        database.clearAllTables()
+        repositoryScope.launch { _databaseClearedFlow.emit(Unit) }
+    }
 
     fun clearApsResults() = database.apsResultDao.deleteAllEntries()
 

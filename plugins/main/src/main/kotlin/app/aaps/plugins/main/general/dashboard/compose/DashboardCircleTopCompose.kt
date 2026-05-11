@@ -1,6 +1,7 @@
 package app.aaps.plugins.main.general.dashboard.compose
 
 import android.widget.FrameLayout
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -56,6 +57,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.compose.dashboard.GlucoseHeroRing
@@ -668,6 +670,36 @@ private fun HeroCgmCompactBadge(
         }
     }
     val dialogTitle = stringResource(R.string.dashboard_hero_cgm_smoothing_dialog_title)
+    val tier = state.adaptiveSmoothingQualityTier
+    val smoothingBorder = when (tier) {
+        null ->
+            BorderStroke(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+            )
+        AdaptiveSmoothingQualityTier.OK ->
+            BorderStroke(
+                width = 1.dp,
+                color = colorResource(R.color.dashboard_chip_border),
+            )
+        AdaptiveSmoothingQualityTier.UNCERTAIN ->
+            BorderStroke(
+                width = 2.dp,
+                color = colorResource(R.color.dashboard_metric_attention),
+            )
+        AdaptiveSmoothingQualityTier.BAD ->
+            BorderStroke(
+                width = 2.dp,
+                color = colorResource(R.color.dashboard_chip_border_warning),
+            )
+    }
+    val labelColor = when (tier) {
+        AdaptiveSmoothingQualityTier.UNCERTAIN ->
+            colorResource(R.color.dashboard_metric_attention)
+        AdaptiveSmoothingQualityTier.BAD ->
+            colorResource(R.color.dashboard_chip_border_warning)
+        else -> MaterialTheme.colorScheme.onSecondaryContainer
+    }
     Surface(
         onClick = {
             val parts = buildList {
@@ -687,6 +719,7 @@ private fun HeroCgmCompactBadge(
         },
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f),
+        border = smoothingBorder,
         modifier = Modifier
             .heightIn(max = if (compact) 28.dp else 30.dp)
             .widthIn(max = if (compact) 88.dp else 118.dp)
@@ -694,6 +727,7 @@ private fun HeroCgmCompactBadge(
     ) {
         Text(
             text = badgeLabel,
+            color = labelColor,
             modifier = Modifier.padding(
                 horizontal = if (compact) 6.dp else 8.dp,
                 vertical = if (compact) 4.dp else 5.dp,

@@ -124,6 +124,8 @@ class StatusViewModel @Inject constructor(
             .onEach { requestRefresh(RefreshReason.Initialization) }.launchIn(viewModelScope)
         persistenceLayer.observeChanges(TE::class.java)
             .onEach { requestRefresh(RefreshReason.TherapyChange) }.launchIn(viewModelScope)
+        persistenceLayer.databaseClearedFlow
+            .onEach { requestRefresh(RefreshReason.Manual) }.launchIn(viewModelScope)
         rxBus.toFlow(EventPumpStatusChanged::class.java)
             .onEach { requestRefresh(RefreshReason.PumpStatus) }.launchIn(viewModelScope)
         performanceProfile

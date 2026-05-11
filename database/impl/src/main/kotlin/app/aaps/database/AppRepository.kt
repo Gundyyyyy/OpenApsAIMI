@@ -72,10 +72,18 @@ class AppRepository @Inject internal constructor(
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
 
+    private val _databaseClearedFlow = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
+
     /**
      * Observe ALL database changes as Flow
      */
     fun changeFlow(): Flow<List<DBEntry>> = _changeFlow.asSharedFlow()
+
+    fun databaseClearedFlow(): Flow<Unit> = _databaseClearedFlow.asSharedFlow()
 
     /**
      * Observe database changes filtered by entity type
@@ -127,7 +135,10 @@ class AppRepository @Inject internal constructor(
         return result
     }
 
-    fun clearDatabases() = database.clearAllTables()
+    fun clearDatabases() {
+        database.clearAllTables()
+        repositoryScope.launch { _databaseClearedFlow.emit(Unit) }
+    }
 
     fun clearApsResults() = database.apsResultDao.deleteAllEntries()
 
@@ -298,6 +309,9 @@ class AppRepository @Inject internal constructor(
     suspend fun getAllProfileSwitches(): List<ProfileSwitch> =
         database.profileSwitchDao.getAllProfileSwitches()
 
+    suspend fun bulkMigrateProfileSwitchInsulinConfig(label: String, end: Long, peak: Long, conc: Double): Int =
+        database.profileSwitchDao.bulkMigrateInsulinConfig(label, end, peak, conc)
+
     suspend fun getProfileSwitchesFromTime(timestamp: Long, ascending: Boolean): List<ProfileSwitch> =
         database.profileSwitchDao.getProfileSwitchDataFromTime(timestamp).reversedIf(!ascending)
 
@@ -392,6 +406,9 @@ class AppRepository @Inject internal constructor(
 
     suspend fun getAllEffectiveProfileSwitches(): List<EffectiveProfileSwitch> =
         database.effectiveProfileSwitchDao.getAllEffectiveProfileSwitches()
+
+    suspend fun bulkMigrateEffectiveProfileSwitchInsulinConfig(label: String, end: Long, peak: Long, conc: Double): Int =
+        database.effectiveProfileSwitchDao.bulkMigrateInsulinConfig(label, end, peak, conc)
 
     // THERAPY EVENT
     /*
@@ -495,6 +512,9 @@ class AppRepository @Inject internal constructor(
 
     suspend fun getBoluses(): List<Bolus> =
         database.bolusDao.getAllBoluses()
+
+    suspend fun bulkMigrateBolusInsulinConfig(label: String, end: Long, peak: Long, conc: Double): Int =
+        database.bolusDao.bulkMigrateInsulinConfig(label, end, peak, conc)
 
     suspend fun getBolusesDataFromTime(timestamp: Long, ascending: Boolean): List<Bolus> =
         database.bolusDao.getBolusesFromTime(timestamp).reversedIf(!ascending)
@@ -611,7 +631,9 @@ class AppRepository @Inject internal constructor(
     // DEVICE STATUS
     fun insert(deviceStatus: DeviceStatus) {
         database.deviceStatusDao.insert(deviceStatus)
-        changeSubject.onNext(mutableListOf(deviceStatus)) // Not TraceableDao
+        val changes = mutableListOf<DBEntry>(deviceStatus) // Not TraceableDao
+        changeSubject.onNext(changes)
+        _changeFlow.tryEmit(changes)
     }
 
     /*

@@ -4,27 +4,25 @@ import app.aaps.core.data.iob.InMemoryGlucoseValue
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.data.plugin.PluginType
-import app.aaps.core.interfaces.configuration.Config
-import app.aaps.core.interfaces.configuration.awaitInitialized
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.configuration.Config
+import app.aaps.core.interfaces.configuration.awaitInitialized
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
-import app.aaps.core.interfaces.rx.events.EventAdaptiveSmoothingQuality
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualitySnapshot
 import app.aaps.core.interfaces.rx.events.AdaptiveSmoothingQualityTier
+import app.aaps.core.interfaces.rx.events.EventAdaptiveSmoothingQuality
 import app.aaps.core.interfaces.smoothing.Smoothing
 import app.aaps.core.interfaces.smoothing.SmoothingContext
 import app.aaps.core.ui.compose.icons.IcStats
-import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.LongNonKey
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.interfaces.sharedPreferences.SP
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -34,16 +32,21 @@ import kotlin.math.max
 import kotlin.math.sqrt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 
 /**
- * Adaptive UKF smoothing: unscented Kalman filter plus rule-based safety (compression lows, hypo).
+ * Adaptive UKF smoothing plugin.
+ *
+ * Combines:
+ * 1. Unscented Kalman Filter (UKF) for signal processing and trend estimation.
+ * 2. Rule-based safety logic for compression artifacts and low-glucose handling.
  */
+@OptIn(FlowPreview::class)
 @Singleton
 class AdaptiveSmoothingPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
@@ -51,9 +54,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private val rxBus: RxBus,
     private val config: Config,
     private val persistenceLayer: PersistenceLayer,
-    private val sp: SP,
-    private val iobCobCalculator: IobCobCalculator,
-    private val preferences: Preferences
+    private val preferences: Preferences,
+    private val iobCobCalculator: IobCobCalculator
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.SMOOTHING)
@@ -80,28 +82,25 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private val gamma = sqrt(n + lambda)
 
     // Sigma point weights
-    private val Wm = DoubleArray(2 * n + 1)
-    private val Wc = DoubleArray(2 * n + 1)
+    private val wm = DoubleArray(2 * n + 1)
+    private val wc = DoubleArray(2 * n + 1)
 
     // FIXED process noise (Physiological Limits)
-    private val Q_FIXED = doubleArrayOf(
+    private val qFixed = doubleArrayOf(
         1.0, 0.0,     // Glucose process noise: ~2.4 mg/dL std dev per 5 min
         0.0, 0.40     // Rate process noise: ~0.24 mg/dL/min std dev
     )
 
-    // Adaptive Measurement Noise (R) Limits
-    private val R_INIT = 25.0
-    private val R_MIN = 16.0
-    private val R_MAX = 196.0
+    // Adaptive Measurement Noise (R) Limits (learned default = [DoubleNonKey.UkfLearnedR])
+    private val rMin = 16.0
+    private val rMax = 196.0
 
     // Adaptation Logic
     private val innovationWindow = 48
-    private val RATE_DAMPING = 0.98
-    private val CHI_SQUARED_THRESHOLD = 15.13 // 99.99% confidence
-    private val OUTLIER_ABSOLUTE = 65.0
+    private val rateDamping = 0.98
 
     // Processing state
-    private var learnedR = R_INIT
+    private var learnedR = DoubleNonKey.UkfLearnedR.defaultValue
     private val innovations = ArrayDeque<Double>(innovationWindow + 1)
     private val rawInnovationVariance = ArrayDeque<Double>(innovationWindow + 1)
     private var lastProcessedTimestamp: Long = 0
@@ -110,11 +109,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     private val smoothingSupervisor = SupervisorJob()
     private val smoothingScope = CoroutineScope(smoothingSupervisor + Dispatchers.IO)
 
-    // UI-facing informational quality (sent over RxBus, throttled to avoid spam)
     private var lastAdaptiveSmoothingQualityTier: AdaptiveSmoothingQualityTier? = null
     private var lastAdaptiveSmoothingQualityEventAt: Long = 0L
 
-    /** Read by dashboard on each status refresh; always updated synchronously in [smooth] / segment processing. */
     @Volatile
     private var lastQualitySnapshot: AdaptiveSmoothingQualitySnapshot? = null
 
@@ -162,12 +159,12 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     }
 
     private fun initSigmaWeights() {
-        Wm[0] = lambda / (n + lambda)
-        Wc[0] = lambda / (n + lambda) + (1 - alpha * alpha + beta)
+        wm[0] = lambda / (n + lambda)
+        wc[0] = lambda / (n + lambda) + (1 - alpha * alpha + beta)
         val w = 1.0 / (2.0 * (n + lambda))
         for (i in 1 until 2 * n + 1) {
-            Wm[i] = w
-            Wc[i] = w
+            wm[i] = w
+            wc[i] = w
         }
     }
 
@@ -179,7 +176,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     }
 
     // ============================================================
-    // MAIN SMOOTHING LOOP (The "Hybrid" Logic)
+    // MAIN SMOOTHING LOOP
     // ============================================================
 
     override suspend fun smooth(
@@ -187,7 +184,6 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         context: SmoothingContext
     ): MutableList<InMemoryGlucoseValue> {
         if (data.size < 2) {
-            // Always provide a valid smoothed payload for downstream workers.
             copyRawToSmoothed(data)
             sanitizeOutput(data)
             refreshSnapshotAfterShortOrRawPass()
@@ -195,24 +191,20 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         }
 
         try {
-            // 1. Check for Reset Conditions (Sensor Change, Gaps, Time Travel)
             if (shouldResetLearning(data[0].timestamp)) {
                 resetLearning()
             }
 
-            // 2. Prepare for Processing
             val previousTimestamp = lastProcessedTimestamp
             lastProcessedTimestamp = data[0].timestamp
 
-            // IOB for compression heuristics: prefer caller-supplied cache (e.g. LoadBgDataWorker).
             val cachedIobTotalU = context.cachedTotalIobUnits ?: run {
                 val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
                 val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().iob
                 bolusIob + basalIob
             }
-            processHybridSegment(data, previousTimestamp, cachedIobTotalU)
+            processHybridSegment(data, cachedIobTotalU)
 
-            // 4. Persistence & Logging
             val newDataProcessed = data.any { it.timestamp > previousTimestamp }
             if (newDataProcessed) {
                 savePersistedParameters()
@@ -237,23 +229,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         }
     }
 
-    /** When fewer than 2 points are smoothed, keep UI in sync using last tier / current learned R. */
-    private fun refreshSnapshotAfterShortOrRawPass() {
-        val now = System.currentTimeMillis()
-        val tier = lastAdaptiveSmoothingQualityTier ?: AdaptiveSmoothingQualityTier.OK
-        lastQualitySnapshot = AdaptiveSmoothingQualitySnapshot(
-            tier = tier,
-            learnedR = learnedR,
-            outlierRate = 0.0,
-            compressionRate = 0.0,
-            updatedAtMillis = now
-        )
-    }
-
     private fun processHybridSegment(
         data: MutableList<InMemoryGlucoseValue>,
-        previousTimestamp: Long,
-        cachedIobTotalU: Double
+        cachedIobTotalU: Double,
     ) {
         // We will process the list from Oldest to Newest for the Filter (Time forward)
         // data list is usually Newest [0] -> Oldest [N]
@@ -262,10 +240,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         // Initialize State
         val startIdx = data.lastIndex
         val x = doubleArrayOf(data[startIdx].value, 0.0) // Initial state [G, 0]
-        val P = doubleArrayOf(16.0, 0.0, 0.0, 1.0)       // Initial Covariance
-        var R = learnedR
+        val stateCovariance = doubleArrayOf(16.0, 0.0, 0.0, 1.0) // Initial covariance (2×2 row-major)
+        var measurementNoiseR = learnedR
 
-        // Quality counters for UI badge (informational only).
         var processedPoints = 0
         var compressionPoints = 0
         var outlierPoints = 0
@@ -274,9 +251,8 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         for (i in startIdx downTo 0) {
             val z = data[i].value
             val timestamp = data[i].timestamp
-
             processedPoints++
-            
+
             // Calculate dt (Time since last step)
             // If i == startIdx (oldest), dt is 0 or estimated.
             val dt = if (i < startIdx) {
@@ -294,23 +270,24 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             // Check for Blocking Artifacts (Compression Lows)
             val isCompression = isCompressionArtifactCandidate(ctx, data, i)
             if (isCompression) compressionPoints++
-            
+
             // Check for Hypo Safety Bypass
             val isHypoCritical = ctx.currentBg < 70.0
 
             // --- UKF STEP ---
 
             // 1. Standard Prediction (Baseline Physiology)
-            var (xPred, PPred) = predict(x, P, Q_FIXED, dtClamped)
+            var (xPred, predictedCovariance) = predict(x, stateCovariance, qFixed, dtClamped)
             
-            // 2. DYNAMIC MANEUVER DETECTION (Zero-Lag Hyper): large positive innovation inflates Q.
+            // 2. DYNAMIC MANEUVER DETECTION (Zero-Lag Hyper)
+            // Large positive innovation: inflate Q so the filter tracks fast rises (meals/stress).
             
             val preFitInnovation = z - xPred[0]
-            val preFitSigma = sqrt(PPred[0] + R) // Expected deviation
+            val preFitSigma = sqrt(predictedCovariance[0] + measurementNoiseR) // Expected deviation
             val normInnovation = preFitInnovation / preFitSigma
             
             // Condition: Rapid Rise (Innovation > 2.5 sigma) AND data is higher than prediction
-            // We specificallly target rises (z > xPred) to avoid lag on meals.
+            // We specifically target rises (z > xPred) to avoid lag on meals.
             // Drops are handled by Safety Guards/Kinematics.
             val isRapidManeuver = (normInnovation > 2.5 && preFitInnovation > 0)
             
@@ -318,14 +295,14 @@ class AdaptiveSmoothingPlugin @Inject constructor(
                  aapsLogger.debug(LTag.GLUCOSE, "HybridSmoothing: RAPID RISE DETECTED (Innov=${preFitInnovation.toInt()}). Inflating Q for Zero-Lag.")
                  
                  // Inflate Q_rate massively to allow instant velocity adaptation
-                 val Q_ADAPTIVE = Q_FIXED.clone()
-                 Q_ADAPTIVE[3] *= 50.0 // Allow huge rate change
-                 Q_ADAPTIVE[0] *= 2.0  // Slight position looseness
+                 val qAdaptive = qFixed.clone()
+                 qAdaptive[3] *= 50.0 // Allow huge rate change
+                 qAdaptive[0] *= 2.0  // Slight position looseness
                  
                  // Re-Run Prediction with Inflated Q
-                 val result = predict(x, P, Q_ADAPTIVE, dtClamped)
+                 val result = predict(x, stateCovariance, qAdaptive, dtClamped)
                  xPred = result.first
-                 PPred = result.second
+                 predictedCovariance = result.second
             }
 
             // 3. Update (Measurement)
@@ -336,10 +313,10 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             if (isCompression) {
                 aapsLogger.warn(LTag.GLUCOSE, "HybridSmoothing: COMPRESSION BLOCKED at ${z.toInt()} mg/dL. Holding prediction.")
                 // Blind update: Keep xPred as x, but don't collapse P (uncertainty grows)
-                // Effectively: x = xPred, P = PPred
+                // Effectively: x = xPred; covariance carries predicted uncertainty
                 x[0] = xPred[0]
                 x[1] = xPred[1]
-                P[0] = PPred[0]; P[1] = PPred[1]; P[2] = PPred[2]; P[3] = PPred[3]
+                stateCovariance[0] = predictedCovariance[0]; stateCovariance[1] = predictedCovariance[1]; stateCovariance[2] = predictedCovariance[2]; stateCovariance[3] = predictedCovariance[3]
                 
                 // Override smoothed value for this point
                 data[i].smoothed = x[0] // Projected value
@@ -348,20 +325,19 @@ class AdaptiveSmoothingPlugin @Inject constructor(
                 // Normal Update
                 // Calculate Innovation for R adaptation
                 val innovation = z - xPred[0]
-                val innovationVariance = PPred[0] + R
-                
-                // Outlier Check (Statistical)
-                val isStatisticalOutlier = isOutlier(innovation, innovationVariance, P)
+                val innovationVariance = predictedCovariance[0] + measurementNoiseR
+
+                val isStatisticalOutlier = isOutlier(innovation, innovationVariance)
                 if (isStatisticalOutlier) outlierPoints++
-                
+
                 // Adapt R (Noise)
-                R = adaptMeasurementNoise(R, innovations, rawInnovationVariance)
+                measurementNoiseR = adaptMeasurementNoise(measurementNoiseR, innovations, rawInnovationVariance)
                 trackInnovation(innovation, innovationVariance)
                 
                 // Execute Update
-                update(xPred, PPred, z, R, x, P)
+                update(xPred, predictedCovariance, z, measurementNoiseR, x, stateCovariance)
 
-                // Hypo kinematics (steep drops): limit masking of real lows.
+                // Hypo kinematics: avoid masking real drops when velocity is steep.
                 // 1. Predict Future BG (20 min horizon) using current Velocity state
                 val velocity = x[1] // mg/dL per min
                 val predictedBg20min = x[0] + (velocity * 20.0)
@@ -396,12 +372,9 @@ class AdaptiveSmoothingPlugin @Inject constructor(
             // This is superior to standard Delta
             data[i].trendArrow = computeTrendArrow(x[1])
         }
-        
-        // Update learned R globally
-        learnedR = R
 
-        // Send a lightweight, informational quality estimate to the dashboard.
-        // (Phase 1: no control logic changes, only UI.)
+        learnedR = measurementNoiseR
+
         val compressionRate = if (processedPoints > 0) compressionPoints.toDouble() / processedPoints.toDouble() else 0.0
         val outlierRate = if (processedPoints > 0) outlierPoints.toDouble() / processedPoints.toDouble() else 0.0
 
@@ -412,7 +385,6 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         }
 
         val now = System.currentTimeMillis()
-        // Dashboard reads this synchronously — must update every pass (do not tie to Rx throttle).
         lastQualitySnapshot = AdaptiveSmoothingQualitySnapshot(
             tier = tier,
             learnedR = learnedR,
@@ -431,13 +403,30 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         }
     }
 
+    private fun refreshSnapshotAfterShortOrRawPass() {
+        val now = System.currentTimeMillis()
+        val tier = lastAdaptiveSmoothingQualityTier ?: AdaptiveSmoothingQualityTier.OK
+        lastQualitySnapshot = AdaptiveSmoothingQualitySnapshot(
+            tier = tier,
+            learnedR = learnedR,
+            outlierRate = 0.0,
+            compressionRate = 0.0,
+            updatedAtMillis = now
+        )
+    }
+
+    private fun isOutlier(innovation: Double, innovationVariance: Double): Boolean {
+        val mahalanobisSq = (innovation * innovation) / innovationVariance
+        return mahalanobisSq > CHI_SQUARED_THRESHOLD || abs(innovation) > OUTLIER_ABSOLUTE
+    }
+
     // ============================================================
     // HEURISTIC SAFETY LOGIC
     // ============================================================
 
     private fun calculateGlycemicContext(data: List<InMemoryGlucoseValue>, index: Int, cachedIobTotalU: Double): GlycemicContext {
         // Need next points (future/newest) relative to index? 
-        // No, 'data' is Newest..Oldest.
+        // No, 'data' is Newest...Oldest.
         // If we are at 'i', older points are i+1, i+2.
         
         val valCur = data[index].value
@@ -453,7 +442,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         val now = java.util.Calendar.getInstance()
         now.timeInMillis = data[index].timestamp
         val hour = now.get(java.util.Calendar.HOUR_OF_DAY)
-        val isNight = preferences.get(BooleanKey.OApsAIMInight) == true || (hour < 7 || hour >= 23)
+        val isNight = hour !in 7..<23
 
         val zone = when {
             valCur < 70 -> GlycemicZone.HYPO
@@ -472,6 +461,7 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         )
     }
 
+    @Suppress("unused")
     private fun isCompressionArtifactCandidate(ctx: GlycemicContext, data: List<InMemoryGlucoseValue>, index: Int): Boolean {
         // 1. Massive Drop Check
         // If raw delta is impossibly steep negative e.g. -20mg/dl in 5 mins
@@ -491,48 +481,55 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     // UKF MATHEMATICS (Unscented Transform)
     // ============================================================
 
-    private fun predict(x: DoubleArray, P: DoubleArray, Q: DoubleArray, dt: Double): Pair<DoubleArray, DoubleArray> {
+    private fun predict(x: DoubleArray, covariance: DoubleArray, q: DoubleArray, dt: Double): Pair<DoubleArray, DoubleArray> {
         // Generate Sigma Points
-        val sigmaPoints = generateSigmaPoints(x, P)
+        val sigmaPoints = generateSigmaPoints(x, covariance)
         val sigmaPointsPred = Array(2 * n + 1) { DoubleArray(n) }
 
         // Propagate (Model: G + G_dot*dt)
         for (i in 0 until 2 * n + 1) {
             sigmaPointsPred[i][0] = sigmaPoints[i][0] + sigmaPoints[i][1] * dt
-            sigmaPointsPred[i][1] = sigmaPoints[i][1] * RATE_DAMPING
+            sigmaPointsPred[i][1] = sigmaPoints[i][1] * rateDamping
         }
 
         // Recombine Mean
         val xPred = DoubleArray(n)
         for (i in 0 until 2 * n + 1) {
-            xPred[0] += Wm[i] * sigmaPointsPred[i][0]
-            xPred[1] += Wm[i] * sigmaPointsPred[i][1]
+            xPred[0] += wm[i] * sigmaPointsPred[i][0]
+            xPred[1] += wm[i] * sigmaPointsPred[i][1]
         }
 
         // Recombine Covariance
-        val PPred = DoubleArray(4)
+        val predictedCovarianceMatrix = DoubleArray(4)
         for (i in 0 until 2 * n + 1) {
             val dx0 = sigmaPointsPred[i][0] - xPred[0]
             val dx1 = sigmaPointsPred[i][1] - xPred[1]
-            PPred[0] += Wc[i] * dx0 * dx0
-            PPred[1] += Wc[i] * dx0 * dx1
-            PPred[2] += Wc[i] * dx1 * dx0
-            PPred[3] += Wc[i] * dx1 * dx1
+            predictedCovarianceMatrix[0] += wc[i] * dx0 * dx0
+            predictedCovarianceMatrix[1] += wc[i] * dx0 * dx1
+            predictedCovarianceMatrix[2] += wc[i] * dx1 * dx0
+            predictedCovarianceMatrix[3] += wc[i] * dx1 * dx1
         }
 
         // Add Process Noise (Scaled by time)
         val qScale = dt / 5.0
-        PPred[0] += Q[0] * qScale
-        PPred[3] += Q[3] * qScale
+        predictedCovarianceMatrix[0] += q[0] * qScale
+        predictedCovarianceMatrix[3] += q[3] * qScale
         
-        PPred[0] = max(PPred[0], 0.1)
-        PPred[3] = max(PPred[3], 0.001)
+        predictedCovarianceMatrix[0] = max(predictedCovarianceMatrix[0], 0.1)
+        predictedCovarianceMatrix[3] = max(predictedCovarianceMatrix[3], 0.001)
 
-        return Pair(xPred, PPred)
+        return Pair(xPred, predictedCovarianceMatrix)
     }
 
-    private fun update(xPred: DoubleArray, PPred: DoubleArray, z: Double, R: Double, x: DoubleArray, P: DoubleArray) {
-        val sigmaPoints = generateSigmaPoints(xPred, PPred)
+    private fun update(
+        xPred: DoubleArray,
+        predictedCovariance: DoubleArray,
+        z: Double,
+        measurementNoiseVariance: Double,
+        x: DoubleArray,
+        covariance: DoubleArray,
+    ) {
+        val sigmaPoints = generateSigmaPoints(xPred, predictedCovariance)
         val zSigma = DoubleArray(2 * n + 1)
 
         // Measurement Model h(x) = x[0] (Glucose)
@@ -540,52 +537,52 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
         // Predicted Measurement Mean
         var zPred = 0.0
-        for (i in 0 until 2 * n + 1) zPred += Wm[i] * zSigma[i]
+        for (i in 0 until 2 * n + 1) zPred += wm[i] * zSigma[i]
 
         // Measurement Variance
-        var Pzz = 0.0
+        var innovationVariance = 0.0
         for (i in 0 until 2 * n + 1) {
             val dz = zSigma[i] - zPred
-            Pzz += Wc[i] * dz * dz
+            innovationVariance += wc[i] * dz * dz
         }
-        Pzz += R
-        val pzzSafe = max(Pzz, 1e-6)
+        innovationVariance += measurementNoiseVariance
+        val innovationVarianceSafe = max(innovationVariance, 1e-6)
 
-        // Cross Covariance Pxz
-        val Pxz = DoubleArray(n)
+        // Cross covariance (state × measurement)
+        val crossCovariance = DoubleArray(n)
         for (i in 0 until 2 * n + 1) {
             val dx0 = sigmaPoints[i][0] - xPred[0]
             val dx1 = sigmaPoints[i][1] - xPred[1]
             val dz = zSigma[i] - zPred
-            Pxz[0] += Wc[i] * dx0 * dz
-            Pxz[1] += Wc[i] * dx1 * dz
+            crossCovariance[0] += wc[i] * dx0 * dz
+            crossCovariance[1] += wc[i] * dx1 * dz
         }
 
         // Kalman Gain
-        val K = DoubleArray(n)
-        K[0] = Pxz[0] / pzzSafe
-        K[1] = Pxz[1] / pzzSafe
+        val k = DoubleArray(n)
+        k[0] = crossCovariance[0] / innovationVarianceSafe
+        k[1] = crossCovariance[1] / innovationVarianceSafe
 
         // Update State
         val innovation = z - zPred
-        x[0] = xPred[0] + K[0] * innovation
-        x[1] = xPred[1] + K[1] * innovation
+        x[0] = xPred[0] + k[0] * innovation
+        x[1] = xPred[1] + k[1] * innovation
         
         x[1] = x[1].coerceIn(-5.0, 5.0) // Clamp rate physics
 
         // Update Covariance
-        P[0] = PPred[0] - K[0] * pzzSafe * K[0]
-        P[1] = PPred[1] - K[0] * pzzSafe * K[1]
-        P[2] = PPred[2] - K[1] * pzzSafe * K[0]
-        P[3] = PPred[3] - K[1] * pzzSafe * K[1]
+        covariance[0] = predictedCovariance[0] - k[0] * innovationVarianceSafe * k[0]
+        covariance[1] = predictedCovariance[1] - k[0] * innovationVarianceSafe * k[1]
+        covariance[2] = predictedCovariance[2] - k[1] * innovationVarianceSafe * k[0]
+        covariance[3] = predictedCovariance[3] - k[1] * innovationVarianceSafe * k[1]
         
-        P[0] = max(P[0], 0.1)
-        P[3] = max(P[3], 0.001)
+        covariance[0] = max(covariance[0], 0.1)
+        covariance[3] = max(covariance[3], 0.001)
     }
 
-    private fun generateSigmaPoints(x: DoubleArray, P: DoubleArray): Array<DoubleArray> {
+    private fun generateSigmaPoints(x: DoubleArray, covariance: DoubleArray): Array<DoubleArray> {
         val sigmaPoints = Array(2 * n + 1) { DoubleArray(n) }
-        val sqrtP = matrixSqrt2x2(P)
+        val sqrtP = matrixSqrt2x2(covariance)
         
         sigmaPoints[0][0] = x[0]; sigmaPoints[0][1] = x[1]
 
@@ -598,10 +595,10 @@ class AdaptiveSmoothingPlugin @Inject constructor(
         return sigmaPoints
     }
 
-    private fun matrixSqrt2x2(P: DoubleArray): DoubleArray {
-        val a = P[0]
-        val b = (P[1] + P[2]) / 2.0
-        val d = P[3]
+    private fun matrixSqrt2x2(covariance: DoubleArray): DoubleArray {
+        val a = covariance[0]
+        val b = (covariance[1] + covariance[2]) / 2.0
+        val d = covariance[3]
         
         val l11 = sqrt(max(a, 1e-9))
         val l21 = b / l11
@@ -616,23 +613,18 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     // ADAPTATION AND UTILS
     // ============================================================
 
-    private fun isOutlier(innovation: Double, innovationVariance: Double, P: DoubleArray): Boolean {
-        val mahalanobisSq = (innovation * innovation) / innovationVariance
-        return mahalanobisSq > CHI_SQUARED_THRESHOLD || abs(innovation) > OUTLIER_ABSOLUTE
-    }
-
     private fun adaptMeasurementNoise(currentR: Double, innovations: ArrayDeque<Double>, rawInnovationsSquared: ArrayDeque<Double>): Double {
         if (innovations.size < 8) return currentR
         val avgInnovSq = med(innovations)
         
         // Stability Clamp
-        if (innovations.any { it > 9.0 }) return currentR.coerceIn(R_MIN, R_MAX)
+        if (innovations.any { it > 9.0 }) return currentR.coerceIn(rMin, rMax)
 
         var newR = currentR
         if (avgInnovSq >= 1.1 || avgInnovSq <= 0.9) {
             newR = currentR + 0.06 * (med(rawInnovationsSquared) - currentR)
         }
-        return newR.coerceIn(R_MIN, R_MAX)
+        return newR.coerceIn(rMin, rMax)
     }
 
     private fun med(list: Collection<Double>): Double {
@@ -687,18 +679,20 @@ class AdaptiveSmoothingPlugin @Inject constructor(
 
     private fun loadPersistedParameters() {
         try {
-            learnedR = sp.getDouble(DoubleNonKey.UkfLearnedR.key, R_INIT)
-            lastProcessedTimestamp = sp.getLong(LongNonKey.UkfLastProcessedTimestamp.key, LongNonKey.UkfLastProcessedTimestamp.defaultValue)
-            lastSensorChangeTimestamp = sp.getLong(LongNonKey.UkfSensorChangeTimestamp.key, LongNonKey.UkfSensorChangeTimestamp.defaultValue)
-        } catch (e: Exception) { learnedR = R_INIT }
+            learnedR = preferences.get(DoubleNonKey.UkfLearnedR)
+            lastProcessedTimestamp = preferences.get(LongNonKey.UkfLastProcessedTimestamp)
+            lastSensorChangeTimestamp = preferences.get(LongNonKey.UkfSensorChangeTimestamp)
+        } catch (_: Exception) {
+            learnedR = DoubleNonKey.UkfLearnedR.defaultValue
+        }
     }
 
     private fun savePersistedParameters() {
         try {
-            sp.putDouble(DoubleNonKey.UkfLearnedR.key, learnedR)
-            sp.putLong(LongNonKey.UkfLastProcessedTimestamp.key, lastProcessedTimestamp)
-            sp.putLong(LongNonKey.UkfSensorChangeTimestamp.key, lastSensorChangeTimestamp)
-        } catch (e: Exception) { }
+            preferences.put(DoubleNonKey.UkfLearnedR, learnedR)
+            preferences.put(LongNonKey.UkfLastProcessedTimestamp, lastProcessedTimestamp)
+            preferences.put(LongNonKey.UkfSensorChangeTimestamp, lastSensorChangeTimestamp)
+        } catch (_: Exception) { }
     }
 
     private fun shouldResetLearning(currentTimestamp: Long): Boolean {
@@ -711,12 +705,13 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     }
 
     private fun resetLearning() {
-        learnedR = R_INIT
+        learnedR = DoubleNonKey.UkfLearnedR.defaultValue
         innovations.clear()
         rawInnovationVariance.clear()
         lastAdaptiveSmoothingQualityTier = null
+        lastAdaptiveSmoothingQualityEventAt = 0L
         lastQualitySnapshot = null
-        aapsLogger.info(LTag.GLUCOSE, "HybridSmoothing: Learning Reset. R=$R_INIT")
+        aapsLogger.info(LTag.GLUCOSE, "HybridSmoothing: Learning Reset. R=$learnedR")
         savePersistedParameters()
     }
 
@@ -739,12 +734,13 @@ class AdaptiveSmoothingPlugin @Inject constructor(
     }
 
     private companion object {
-        // Keeps high performance while preventing DB-query storms from noisy TE change events.
         const val SENSOR_CHANGE_DEBOUNCE_SECONDS: Long = 10L
         const val MIN_VALID_BG: Double = 39.0
         const val MAX_VALID_BG: Double = 500.0
 
-        // Throttle UI events to keep the dashboard responsive.
+        /** 99.99% chi-square, 1 DoF — used only for informational outlier rate (badge / study). */
+        const val CHI_SQUARED_THRESHOLD: Double = 15.13
+        const val OUTLIER_ABSOLUTE: Double = 65.0
         const val QUALITY_EVENT_THROTTLE_MS: Long = 30_000L
     }
 }

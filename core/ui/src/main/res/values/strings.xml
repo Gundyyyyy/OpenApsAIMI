@@ -33,6 +33,7 @@
     <string name="no_valid_basal_rate">No valid basal rate read from pump</string>
     <string name="limiting_iob">Limiting IOB to %1$.1f U because of %2$s</string>
     <string name="loop_disabled">LOOP DISABLED BY CONSTRAINTS</string>
+    <string name="loop_disabled_by_user">Loop disabled by user</string>
     <string name="event_type">Event type</string>
     <string name="reload">Reload</string>
     <string name="mgdl">mg/dl</string>
@@ -196,6 +197,9 @@
     <string name="remove_label">Remove</string>
     <string name="activate_profile">Activate profile</string>
     <string name="activate_insulin">Activate insulin</string>
+    <string name="pump_wizard_profile_gate_title">Profile required</string>
+    <string name="pump_wizard_profile_gate_pick">Select the profile to apply on activation.</string>
+    <string name="pump_wizard_profile_gate_no_store">No profile defined. Open Profile Management to create one, then start activation again.</string>
     <string name="reset">Reset</string>
     <string name="profileswitch_ismissing">ProfileSwitch missing. Please do a profile switch or press \"Activate Profile\" in the LocalProfile.</string>
     <string name="profile">Profile</string>
@@ -921,7 +925,7 @@
     <string name="maintenance_export_csv_desc">Export treatment history as spreadsheet</string>
     <string name="maintenance_cleanup_db_desc">Remove old entries from database</string>
     <string name="maintenance_reset_aps_results_desc">Clear stored algorithm results</string>
-    <string name="maintenance_reset_db_desc">Erase all databases and restart</string>
+    <string name="maintenance_reset_db_desc">Erase all databases and reload</string>
 
     <!-- Cloud directory dialog (Compose) -->
     <string name="select_storage_type">Select Storage Type</string>

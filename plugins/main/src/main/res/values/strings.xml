@@ -202,6 +202,7 @@
     <string name="buttonson_description">Buttons are always displayed on bottom of screen</string>
     <string name="largedisplay_description">Large display</string>
     <string name="minimal_skin_description">New skin dashboard</string>
+    <string name="notification_iob_short">%1$.1fU</string>
 
     <string name="suspendloopfor1h">Suspend loop for 1h</string>
     <string name="suspendloopfor2h">Suspend loop for 2h</string>

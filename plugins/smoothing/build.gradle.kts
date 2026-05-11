@@ -14,8 +14,12 @@ android {
 dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:interfaces"))
+    implementation(project(":core:keys"))
     implementation(project(":core:ui"))
     implementation(project(":core:keys"))
+
+    testImplementation(project(":shared:tests"))
+    testImplementation(project(":implementation"))
 
     testImplementation(project(":shared:tests"))
     testImplementation(project(":implementation"))

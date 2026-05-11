@@ -526,6 +526,12 @@
     <string name="pref_summary_aimi_advisor_llm_rich_oref">Adds a plain-language facts block for the coach LLM. Turn off for a shorter cloud prompt.</string>
     <string name="pref_title_aimi_straight_line_tube">Straight-line tube advisor (SMB caps)</string>
     <string name="pref_summary_aimi_straight_line_tube">Discrete short-horizon control on max SMB: keeps predicted minimum BG above a floor using the PKPD min curve, favors larger caps when eventual BG is high, penalizes zig-zag SMB sizing. Does not replace PKPD or safety nets. Off by default.</string>
+    <string name="pref_title_aimi_dyn_isf_trajectory_tuning">DynISF: trajectory tuning (CGM geometry)</string>
+    <string name="pref_summary_aimi_dyn_isf_trajectory_tuning">Uses the same short-horizon CGM features as AutoISF (deltas, parabolic projection, acceleration) only when quality gates pass. Bounded change per tick; skips when physio already tightens ISF strongly. Requires dynamic sensitivity. Off by default.</string>
+    <string name="pref_title_aimi_dyn_isf_trajectory_shadow">DynISF trajectory: shadow only</string>
+    <string name="pref_summary_aimi_dyn_isf_trajectory_shadow">When on, logs the would-be ISF multiplier but does not change displayed DynISF. Turn off after you trust the signal in logs.</string>
+    <string name="pref_title_aimi_dyn_isf_trajectory_max_fraction">DynISF trajectory: max ISF change per tick</string>
+    <string name="pref_summary_aimi_dyn_isf_trajectory_max_fraction">Cap on relative ISF adjustment from trajectory (e.g. 0.06 = at most about 6% tighter ISF on a strong rise, or 6% looser on a strong fall). Lower = safer, smaller benefit.</string>
     <string name="pref_title_aimi_peak_governor_enabled">TAP-G peak governor</string>
     <string name="pref_summary_aimi_peak_governor_enabled">When adaptive PK/PD is on, blend the insulin profile peak with the learned PKPD peak for loop peakTime (see research doc TAP_G_PEAK_GOVERNOR_RFC).</string>
     <string name="pref_title_aimi_peak_governor_learned_weight">TAP-G learned peak blend weight</string>

@@ -82,7 +82,9 @@ import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
 import app.aaps.plugins.aps.events.EventResetOpenAPSGui
 import app.aaps.plugins.aps.openAPS.TddStatus
+import app.aaps.plugins.aps.openAPSAIMI.ISF.DynIsfTrajectoryTuning
 import app.aaps.plugins.aps.openAPSAIMI.ISF.IsfAdjustmentEngine
+import app.aaps.plugins.aps.openAPSAIMI.physio.PhysioMultipliersMTR
 import dagger.android.HasAndroidInjector
 import org.json.JSONObject
 import java.util.Calendar
@@ -161,6 +163,7 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
     private val ch: ConcentrationHelper,
     private val trajectoryHistoryProvider: TrajectoryHistoryProvider,
     private val trajectoryGuard: TrajectoryGuard,
+    private val dynIsfTrajectoryTuning: DynIsfTrajectoryTuning,
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -672,27 +675,39 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
 
         // 10) facteur dynamique + bornes globales
         blended *= dynamicFactor
-        
-        // 🏥 PHYSIO MODULATION (ISF)
-        // We fetching multipliers for the specific timestamp is tricky, so we use current context
-        // This affects the "Displayed ISF" in AAPS.
-        
-        // Calculate IOB/COB for Cosine Gate
-        val profile = profileFunction.getProfile()
-        if (profile != null) {
-            val iobCalc = iobCobCalculator.calculateFromTreatmentsAndTemps(timestamp, profile)
-            val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
-            
+
+        // 10b) ajustement trajectoire (géométrie CGM type AutoISF), borné — avant physio pour limiter le cumul
+        val profileForPhysio = profileFunction.getProfile()
+        val physioIsfFactor: Double
+        val physioMultsNullable: PhysioMultipliersMTR?
+        if (profileForPhysio != null) {
+            val iobForPhysio = iobCobCalculator.calculateFromTreatmentsAndTemps(timestamp, profileForPhysio)
+            val mealForPhysio = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
             val physioMults = physioAdapter.getMultipliers(
-                currentBG = glucose, 
+                currentBG = glucose,
                 currentDelta = currentDelta ?: 0.0,
-                iob = iobCalc.iob,
-                cob = mealData.carbs
+                iob = iobForPhysio.iob,
+                cob = mealForPhysio.carbs,
             )
-            if (physioMults.isfFactor != 1.0) {
-                blended *= physioMults.isfFactor
-                aapsLogger.debug(LTag.APS, "🏥 DynISF modulated by Physio: x${physioMults.isfFactor} -> $blended")
-            }
+            physioIsfFactor = physioMults.isfFactor
+            physioMultsNullable = physioMults
+        } else {
+            physioIsfFactor = 1.0
+            physioMultsNullable = null
+        }
+        val trajectoryTuning = dynIsfTrajectoryTuning.computeAdjustedIsf(
+            blendedMgdlPerU = blended,
+            profileIsfMgdlPerU = profileIsf,
+            bgMgdl = glucose,
+            bgQualityState = bgQualityCheck.state,
+            physioIsfFactor = physioIsfFactor,
+        )
+        blended = trajectoryTuning.isfMgdlPerU
+
+        // 🏥 PHYSIO MODULATION (ISF) — après trajectoire
+        if (physioMultsNullable != null && physioMultsNullable.isfFactor != 1.0) {
+            blended *= physioMultsNullable.isfFactor
+            aapsLogger.debug(LTag.APS, "🏥 DynISF modulated by Physio: x${physioMultsNullable.isfFactor} -> $blended")
         }
 
         blended = blended.coerceIn(5.0, 300.0)
@@ -1831,6 +1846,9 @@ open class OpenAPSAIMIPlugin  @Inject constructor(
                 add(DoubleKey.OApsAIMIIsfFusionMinFactor)
                 add(DoubleKey.OApsAIMIIsfFusionMaxFactor)
                 add(DoubleKey.OApsAIMIIsfFusionMaxChangePerTick)
+                add(BooleanKey.OApsAIMIDynIsfTrajectoryTuningEnabled)
+                add(BooleanKey.OApsAIMIDynIsfTrajectoryShadowOnly)
+                add(DoubleKey.OApsAIMIDynIsfTrajectoryMaxFraction)
                 add(DoubleKey.OApsAIMISmbTailThreshold)
                 add(DoubleKey.OApsAIMISmbTailDamping)
                 add(BooleanKey.OApsAIMIPkpdPragmaticReliefEnabled)

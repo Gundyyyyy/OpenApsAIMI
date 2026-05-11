@@ -290,6 +290,16 @@ enum class DoubleKey(
     OApsAIMIIsfFusionMinFactor("aimi_isf_fusion_min_factor", 0.75, 0.3, 1.0),
     OApsAIMIIsfFusionMaxFactor("aimi_isf_fusion_max_factor", 2.0, 1.0, 2.0),
     OApsAIMIIsfFusionMaxChangePerTick("aimi_isf_fusion_max_change_per_tick", 0.4, 0.0, 0.5),
+    /** Max relative DynISF change from trajectory tuning when a tick qualifies (rise or fall). */
+    OApsAIMIDynIsfTrajectoryMaxFraction(
+        key = "aimi_dyn_isf_trajectory_max_fraction",
+        defaultValue = 0.06,
+        min = 0.02,
+        max = 0.12,
+        titleResId = R.string.pref_title_aimi_dyn_isf_trajectory_max_fraction,
+        summaryResId = R.string.pref_summary_aimi_dyn_isf_trajectory_max_fraction,
+        dependency = BooleanKey.OApsAIMIDynIsfTrajectoryTuningEnabled,
+    ),
     OApsAIMISmbTailThreshold("aimi_smb_tail_threshold", 0.25, 0.0, 1.0),
     OApsAIMISmbTailDamping("aimi_smb_tail_damping", 0.5, 0.0, 1.0),
     OApsAIMISmbExerciseDamping("aimi_smb_exercise_damping", 0.6, 0.0, 1.0),

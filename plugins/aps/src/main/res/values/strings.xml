@@ -240,6 +240,7 @@
     <string name="aimi_pkpd_preset_applied">Insulin profile applied</string>
     <string name="aimi_pkpd_sync_state_action">Align loop state to initial &amp; bounds</string>
     <string name="aimi_pkpd_sync_done">Loop DIA and peak aligned to initial values and bounds.</string>
+    <string name="aimi_dyn_isf_trajectory_section_title">DynISF trajectory (CGM geometry)</string>
     <string name="aimi_pkpd_section_comfort">Comfort &amp; SMB shaping</string>
     <string name="aimi_pkpd_section_learning">Learning (initial &amp; bounds)</string>
     <string name="aimi_pkpd_section_expert">Advanced caps &amp; guards</string>

@@ -196,6 +196,15 @@ fun AimiPkpdSettingsScreen(
                             doubleKey = DoubleKey.OApsAIMIIsfFusionMaxChangePerTick,
                             titleResId = R.string.oaps_aimi_isf_fusion_slope_title,
                         )
+                        Text(
+                            text = stringResource(R.string.aimi_dyn_isf_trajectory_section_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = AapsSpacing.small),
+                        )
+                        AdaptiveSwitchPreferenceItem(booleanKey = BooleanKey.OApsAIMIDynIsfTrajectoryTuningEnabled)
+                        AdaptiveSwitchPreferenceItem(booleanKey = BooleanKey.OApsAIMIDynIsfTrajectoryShadowOnly)
+                        AdaptiveDoublePreferenceItem(doubleKey = DoubleKey.OApsAIMIDynIsfTrajectoryMaxFraction)
                         AdaptiveDoublePreferenceItem(
                             doubleKey = DoubleKey.OApsAIMISmbTailThreshold,
                             titleResId = R.string.oaps_aimi_smb_tail_threshold_title,

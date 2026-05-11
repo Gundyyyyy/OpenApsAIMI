@@ -218,6 +218,28 @@ enum class BooleanKey(
     OApsAIMIAimiSmbComparatorEnabled("key_aimi_smb_comparator_enabled", false),
     /** Plateau + meaningful IOB + falling prediction → throttle SMB, bias TBR, no Red Carpet restore. */
     OApsAIMIIobSurveillanceGuard("key_aimi_iob_surveillance_guard", true),
+    /**
+     * Trajectory-informed bounded tweak to DynISF (AutoISF-style CGM geometry). Requires dynamic sensitivity.
+     * Default off: enable after monitoring shadow logs.
+     */
+    OApsAIMIDynIsfTrajectoryTuningEnabled(
+        key = "aimi_dyn_isf_trajectory_tuning_enabled",
+        defaultValue = false,
+        titleResId = R.string.pref_title_aimi_dyn_isf_trajectory_tuning,
+        summaryResId = R.string.pref_summary_aimi_dyn_isf_trajectory_tuning,
+        dependency = ApsUseDynamicSensitivity,
+    ),
+    /**
+     * When trajectory tuning is enabled: log the would-be ISF multiplier but do not apply it.
+     * Default on for safe rollout; set false to apply the bounded adjustment.
+     */
+    OApsAIMIDynIsfTrajectoryShadowOnly(
+        key = "aimi_dyn_isf_trajectory_shadow_only",
+        defaultValue = true,
+        titleResId = R.string.pref_title_aimi_dyn_isf_trajectory_shadow,
+        summaryResId = R.string.pref_summary_aimi_dyn_isf_trajectory_shadow,
+        dependency = OApsAIMIDynIsfTrajectoryTuningEnabled,
+    ),
     OApsAIMIUnifiedReactivityEnabled("key_use_unified_reactivity", true),  // 🎯 NEW: Enable UnifiedReactivityLearner
     AimiAuditorEnabled("aimi_auditor_enabled", false),  // 🧠 AI Decision Auditor
     OApsAIMITrajectoryGuardEnabled("key_aimi_trajectory_guard_enabled", false),  // 🌀 Phase-Space Trajectory Control

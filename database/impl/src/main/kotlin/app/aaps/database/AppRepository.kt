@@ -298,6 +298,9 @@ class AppRepository @Inject internal constructor(
     suspend fun getAllProfileSwitches(): List<ProfileSwitch> =
         database.profileSwitchDao.getAllProfileSwitches()
 
+    suspend fun bulkMigrateProfileSwitchInsulinConfig(label: String, end: Long, peak: Long, conc: Double): Int =
+        database.profileSwitchDao.bulkMigrateInsulinConfig(label, end, peak, conc)
+
     suspend fun getProfileSwitchesFromTime(timestamp: Long, ascending: Boolean): List<ProfileSwitch> =
         database.profileSwitchDao.getProfileSwitchDataFromTime(timestamp).reversedIf(!ascending)
 
@@ -392,6 +395,9 @@ class AppRepository @Inject internal constructor(
 
     suspend fun getAllEffectiveProfileSwitches(): List<EffectiveProfileSwitch> =
         database.effectiveProfileSwitchDao.getAllEffectiveProfileSwitches()
+
+    suspend fun bulkMigrateEffectiveProfileSwitchInsulinConfig(label: String, end: Long, peak: Long, conc: Double): Int =
+        database.effectiveProfileSwitchDao.bulkMigrateInsulinConfig(label, end, peak, conc)
 
     // THERAPY EVENT
     /*
@@ -492,6 +498,9 @@ class AppRepository @Inject internal constructor(
 
     suspend fun getBoluses(): List<Bolus> =
         database.bolusDao.getAllBoluses()
+
+    suspend fun bulkMigrateBolusInsulinConfig(label: String, end: Long, peak: Long, conc: Double): Int =
+        database.bolusDao.bulkMigrateInsulinConfig(label, end, peak, conc)
 
     suspend fun getBolusesDataFromTime(timestamp: Long, ascending: Boolean): List<Bolus> =
         database.bolusDao.getBolusesFromTime(timestamp).reversedIf(!ascending)

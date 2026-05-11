@@ -329,10 +329,6 @@ class PersistenceLayerImpl @Inject constructor(
         }
     }
 
-    override suspend fun updateBolusNoLogging(bolus: BS): Unit = withContext(Dispatchers.IO) {
-        repository.runTransactionForResultSuspend(InsertOrUpdateBolusTransaction(bolus.toDb()))
-        Unit
-    }
 
     override suspend fun insertBolusWithTempId(bolus: BS): PersistenceLayer.TransactionResult<BS> = withContext(Dispatchers.IO) {
         try {
@@ -985,10 +981,6 @@ class PersistenceLayerImpl @Inject constructor(
         }
     }
 
-    override suspend fun updateEffectiveProfileSwitchNoLogging(effectiveProfileSwitch: EPS): Unit = withContext(Dispatchers.IO) {
-        repository.runTransactionForResultSuspend(InsertOrUpdateEffectiveProfileSwitchTransaction(effectiveProfileSwitch.toDb()))
-        Unit
-    }
 
     override suspend fun invalidateEffectiveProfileSwitch(id: Long, action: Action, source: Sources, note: String?, listValues: List<ValueWithUnit>): PersistenceLayer.TransactionResult<EPS> = withContext(Dispatchers.IO) {
         try {
@@ -1318,10 +1310,6 @@ class PersistenceLayerImpl @Inject constructor(
         }
     }
 
-    override suspend fun updateProfileSwitchNoLogging(profileSwitch: PS): Unit = withContext(Dispatchers.IO) {
-        repository.runTransactionForResultSuspend(InsertOrUpdateProfileSwitchTransaction(profileSwitch.toDb()))
-        Unit
-    }
 
     override suspend fun invalidateProfileSwitch(id: Long, action: Action, source: Sources, note: String?, listValues: List<ValueWithUnit>): PersistenceLayer.TransactionResult<PS> = withContext(Dispatchers.IO) {
         try {

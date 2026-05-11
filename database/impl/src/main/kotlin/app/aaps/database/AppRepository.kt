@@ -165,7 +165,8 @@ class AppRepository @Inject internal constructor(
         removed.add(Pair("PreferenceChange", database.preferenceChangeDao.deleteOlderThan(than)))
         // keep foods database.foodDao.deleteOlderThan(than)
         removed.add(Pair("DeviceStatus", database.deviceStatusDao.deleteOlderThan(than)))
-        removed.add(Pair("RunningMode", database.runningModeDao.deleteOlderThan(than)))
+        if (database.runningModeDao.getRunningModeDataFromTime(than + 1).isNotEmpty())
+            removed.add(Pair("RunningMode", database.runningModeDao.deleteOlderThan(than)))
         removed.add(Pair("HeartRate", database.heartRateDao.deleteOlderThan(than)))
         removed.add(Pair("StepsCount", database.stepsCountDao.deleteOlderThan(than)))
 

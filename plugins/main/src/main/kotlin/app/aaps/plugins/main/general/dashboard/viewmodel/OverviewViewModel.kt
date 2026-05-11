@@ -31,6 +31,7 @@ import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
+import app.aaps.plugins.aps.openAPSAIMI.physio.AIMIPhysioDataRepositoryMTR
 import app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryGuard // 🌀 Trajectory
 import app.aaps.plugins.aps.openAPSAIMI.autodrive.AutodriveEngine // 🧠 Engine
 import app.aaps.core.interfaces.aps.RT
@@ -116,7 +117,8 @@ class OverviewViewModel(
     private val preferences: Preferences,
     private val overviewData: OverviewData,
     private val trajectoryGuard: TrajectoryGuard, // 🌀 Trajectory Injection
-    private val autodriveEngine: AutodriveEngine // 🧠 Engine Injection
+    private val autodriveEngine: AutodriveEngine, // 🧠 Engine Injection
+    private val aimiPhysioDataRepository: AIMIPhysioDataRepositoryMTR
 ) : ViewModel() {
 
     private val disposables = CompositeDisposable()
@@ -597,47 +599,50 @@ class OverviewViewModel(
                 a1c = (mean + 46.7) / 28.7
             }
             
-            // --- Steps (Today) ---
-            // Select one source deterministically to avoid mixing overlapping streams.
-            val stepsList = persistenceLayer.getStepsCountFromTimeToTime(from, now).sortedBy { it.timestamp }
-            fun isGarmin(device: String?): Boolean = device == "Garmin-Watchface"
-            fun isHealthConnect(device: String?): Boolean = device == "HealthConnect"
-            fun isPhone(device: String?): Boolean = device == "PhoneSensor"
-            fun isWear(device: String?): Boolean =
-                !device.isNullOrBlank() && !isGarmin(device) && !isHealthConnect(device) && !isPhone(device)
+            // --- Steps (Today): Health Connect daily aggregate when unified mode + HC allow it ---
+            val hcTodaySteps = aimiPhysioDataRepository.fetchTodayStepsTotalAggregated(from, now)
+            stepsText = if (hcTodaySteps != null) {
+                decimalFormatter.to0Decimal(hcTodaySteps.toDouble())
+            } else {
+                // Fallback: persistence 5‑min buckets (same window as before HC alignment).
+                val stepsList = persistenceLayer.getStepsCountFromTimeToTime(from, now).sortedBy { it.timestamp }
+                fun isGarmin(device: String?): Boolean = device == "Garmin-Watchface"
+                fun isHealthConnect(device: String?): Boolean = device == "HealthConnect"
+                fun isPhone(device: String?): Boolean = device == "PhoneSensor"
+                fun isWear(device: String?): Boolean =
+                    !device.isNullOrBlank() && !isGarmin(device) && !isHealthConnect(device) && !isPhone(device)
 
-            val bestSource = stepsList
-                .firstOrNull { isWear(it.device) }?.device
-                ?: stepsList.firstOrNull { isGarmin(it.device) }?.device
-                ?: stepsList.firstOrNull { isHealthConnect(it.device) }?.device
-                ?: stepsList.firstOrNull { isPhone(it.device) }?.device
+                val bestSource = stepsList
+                    .firstOrNull { isWear(it.device) }?.device
+                    ?: stepsList.firstOrNull { isGarmin(it.device) }?.device
+                    ?: stepsList.firstOrNull { isHealthConnect(it.device) }?.device
+                    ?: stepsList.firstOrNull { isPhone(it.device) }?.device
 
-            fun dedupedTotalForDevice(device: String): Double =
-                stepsList
+                fun dedupedTotalForDevice(device: String): Double =
+                    stepsList
+                        .asSequence()
+                        .filter { it.device == device }
+                        .groupBy { it.timestamp / (5 * 60 * 1000L) }
+                        .values
+                        .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
+                        .toDouble()
+
+                val totalsByDevice = stepsList
                     .asSequence()
-                    .filter { it.device == device }
-                    // Deduplicate on 5-minute buckets: wear retries and multi-window payloads
-                    // can create multiple rows for the same logical interval.
-                    .groupBy { it.timestamp / (5 * 60 * 1000L) }
+                    .mapNotNull { it.device.takeUnless(String::isNullOrBlank) }
+                    .distinct()
+                    .associateWith { dedupedTotalForDevice(it) }
+
+                val totalSteps = totalsByDevice
                     .values
-                    .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
-                    .toDouble()
+                    .maxOrNull()
+                    ?: if (bestSource != null) dedupedTotalForDevice(bestSource) else 0.0
 
-            val totalsByDevice = stepsList
-                .asSequence()
-                .mapNotNull { it.device.takeUnless(String::isNullOrBlank) }
-                .distinct()
-                .associateWith { dedupedTotalForDevice(it) }
-
-            val totalSteps = totalsByDevice
-                .values
-                .maxOrNull()
-                ?: if (bestSource != null) dedupedTotalForDevice(bestSource) else 0.0
-
-            stepsText = when {
-                stepsList.isEmpty() -> "--"
-                totalSteps > 1.0 -> decimalFormatter.to0Decimal(totalSteps)
-                else -> decimalFormatter.to0Decimal(0.0)
+                when {
+                    stepsList.isEmpty() -> "--"
+                    totalSteps > 1.0 -> decimalFormatter.to0Decimal(totalSteps)
+                    else -> decimalFormatter.to0Decimal(0.0)
+                }
             }
 
             // Heart Rate (Average or Last)
@@ -1198,7 +1203,8 @@ class OverviewViewModel(
         private val preferences: Preferences,
         private val overviewData: OverviewData,
         private val trajectoryGuard: TrajectoryGuard, // 🌀 Add to Factory
-        private val autodriveEngine: AutodriveEngine // 🧠 Add to Factory
+        private val autodriveEngine: AutodriveEngine, // 🧠 Add to Factory
+        private val aimiPhysioDataRepository: AIMIPhysioDataRepositoryMTR
     ) : ViewModelProvider.Factory {
 
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -1225,7 +1231,8 @@ class OverviewViewModel(
                     preferences,
                     overviewData,
                     trajectoryGuard,
-                    autodriveEngine
+                    autodriveEngine,
+                    aimiPhysioDataRepository
                 ) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class $modelClass")

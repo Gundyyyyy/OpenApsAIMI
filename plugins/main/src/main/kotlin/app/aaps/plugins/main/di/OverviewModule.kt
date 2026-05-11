@@ -31,6 +31,7 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorNotificationManager
 import app.aaps.plugins.aps.openAPSAIMI.advisor.auditor.ui.AuditorStatusLiveData
 import app.aaps.plugins.aps.openAPSAIMI.autodrive.AutodriveEngine
+import app.aaps.plugins.aps.openAPSAIMI.physio.AIMIPhysioDataRepositoryMTR
 import app.aaps.plugins.aps.openAPSAIMI.trajectory.TrajectoryGuard
 import app.aaps.plugins.main.general.dashboard.AdjustmentDetailsActivity
 import app.aaps.plugins.main.general.dashboard.DashboardFragment
@@ -106,6 +107,7 @@ abstract class OverviewModule {
             overviewData: OverviewData,
             trajectoryGuard: TrajectoryGuard,
             autodriveEngine: AutodriveEngine,
+            aimiPhysioDataRepository: AIMIPhysioDataRepositoryMTR,
         ): OverviewViewModel.Factory = OverviewViewModel.Factory(
             context,
             lastBgData,
@@ -128,6 +130,7 @@ abstract class OverviewModule {
             overviewData,
             trajectoryGuard,
             autodriveEngine,
+            aimiPhysioDataRepository,
         )
 
         @Provides

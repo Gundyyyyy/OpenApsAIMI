@@ -12,6 +12,7 @@ import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.plugins.aps.openAPSAIMI.steps.UnifiedActivityProviderMTR
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -19,6 +20,7 @@ import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.sqrt
@@ -73,6 +75,15 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
     }
     
     private val cache = ConcurrentHashMap<String, CachedData<*>>()
+
+    private data class TodayStepsAggCache(
+        val dayStartMs: Long,
+        val total: Long,
+        val cachedAtMs: Long
+    )
+
+    /** Short TTL so dashboard refreshes do not hammer HC every debounced tick. */
+    private val todayStepsAggCache = AtomicReference<TodayStepsAggCache?>(null)
     
     // ═══════════════════════════════════════════════════════════════════════
     // PROBE & DIAGNOSTICS
@@ -541,6 +552,56 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         } catch (e: Exception) {
             aapsLogger.warn(LTag.APS, "[$TAG] Steps aggregation failed", e)
             0
+        }
+    }
+
+    /**
+     * Dashboard “today” steps aligned with Health Connect’s consolidated daily total when permitted.
+     * Uses [StepsRecord.COUNT_TOTAL] from local midnight ([dayStartMs]) to [nowMs].
+     *
+     * Returns **null** when unified activity mode skips HC, HC is unavailable, or the query fails —
+     * callers should fall back to persistence-layer bucket logic.
+     */
+    suspend fun fetchTodayStepsTotalAggregated(dayStartMs: Long, nowMs: Long): Long? {
+        val mode = UnifiedActivityProviderMTR.getMode(context)
+        if (mode == UnifiedActivityProviderMTR.MODE_PREFER_WEAR ||
+            mode == UnifiedActivityProviderMTR.MODE_DISABLED
+        ) {
+            return null
+        }
+        if (dayStartMs >= nowMs) return null
+
+        val nowWall = System.currentTimeMillis()
+        val cached = todayStepsAggCache.get()
+        if (cached != null &&
+            cached.dayStartMs == dayStartMs &&
+            nowWall - cached.cachedAtMs < 45_000L
+        ) {
+            return cached.total
+        }
+
+        val client = healthConnectClient ?: return null
+
+        return try {
+            withTimeout(API_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    val response = client.aggregate(
+                        AggregateRequest(
+                            metrics = setOf(StepsRecord.COUNT_TOTAL),
+                            timeRangeFilter = TimeRangeFilter.between(
+                                Instant.ofEpochMilli(dayStartMs),
+                                Instant.ofEpochMilli(nowMs)
+                            )
+                        )
+                    )
+                    val total = response[StepsRecord.COUNT_TOTAL] ?: 0L
+                    todayStepsAggCache.set(TodayStepsAggCache(dayStartMs, total, System.currentTimeMillis()))
+                    total
+                }
+            }
+        } catch (e: Exception) {
+            aapsLogger.warn(LTag.APS, "[$TAG] Today steps aggregate failed", e)
+            null
         }
     }
 

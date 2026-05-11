@@ -131,4 +131,16 @@ class SafetyNetTest {
             1e-9
         )
     }
+
+    @Test
+    fun `pathological eventual above 300 does not distort buffer limit versus same sane eventual`() {
+        val bg = 150.0
+        val target = 100.0
+        val saneProxy = SafetyNet.sanitizeEventualMgdlForSmbZones(bg, target, 401.0)
+        assertEquals(
+            limit(bg = bg, targetBg = target, eventualBg = 401.0),
+            limit(bg = bg, targetBg = target, eventualBg = saneProxy),
+            1e-9
+        )
+    }
 }

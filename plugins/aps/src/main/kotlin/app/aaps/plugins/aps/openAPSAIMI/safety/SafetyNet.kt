@@ -17,6 +17,18 @@ import kotlin.math.max
 object SafetyNet {
 
     /**
+     * Pathological eventual values (wrong temp target, missing pred curves) must not force
+     * buffer-zone clamps toward [maxSmbLow] when current BG is mid-range hyper.
+     */
+    internal fun sanitizeEventualMgdlForSmbZones(bg: Double, targetBg: Double, eventualBg: Double): Double {
+        if (!eventualBg.isFinite()) return max(bg + 40.0, targetBg + 30.0)
+        if (eventualBg > 300.0 && eventualBg > bg + 80.0) {
+            return max(bg + 35.0, targetBg + 25.0)
+        }
+        return eventualBg
+    }
+
+    /**
      * Calculates the safe Maximum SMB allowed for the current context.
      * 
      * @param bg Current Blood Glucose
@@ -42,6 +54,8 @@ object SafetyNet {
         auditorConfidence: Double? = null,
         mealPriorityContext: Boolean = false
     ): Double {
+        val eventualForZones = sanitizeEventualMgdlForSmbZones(bg, targetBg, eventualBg)
+
         // 1. Manual Override: Full Trust
         if (isExplicitUserAction) return maxSmbHigh
 
@@ -70,7 +84,7 @@ object SafetyNet {
         
         if (inSoftLandingZone) {
             // Only boost if coasting stable (not rising fast)
-            val isCoasting = delta <= 1.0 && eventualBg > targetBg
+            val isCoasting = delta <= 1.0 && eventualForZones > targetBg
             
             if (isCoasting) {
                 // Base boost: +10% SMB to gently push down
@@ -111,7 +125,7 @@ object SafetyNet {
         if (bg < 170.0) {
             // Predictive check: clamp to low max only if trajectory heads clearly below 120,
             // not merely below 130 (which blocked the high max too often during real meals).
-            if (eventualBg < 120.0) {
+            if (eventualForZones < 120.0) {
                 return maxSmbLow
             }
             

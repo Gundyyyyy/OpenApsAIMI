@@ -15,6 +15,16 @@ object InsulinStackingStance {
     private const val MEAL_RISE_DELTA_BYPASS = 2.0
     private const val MEAL_RISE_SHORTAVG_BYPASS = 2.5
 
+    /**
+     * OpenAPS / temp-target artifacts can yield nonsensical eventual BG (e.g. 400+ mg/dL).
+     * For **stacking drop detection only**, treat those as unknown so they do not distort surveillance.
+     */
+    fun sanitizeEventualMgdlForStackingSignals(bg: Double, eventualBg: Double?): Double? {
+        val e = eventualBg?.takeIf { it.isFinite() } ?: return null
+        if (e > 300.0 && e > bg + 80.0) return null
+        return e
+    }
+
     enum class Kind {
         /** SMB pipeline proceeds normally; no stacking-specific dampening. */
         CORRECTION_ACTIVE,
@@ -139,7 +149,7 @@ object InsulinStackingStance {
             return active("not_plateau_velocity")
         }
 
-        val ev = eventualBg?.takeIf { it.isFinite() }
+        val ev = sanitizeEventualMgdlForStackingSignals(bg, eventualBg)
         val mn = minPredBg?.takeIf { it.isFinite() }
 
         val eventualSignalsDrop = ev != null && ev < bg - 6.0

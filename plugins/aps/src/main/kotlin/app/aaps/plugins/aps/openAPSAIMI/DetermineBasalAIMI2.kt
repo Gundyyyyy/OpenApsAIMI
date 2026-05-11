@@ -323,12 +323,57 @@ private const val MEAL_ADVISOR_MIN_CARB_COVERAGE = 0.25
 /**
  * When [TrajectoryType.TIGHT_SPIRAL] is active with high trajectory energy and IOB already elevated,
  * SMB caps must not stay at the high-BG ceiling ([DoubleKey.OApsAIMIHighBGMaxSMB]) — see
- * [DetermineBasalaimiSMB2.applyTrajectoryTightSpiralStandardSmbCapIfNeeded].
+ * [applyTrajectoryTightSpiralStandardSmbCapIfNeeded].
+ *
+ * Seuils **TDD + poids** (énergie / IOB) : ancres adultes ~**7 / 8 U** à [TIGHT_SPIRAL_CAP_TDD_REFERENCE_U], bornés
+ * pour pédiatrie / forts besoins.
+ *
+ * **Alignement produit** : relaxation du cap = même logique que [finalizeAndCapSMB] `mealPriorityContext`
+ * (COB / UAM / repas NGR si fourni, **delta ou shortAvg**, IOB sous 75 % du maxIOB) — cohérent avec
+ * [InsulinStackingStance] `meal_absorption_rise_priority` sans repas déclaré.
+ *
+ * **Cap gradué** : si le cap s’applique mais montée **aiguë** (mêmes seuils que la sortie « sharp rise »
+ * stacking), [maxSMB] reste plafonné au standard et [maxSMBHB] conserve une **fraction** du headroom
+ * high-BG (évite double pénalité basale relax + SMB au plancher).
+ *
+ * **Prédictions** : eventual aberrants → [SafetyNet.sanitizeEventualMgdlForSmbZones] et
+ * [InsulinStackingStance.sanitizeEventualMgdlForStackingSignals].
  */
-private const val TIGHT_SPIRAL_SMB_CAP_ENERGY_U = 3.5
+private const val TIGHT_SPIRAL_CAP_TDD_REFERENCE_U = 55.0
 
-/** IOB floor (U): only clamp SMB when stack is already material (avoids blocking a lone high-BG SMB). */
-private const val TIGHT_SPIRAL_SMB_CAP_IOB_U = 4.0
+/** Seuil énergie spiral (U) à TDD = [TIGHT_SPIRAL_CAP_TDD_REFERENCE_U] (échelle adulte repas). */
+private const val TIGHT_SPIRAL_SMB_CAP_ENERGY_LEGACY_U = 7.0
+
+/** Seuil IOB spiral (U) à TDD = [TIGHT_SPIRAL_CAP_TDD_REFERENCE_U] (IOB repas > ~8 U toléré). */
+private const val TIGHT_SPIRAL_SMB_CAP_IOB_LEGACY_U = 8.0
+
+/** Poids de référence (kg) : second terme IOB = [TIGHT_SPIRAL_SMB_CAP_IOB_LEGACY_U] U à 75 kg. */
+private const val TIGHT_SPIRAL_WEIGHT_REFERENCE_KG = 75.0
+
+private const val TIGHT_SPIRAL_CAP_ENERGY_MIN_U = 3.0
+private const val TIGHT_SPIRAL_CAP_ENERGY_MAX_U = 18.0
+private const val TIGHT_SPIRAL_CAP_IOB_MIN_U = 3.0
+private const val TIGHT_SPIRAL_CAP_IOB_MAX_U = 20.0
+
+private fun tightSpiralSmbCapEnergyThresholdU(tdd24hU: Double): Double {
+    if (!tdd24hU.isFinite() || tdd24hU <= 0.0) return TIGHT_SPIRAL_SMB_CAP_ENERGY_LEGACY_U
+    val scaled = tdd24hU * (TIGHT_SPIRAL_SMB_CAP_ENERGY_LEGACY_U / TIGHT_SPIRAL_CAP_TDD_REFERENCE_U)
+    return scaled.coerceIn(TIGHT_SPIRAL_CAP_ENERGY_MIN_U, TIGHT_SPIRAL_CAP_ENERGY_MAX_U)
+}
+
+private fun tightSpiralSmbCapIobThresholdU(tdd24hU: Double, patientWeightKg: Double): Double {
+    val fromTdd = if (tdd24hU.isFinite() && tdd24hU > 0.0) {
+        tdd24hU * (TIGHT_SPIRAL_SMB_CAP_IOB_LEGACY_U / TIGHT_SPIRAL_CAP_TDD_REFERENCE_U)
+    } else {
+        TIGHT_SPIRAL_SMB_CAP_IOB_LEGACY_U
+    }
+    val fromWeight = if (patientWeightKg.isFinite() && patientWeightKg > 0.0) {
+        patientWeightKg * (TIGHT_SPIRAL_SMB_CAP_IOB_LEGACY_U / TIGHT_SPIRAL_WEIGHT_REFERENCE_KG)
+    } else {
+        0.0
+    }
+    return max(fromTdd, fromWeight).coerceIn(TIGHT_SPIRAL_CAP_IOB_MIN_U, TIGHT_SPIRAL_CAP_IOB_MAX_U)
+}
 
 /** Bundles locals produced by [DetermineBasalaimiSMB2.runEarlyDetermineBasalStages]. */
 private data class AimiDetermineBasalEarlyTickState(
@@ -4867,23 +4912,100 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
     /**
-     * When spiral energy and IOB exceed safety thresholds, clamp [maxSMB] and [maxSMBHB] to the user’s
+     * Miroir strict de [finalizeAndCapSMB] `mealPriorityContext` : absorption / repas **sans** se limiter au
+     * delta instantané (shortAvg pour montées lissées) + tête IOB sous 75 % du max — aligné export JSONL
+     * `meal_absorption_rise_priority` / [InsulinStackingStance].
+     *
+     * @param isMealActiveFromNgr Repas NGR actif si déjà connu ; sinon **false** (pont trajectory précoce).
+     */
+    private fun isMealPriorityAlignedForSpiralSmbCap(
+        bgValue: Double,
+        deltaValue: Float,
+        shortAvgDeltaValue: Float,
+        mealData: MealData,
+        iobNow: Double,
+        maxIobValue: Double,
+        isExplicitUserAction: Boolean,
+        isMealActiveFromNgr: Boolean,
+    ): Boolean {
+        if (isExplicitUserAction) return false
+        val uam = AimiUamHandler.confidenceOrZero()
+        if (!(isMealActiveFromNgr || mealData.mealCOB >= 6.0 || uam >= 0.45)) return false
+        if (bgValue < 145.0) return false
+        if (deltaValue < 1.8f && shortAvgDeltaValue < 1.5f) return false
+        if (!maxIobValue.isFinite() || maxIobValue <= 0.0) return false
+        if (iobNow >= maxIobValue * 0.75) return false
+        return true
+    }
+
+    /** Mêmes seuils que la sortie « sharp rise » dans [InsulinStackingStance.evaluate] (évite divergence produit). */
+    private fun sharpRiseEligibleForTrajectorySpiralSoftCap(deltaValue: Float, shortAvgDeltaValue: Float): Boolean =
+        deltaValue >= 4.5f || shortAvgDeltaValue >= 4.5f ||
+            (deltaValue >= 3.2f && shortAvgDeltaValue >= 3.0f)
+
+    /**
+     * When spiral energy and IOB exceed **TDD‑scaled** safety thresholds (see file-level
+     * [tightSpiralSmbCapEnergyThresholdU] / [tightSpiralSmbCapIobThresholdU]), clamp [maxSMB] and [maxSMBHB] toward the user’s
      * standard SMB cap ([DoubleKey.OApsAIMIMaxSMB]) so high-BG SMB headroom cannot stack insulin during
-     * a tight spiral. Invoked from [runTrajectoryTightSpiralSafetyBridge] and again after
+     * a tight spiral. If [capRelaxContext] is true (**meal priority align**), the cap is **not** applied.
+     * On **sharp rise** without relax, only [maxSMBHB] is partially relaxed (50 % of span toward high cap).
+     * Invoked from [runTrajectoryTightSpiralSafetyBridge] and again after
      * [applyIsfBoundsAndPhysioMultipliersAfterEndoActivity] so physio SMB scaling cannot re-expand past it.
      */
-    private fun applyTrajectoryTightSpiralStandardSmbCapIfNeeded(energy: Double, iobNow: Double) {
-        if (energy <= TIGHT_SPIRAL_SMB_CAP_ENERGY_U || iobNow <= TIGHT_SPIRAL_SMB_CAP_IOB_U) return
+    private fun applyTrajectoryTightSpiralStandardSmbCapIfNeeded(
+        energy: Double,
+        iobNow: Double,
+        tdd24hU: Double,
+        deltaValue: Float,
+        shortAvgDeltaValue: Float,
+        mealData: MealData,
+        isExplicitUserAction: Boolean,
+        isMealActiveFromNgr: Boolean,
+    ) {
+        val weightKg = preferences.get(DoubleKey.OApsAIMIweight)
+        val energyTh = tightSpiralSmbCapEnergyThresholdU(tdd24hU)
+        val iobTh = tightSpiralSmbCapIobThresholdU(tdd24hU, weightKg)
+        val wouldCap = energy > energyTh && iobNow > iobTh
+        val capRelaxContext = isMealPriorityAlignedForSpiralSmbCap(
+            bgValue = bg,
+            deltaValue = deltaValue,
+            shortAvgDeltaValue = shortAvgDeltaValue,
+            mealData = mealData,
+            iobNow = iobNow,
+            maxIobValue = maxIob.toDouble(),
+            isExplicitUserAction = isExplicitUserAction,
+            isMealActiveFromNgr = isMealActiveFromNgr,
+        )
+        if (capRelaxContext) {
+            if (wouldCap) {
+                consoleLog.add(
+                    "🌀🛡️ TRAJ_SPIRAL SMB-cap: skipped (MEAL_PRIORITY_ALIGN) E=${"%.1f".format(Locale.US, energy)}U " +
+                        "(>${"%.1f".format(Locale.US, energyTh)}) IOB=${"%.1f".format(Locale.US, iobNow)}U " +
+                        "(>${"%.1f".format(Locale.US, iobTh)}) Δ=${"%.1f".format(Locale.US, deltaValue.toDouble())} " +
+                        "sΔ=${"%.1f".format(Locale.US, shortAvgDeltaValue.toDouble())} TDD24h=${"%.1f".format(Locale.US, tdd24hU)}U"
+                )
+            }
+            return
+        }
+        if (!wouldCap) return
         val stdMaxSMB = preferences.get(DoubleKey.OApsAIMIMaxSMB)
         if (!stdMaxSMB.isFinite() || stdMaxSMB <= 0.0) return
         val prevMb = maxSMB
         val prevHb = maxSMBHB
         maxSMB = minOf(maxSMB, stdMaxSMB)
-        maxSMBHB = minOf(maxSMBHB, stdMaxSMB)
+        val sharp = sharpRiseEligibleForTrajectorySpiralSoftCap(deltaValue, shortAvgDeltaValue)
+        maxSMBHB = if (sharp) {
+            val span = (prevHb - stdMaxSMB).coerceAtLeast(0.0)
+            minOf(prevHb, stdMaxSMB + span * 0.5)
+        } else {
+            minOf(maxSMBHB, stdMaxSMB)
+        }
         if (maxSMB == prevMb && maxSMBHB == prevHb) return
+        val modeNote = if (sharp) " [SOFT_HB]" else ""
         consoleLog.add(
-            "🌀🛡️ TRAJ_SPIRAL SMB-cap: E=${"%.1f".format(Locale.US, energy)}U " +
-                "IOB=${"%.1f".format(Locale.US, iobNow)}U " +
+            "🌀🛡️ TRAJ_SPIRAL SMB-cap$modeNote: E=${"%.1f".format(Locale.US, energy)}U (>${"%.1f".format(Locale.US, energyTh)}) " +
+                "IOB=${"%.1f".format(Locale.US, iobNow)}U (>${"%.1f".format(Locale.US, iobTh)}) " +
+                "TDD24h=${"%.1f".format(Locale.US, tdd24hU)}U w=${"%.0f".format(Locale.US, weightKg)}kg " +
                 "maxSMB ${"%.2f".format(Locale.US, prevMb)}→${"%.2f".format(Locale.US, maxSMB)}U " +
                 "maxSMBHB ${"%.2f".format(Locale.US, prevHb)}→${"%.2f".format(Locale.US, maxSMBHB)}U " +
                 "(≤OApsAIMIMaxSMB ${"%.2f".format(Locale.US, stdMaxSMB)}U)"
@@ -4904,6 +5026,10 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         delta: Float,
         cob: Float,
         physioMultipliers: PhysioMultipliersMTR,
+        tdd24Hrs: Float,
+        mealData: MealData,
+        isExplicitUserAction: Boolean,
+        isMealActiveFromNgr: Boolean,
     ) {
         val lastTraj = trajectoryGuard.getLastAnalysis()
         if (lastTraj == null || lastTraj.classification != TrajectoryType.TIGHT_SPIRAL) {
@@ -4914,16 +5040,21 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         val curvature = lastTraj.metrics.curvature
         val iobNow = iobData.iob
 
-        val uamConfidence = AimiUamHandler.confidenceOrZero()
-        val strongMealRiseContext =
-            bg >= 145.0 &&
-                delta >= 1.8 &&
-                (cob >= 6.0 || uamConfidence >= 0.45)
+        val mealPriorityAlign = isMealPriorityAlignedForSpiralSmbCap(
+            bgValue = bg,
+            deltaValue = delta,
+            shortAvgDeltaValue = shortAvgDelta,
+            mealData = mealData,
+            iobNow = iobNow,
+            maxIobValue = maxIob.toDouble(),
+            isExplicitUserAction = isExplicitUserAction,
+            isMealActiveFromNgr = isMealActiveFromNgr,
+        )
 
         val basalFraction = when {
-            strongMealRiseContext && energy > 3.5 -> 0.70
-            strongMealRiseContext && energy > 2.5 -> 0.85
-            strongMealRiseContext && energy > 1.5 -> 0.95
+            mealPriorityAlign && energy > 3.5 -> 0.70
+            mealPriorityAlign && energy > 2.5 -> 0.85
+            mealPriorityAlign && energy > 1.5 -> 0.95
             energy > 3.5 -> 0.25
             energy > 2.5 -> 0.50
             energy > 1.5 -> 0.70
@@ -4941,7 +5072,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         val proactiveBasal = profile.current_basal * effectiveFraction
         val cgateNote = if (cgateAmplified) " [CGate ISF↑ → amplification]" else ""
-        val mealNote = if (strongMealRiseContext) " [MEAL_PRIORITY_RELAX]" else ""
+        val mealNote = if (mealPriorityAlign) " [MEAL_PRIORITY_RELAX]" else ""
         val reason = "TRAJ_TIGHT_SPIRAL: E=${String.format("%.1f", energy)}U κ=${String.format("%.2f", curvature)} IOB=${String.format("%.2f", iobNow)}U → Basale proactive ${(effectiveFraction * 100).toInt()}%$cgateNote$mealNote"
 
         consoleLog.add("🌀🛡️ TRAJECTORY_SAFETY_BRIDGE: $reason")
@@ -4952,7 +5083,16 @@ class DetermineBasalaimiSMB2 @Inject constructor(
 
         lastSafetySource = "TrajBridge_Tier${when { energy > 3.5 -> 1; energy > 2.5 -> 2; else -> 3 }}"
         logDecisionFinal("TRAJ_SAFETY", rT, bg, delta)
-        applyTrajectoryTightSpiralStandardSmbCapIfNeeded(energy = energy, iobNow = iobNow)
+        applyTrajectoryTightSpiralStandardSmbCapIfNeeded(
+            energy = energy,
+            iobNow = iobNow,
+            tdd24hU = tdd24Hrs.toDouble(),
+            deltaValue = delta,
+            shortAvgDeltaValue = shortAvgDelta,
+            mealData = mealData,
+            isExplicitUserAction = isExplicitUserAction,
+            isMealActiveFromNgr = isMealActiveFromNgr,
+        )
     }
 
     /**
@@ -5165,6 +5305,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         pbolusA: Double,
         pbolusAS: Double,
         reason: StringBuilder,
+        isExplicitAdvisorRun: Boolean,
     ): AimiTrajectoryContextIsfPrep {
         applyTrajectoryAnalysis(
             currentTime = ctx.currentTime,
@@ -5182,7 +5323,19 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             uiInteraction = ctx.uiInteraction,
             relevanceScore = physioMultipliers.trajectoryRelevanceScore
         )
-        runTrajectoryTightSpiralSafetyBridge(profile, rT, iobData, bg, delta, cob, physioMultipliers)
+        runTrajectoryTightSpiralSafetyBridge(
+            profile = profile,
+            rT = rT,
+            iobData = iobData,
+            bg = bg,
+            delta = delta,
+            cob = cob,
+            physioMultipliers = physioMultipliers,
+            tdd24Hrs = tdd24Hrs,
+            mealData = ctx.mealData,
+            isExplicitUserAction = isExplicitAdvisorRun,
+            isMealActiveFromNgr = false,
+        )
         val contextTargetOverride = applyContextModule(bg = bg, iob = iobData.iob, cob = cob.toDouble(), rT = rT)
         val sens = runTddRatesAndIsfFusionAfterContext(
             profile = profile,
@@ -9794,6 +9947,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             pbolusA = pbolusA,
             pbolusAS = pbolusAS,
             reason = reason,
+            isExplicitAdvisorRun = isExplicitAdvisorRun,
         )
         var sens = sensInit
 
@@ -10005,6 +10159,12 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             applyTrajectoryTightSpiralStandardSmbCapIfNeeded(
                 energy = analysis.metrics.energyBalance,
                 iobNow = iob_data.iob,
+                tdd24hU = tdd24Hrs.toDouble(),
+                deltaValue = delta,
+                shortAvgDeltaValue = shortAvgDelta,
+                mealData = ctx.mealData,
+                isExplicitUserAction = isExplicitAdvisorRun,
+                isMealActiveFromNgr = false,
             )
         }
         val (

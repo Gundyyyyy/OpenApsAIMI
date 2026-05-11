@@ -157,4 +157,10 @@ class InsulinStackingStanceTest {
         )
         assertEquals(InsulinStackingStance.Kind.SURVEILLANCE_IOB, e.kind)
     }
+
+    @Test
+    fun `sanitize eventual strips hyper numeric artifact for stacking`() {
+        assertEquals(null, InsulinStackingStance.sanitizeEventualMgdlForStackingSignals(160.0, 401.0))
+        assertEquals(118.0, InsulinStackingStance.sanitizeEventualMgdlForStackingSignals(160.0, 118.0))
+    }
 }

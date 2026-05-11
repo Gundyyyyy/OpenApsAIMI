@@ -9388,7 +9388,8 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         }
         
         // TBR legacy repas : taux = plafond mode manuel ([DoubleKey.meal_modes_MaxBasal] vs profil, voir [runManualMealModesAfterTherapyGate]),
-        // durée 30 min, uniquement pendant les 30 premières minutes du mode — réaffirmée à chaque tick P1/P2.
+        // durée 30 min, pendant les 30 premières minutes du mode — réaffirmée à chaque tick P1/P2,
+        // et via les tags *_MAINT ci‑dessous quand aucun prébolus ne matche (p.ex. minutes 8–14 ou 23–29).
         fun manualMealModeTbr(runtimeMin: Long, logTag: String, overrideSafetyLimits: Boolean) {
             if (runtimeMin < 0 || runtimeMin >= 30) return
             val rateUh = modeTbrLimit.coerceAtLeast(0.05)
@@ -9483,6 +9484,22 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             rT.reason.append(context.getString(R.string.reason_prebolus_snack, rT.units))
             consoleLog.add("🍱 LEGACY_MODE_SNACK P1=${"%.2f".format(rT.units ?: 0.0)}U")
             markLegacyMealDecision()
+            return rT
+        }
+        // Même priorité que les blocs prébolus ci‑dessus : premier mode actif dans les 30 premières minutes gagne.
+        val legacyMealMaint = when {
+            mealTime && mealruntime in 0..29 -> mealruntime to "MEAL_MAINT"
+            bfastTime && bfastruntime in 0..29 -> bfastruntime to "BF_MAINT"
+            lunchTime && lunchruntime in 0..29 -> lunchruntime to "LUNCH_MAINT"
+            dinnerTime && dinnerruntime in 0..29 -> dinnerruntime to "DINNER_MAINT"
+            highCarbTime && highCarbrunTime in 0..29 -> highCarbrunTime to "HC_MAINT"
+            snackTime && snackrunTime in 0..29 -> snackrunTime to "SNACK_MAINT"
+            else -> null
+        }
+        if (legacyMealMaint != null) {
+            manualMealModeTbr(legacyMealMaint.first, legacyMealMaint.second, overrideSafetyLimits = false)
+            rT.units = null
+            consoleLog.add("🍱 LEGACY_MEAL_TBR_MAINT[${legacyMealMaint.second}] rt=${legacyMealMaint.first}m (no prebolus this tick)")
             return rT
         }
         return null

@@ -121,9 +121,12 @@ class AimiDiagnosticsManager(
             if (key.contains("password", true) || key.contains("token", true) || key.contains("secret", true)) {
                  isInteresting = false
             }
+            if (AimiDiagnosticsPrefExportPolicy.isSecretPreferenceKey(key)) {
+                isInteresting = false
+            }
 
             if (isInteresting) {
-                sb.append("$key: $value\n")
+                sb.append(key).append(": ").append(AimiDiagnosticsPrefExportPolicy.formatExportValue(key, value)).append('\n')
             }
         }
         sb.append("\n")

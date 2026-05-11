@@ -329,8 +329,9 @@ private const val MEAL_ADVISOR_MIN_CARB_COVERAGE = 0.25
  * pour pédiatrie / forts besoins.
  *
  * **Alignement produit** : relaxation du cap = même logique que [finalizeAndCapSMB] `mealPriorityContext`
- * (COB / UAM / repas NGR si fourni, **delta ou shortAvg**, IOB sous 75 % du maxIOB) — cohérent avec
- * [InsulinStackingStance] `meal_absorption_rise_priority` sans repas déclaré.
+ * (COB / UAM / **fenêtre repas horloge thérapie** pour la voie NGR / repas déclaré, **delta ou shortAvg**, IOB sous 75 % du maxIOB)
+ * — cohérent avec [InsulinStackingStance] `meal_absorption_rise_priority` sans repas déclaré.
+ * L’**état** NGR (moniteur nocturne) n’est pas ré‑évalué ici : une seule passe dans [runPostSafetyMealFirst30NgrHeadroomBasalSmbStage].
  *
  * **Cap gradué** : si le cap s’applique mais montée **aiguë** (mêmes seuils que la sortie « sharp rise »
  * stacking), [maxSMB] reste plafonné au standard et [maxSMBHB] conserve une **fraction** du headroom
@@ -4912,11 +4913,23 @@ class DetermineBasalaimiSMB2 @Inject constructor(
     }
 
     /**
+     * Fenêtre repas **horloge thérapie** — mêmes drapeaux que le premier critère de
+     * [runPostSafetyMealFirst30NgrHeadroomBasalSmbStage], valables **après**
+     * [runTherapyHydrateClocksAndExerciseLockoutGate] (donc avant pont trajectory / cap spiral).
+     * Ne duplique pas [nightGrowthResistanceMode.evaluate] (machine d’état singleton).
+     */
+    private fun therapyMealWindowActiveForSpiralAlign(): Boolean =
+        mealTime || bfastTime || lunchTime || dinnerTime || highCarbTime
+
+    /**
      * Miroir strict de [finalizeAndCapSMB] `mealPriorityContext` : absorption / repas **sans** se limiter au
      * delta instantané (shortAvg pour montées lissées) + tête IOB sous 75 % du max — aligné export JSONL
      * `meal_absorption_rise_priority` / [InsulinStackingStance].
      *
-     * @param isMealActiveFromNgr Repas NGR actif si déjà connu ; sinon **false** (pont trajectory précoce).
+     * @param mealClockActiveForSpiralRelax Fenêtre repas **horloge thérapie** (meal/bfast/lunch/dinner/highcarb),
+     * identique au premier critère de [runPostSafetyMealFirst30NgrHeadroomBasalSmbStage] — disponible après
+     * [runTherapyHydrateClocksAndExerciseLockoutGate]. L’évaluation d’état NGR (monitor) reste **unique** dans ce stage
+     * pour ne pas corrompre la machine d’état.
      */
     private fun isMealPriorityAlignedForSpiralSmbCap(
         bgValue: Double,
@@ -4926,11 +4939,11 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         iobNow: Double,
         maxIobValue: Double,
         isExplicitUserAction: Boolean,
-        isMealActiveFromNgr: Boolean,
+        mealClockActiveForSpiralRelax: Boolean,
     ): Boolean {
         if (isExplicitUserAction) return false
         val uam = AimiUamHandler.confidenceOrZero()
-        if (!(isMealActiveFromNgr || mealData.mealCOB >= 6.0 || uam >= 0.45)) return false
+        if (!(mealClockActiveForSpiralRelax || mealData.mealCOB >= 6.0 || uam >= 0.45)) return false
         if (bgValue < 145.0) return false
         if (deltaValue < 1.8f && shortAvgDeltaValue < 1.5f) return false
         if (!maxIobValue.isFinite() || maxIobValue <= 0.0) return false
@@ -4960,7 +4973,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         shortAvgDeltaValue: Float,
         mealData: MealData,
         isExplicitUserAction: Boolean,
-        isMealActiveFromNgr: Boolean,
+        mealClockActiveForSpiralRelax: Boolean,
     ) {
         val weightKg = preferences.get(DoubleKey.OApsAIMIweight)
         val energyTh = tightSpiralSmbCapEnergyThresholdU(tdd24hU)
@@ -4974,7 +4987,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             iobNow = iobNow,
             maxIobValue = maxIob.toDouble(),
             isExplicitUserAction = isExplicitUserAction,
-            isMealActiveFromNgr = isMealActiveFromNgr,
+            mealClockActiveForSpiralRelax = mealClockActiveForSpiralRelax,
         )
         if (capRelaxContext) {
             if (wouldCap) {
@@ -5029,7 +5042,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
         tdd24Hrs: Float,
         mealData: MealData,
         isExplicitUserAction: Boolean,
-        isMealActiveFromNgr: Boolean,
+        mealClockActiveForSpiralRelax: Boolean,
     ) {
         val lastTraj = trajectoryGuard.getLastAnalysis()
         if (lastTraj == null || lastTraj.classification != TrajectoryType.TIGHT_SPIRAL) {
@@ -5048,7 +5061,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             iobNow = iobNow,
             maxIobValue = maxIob.toDouble(),
             isExplicitUserAction = isExplicitUserAction,
-            isMealActiveFromNgr = isMealActiveFromNgr,
+            mealClockActiveForSpiralRelax = mealClockActiveForSpiralRelax,
         )
 
         val basalFraction = when {
@@ -5091,7 +5104,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             shortAvgDeltaValue = shortAvgDelta,
             mealData = mealData,
             isExplicitUserAction = isExplicitUserAction,
-            isMealActiveFromNgr = isMealActiveFromNgr,
+            mealClockActiveForSpiralRelax = mealClockActiveForSpiralRelax,
         )
     }
 
@@ -5334,7 +5347,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
             tdd24Hrs = tdd24Hrs,
             mealData = ctx.mealData,
             isExplicitUserAction = isExplicitAdvisorRun,
-            isMealActiveFromNgr = false,
+            mealClockActiveForSpiralRelax = therapyMealWindowActiveForSpiralAlign(),
         )
         val contextTargetOverride = applyContextModule(bg = bg, iob = iobData.iob, cob = cob.toDouble(), rT = rT)
         val sens = runTddRatesAndIsfFusionAfterContext(
@@ -10164,7 +10177,7 @@ class DetermineBasalaimiSMB2 @Inject constructor(
                 shortAvgDeltaValue = shortAvgDelta,
                 mealData = ctx.mealData,
                 isExplicitUserAction = isExplicitAdvisorRun,
-                isMealActiveFromNgr = false,
+                mealClockActiveForSpiralRelax = therapyMealWindowActiveForSpiralAlign(),
             )
         }
         val (

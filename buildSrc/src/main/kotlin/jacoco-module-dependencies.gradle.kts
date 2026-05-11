@@ -53,6 +53,11 @@ project.afterEvaluate {
 
             val testTaskName = "test${sourceName.replaceFirstChar(Char::titlecase)}UnitTest"
             //println("Task -> $testTaskName")
+            // AGP 9+ defaults android.onlyEnableUnitTestForTheTestedBuildType=true: release unit-test
+            // tasks are often not created for library modules. Skip JaCoCo wiring when absent.
+            if (tasks.findByName(testTaskName) == null) {
+                return@forEach
+            }
 
             registerCodeCoverageTask(
                 testTaskName = testTaskName,

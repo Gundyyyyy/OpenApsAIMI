@@ -70,8 +70,6 @@
     <string name="step_deactivate_complete">Patch deactivated</string>
     <string name="step_retry_activation">Activation in progress</string>
     <string name="unexpected_state">Unexpected state: %1$s</string>
-    <string name="no_profile_selected">No profile selected. Please select a profile and try again.</string>
-
     <string name="patch_begin_activation">No active patch. Press <b>Next</b> to begin the activation process.</string>
     <string name="patch_not_active_note">Pump base should not be connected to the patch until the next step!</string>
     <string name="connect_pump_base">Connect pump base to a new patch, remove the residual air and fill with insulin, then press <b>Next</b>.</string>

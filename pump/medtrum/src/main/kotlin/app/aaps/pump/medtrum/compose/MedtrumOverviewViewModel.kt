@@ -324,7 +324,7 @@ class MedtrumOverviewViewModel @Inject constructor(
             if (isPaired) {
                 add(
                     PumpAction(
-                        label = rh.gs(R.string.pump_unpair),
+                        label = rh.gs(app.aaps.core.ui.R.string.pump_unpair),
                         icon = Icons.Filled.Bluetooth,
                         category = ActionCategory.MANAGEMENT,
                         onClick = { onUnpairClick() }

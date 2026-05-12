@@ -10,7 +10,7 @@ enum class EquilWizardStep(val titleResId: Int) {
     // Pre-activation gate (shown only when no profile switch exists yet)
     PROFILE_GATE(app.aaps.core.ui.R.string.pump_wizard_profile_gate_title),
 
-    // PAIR flow: Assemble → BleScan → Password → [SelectInsulin] → Fill → Attach → Air → [SiteLocation] → Confirm
+    // PAIR flow: Assemble → BleScan → Password → [SelectInsulin] → Fill → [SiteLocation] → Attach → Air → Confirm
     ASSEMBLE(R.string.equil_title_assemble),
     BLE_SCAN(R.string.equil_title_serial),
     PASSWORD(R.string.equil_title_serial),
@@ -21,7 +21,7 @@ enum class EquilWizardStep(val titleResId: Int) {
     SITE_LOCATION(app.aaps.core.ui.R.string.site_rotation),
     CONFIRM(app.aaps.core.ui.R.string.confirm),
 
-    // CHANGE_INSULIN flow: ChangeInsulin → Assemble → [SelectInsulin] → Fill → Attach → Air → [SiteLocation] → Confirm
+    // CHANGE_INSULIN flow: ChangeInsulin → Assemble → [SelectInsulin] → Fill → [SiteLocation] → Attach → Air → Confirm
     CHANGE_INSULIN(R.string.equil_change),
 
     // UNPAIR flow: UnpairDetach → UnpairConfirm

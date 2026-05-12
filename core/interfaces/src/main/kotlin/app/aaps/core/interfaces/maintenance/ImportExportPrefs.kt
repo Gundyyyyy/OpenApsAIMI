@@ -1,6 +1,7 @@
 package app.aaps.core.interfaces.maintenance
 
 import android.content.Context
+import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.FragmentActivity
 import app.aaps.core.interfaces.rx.weardata.CwfData
 import org.json.JSONObject
@@ -46,7 +47,8 @@ data class ExportPreparation(
     val fileName: String,
     val cachedPassword: String?,
     val destination: ExportDestination = ExportDestination.LOCAL,
-    val cloudDisplayName: String? = null
+    val cloudDisplayName: String? = null,
+    val pendingFile: DocumentFile? = null
 )
 
 interface ImportExportPrefs {
@@ -69,7 +71,7 @@ interface ImportExportPrefs {
     fun prepareExport(): ExportPreparation?
 
     /** Execute the actual export with the given password. Returns per-destination results. */
-    suspend fun executeExport(password: String): ExportResult
+    suspend fun executeExport(password: String, pendingFile: DocumentFile? = null): ExportResult
 
     /** Cache the password for future exports. Returns the (possibly transformed) password to use. */
     fun cacheExportPassword(password: String): String

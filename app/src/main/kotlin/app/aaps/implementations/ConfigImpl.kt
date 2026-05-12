@@ -75,3 +75,4 @@ class ConfigImpl @Inject constructor(
             fileListProvider.get().ensureExtraDirExists()?.findFile(option.filename) != null
         }
 }
+

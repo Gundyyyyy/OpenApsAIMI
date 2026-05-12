@@ -109,8 +109,6 @@ class ImportExportPrefsImpl @Inject constructor(
     private val storage: Storage
 ) : ImportExportPrefs {
 
-    private var pendingExportFile: DocumentFile? = null
-
     // Compose export support — discrete steps
 
     override fun isMasterPasswordSet(): Boolean =
@@ -202,10 +200,10 @@ class ImportExportPrefsImpl @Inject constructor(
         }
 
         // For LOCAL / BOTH we need a local file
+        var newFile: DocumentFile? = null
         if (destination != ExportDestination.CLOUD) {
             prefFileList.ensureExportDirExists()
-            val newFile = prefFileList.newPreferenceFile() ?: return null
-            pendingExportFile = newFile
+            newFile = prefFileList.newPreferenceFile() ?: return null
         }
 
         val (password, isExpired, isAboutToExpire) = exportPasswordDataStore.getPasswordFromDataStore(context)
@@ -216,19 +214,20 @@ class ImportExportPrefsImpl @Inject constructor(
 
         val displayFileName = when (destination) {
             ExportDestination.CLOUD -> config.cloudDisplayName ?: "Cloud"
-            ExportDestination.BOTH  -> (pendingExportFile?.name ?: "unknown") + " + " + (config.cloudDisplayName ?: "Cloud")
-            ExportDestination.LOCAL -> pendingExportFile?.name ?: "unknown"
+            ExportDestination.BOTH  -> (newFile?.name ?: "unknown") + " + " + (config.cloudDisplayName ?: "Cloud")
+            ExportDestination.LOCAL -> newFile?.name ?: "unknown"
         }
 
         return ExportPreparation(
             fileName = displayFileName,
             cachedPassword = cachedPassword,
             destination = destination,
-            cloudDisplayName = config.cloudDisplayName
+            cloudDisplayName = config.cloudDisplayName,
+            pendingFile = newFile
         )
     }
 
-    override suspend fun executeExport(password: String): ExportResult {
+    override suspend fun executeExport(password: String, pendingFile: DocumentFile?): ExportResult {
         val config = getExportConfig()
         val localEnabled = config.settingsLocal
         val cloudEnabled = config.settingsCloud && config.isCloudActive
@@ -244,9 +243,8 @@ class ImportExportPrefsImpl @Inject constructor(
 
         // Local export
         if (destination == ExportDestination.LOCAL || destination == ExportDestination.BOTH) {
-            val file = pendingExportFile
+            val file = pendingFile
             if (file != null) {
-                pendingExportFile = null
                 localSuccess = savePreferences(file, password)
                 val resultMessage = if (localSuccess) rh.gs(R.string.exported) else rh.gs(R.string.exported_failed)
                 persistenceLayer.insertPumpTherapyEventIfNewByTimestamp(

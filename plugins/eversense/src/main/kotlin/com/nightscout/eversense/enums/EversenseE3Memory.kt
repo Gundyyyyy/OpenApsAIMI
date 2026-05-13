@@ -1,8 +1,8 @@
 ﻿package com.nightscout.eversense.enums
 
 enum class EversenseE3Memory(private val address: Long) {
-    BatteryPercentage(0x0000_0406),
-    CalibrationReadiness(0x0000_040A),
+    BatteryPercentage(0x0000_040B),
+    CalibrationReadiness(0x0000_040C),
     NextCalibrationDate(0x0000_0470),
     NextCalibrationTime(0x0000_0472),
     IsOneCalibration(0x0000_0496),

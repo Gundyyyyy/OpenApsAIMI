@@ -78,3 +78,11 @@ When performing large-scale code migrations (e.g., XML→Compose, old API→new 
 - **Keep PLAN.md as single source of truth** for migration status
 - **Compile frequently** - catch errors early
 - **Cleanup only at the end** - don't mix migration with cleanup
+
+## Fork merge from upstream `dev` (OpenApsAIMI)
+
+When merging or rebasing **Nightscout `dev`** into this fork, use `docs/NON_REGRESSION_CHECKLIST.md` and treat **fork-only constraints** as mandatory reading:
+
+- **Eversense native CGM** (when present on the branch): `docs/MERGE_CONSTRAINT_EVERSENSE.md` — patch order, Gradle or DI regressions, `SourceSensor` / DB, and Config conflicts (especially vs patch 0005-style upstream cleanups).
+
+Do not drop these constraints to "finish the merge faster"; document conflicts and combine changes explicitly.

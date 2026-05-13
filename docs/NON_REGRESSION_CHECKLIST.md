@@ -18,6 +18,12 @@ Notes:
 - No opportunistic refactor during merge conflict resolution.
 - Keep method signatures and contracts unchanged unless explicitly required.
 
+### Fork merge constraint: Eversense (native CGM patches)
+
+When this fork includes (or will include) the CAPTCG Eversense BLE plugin series, every merge from upstream `dev` must **preserve** module registration, DI, `SourceSensor` / DB mappings, and Config-related changes. Do not resolve conflicts “theirs only” on those paths without explicit review.
+
+- [ ] **Eversense preservation reviewed** — follow [docs/MERGE_CONSTRAINT_EVERSENSE.md](MERGE_CONSTRAINT_EVERSENSE.md) (patch order, high-risk files, post-merge checks).
+
 ---
 
 ## 2) Critical Domain Regression Gates
@@ -121,6 +127,7 @@ Pass criteria:
 - [ ] ML JSON/CSV permissions and writes verified
 - [ ] Physio path verified
 - [ ] Hormonitor structure verified
+- [ ] Eversense merge constraint reviewed (if native plugin present on branch)
 - [ ] Async/freeze checklist reviewed
 - [ ] Smoke tests passed
 ```
@@ -155,6 +162,6 @@ Release is `NO-GO` if any of the following is true:
 
 - Any checklist item above is unchecked.
 - Any OPEN freeze incident on same area/build.
-- Any known regression in AIMI, adaptive smoothie, dashboard skin switching, ML permissions, physio, or hormonitor structure.
+- Any known regression in AIMI, adaptive smoothie, dashboard skin switching, ML permissions, physio, hormonitor structure, or Eversense native CGM integration when that integration is part of the release branch.
 
 Release is `GO` only when all gates are green and documented.

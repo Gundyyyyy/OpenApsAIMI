@@ -190,6 +190,7 @@
 ## Migration Procedures
 
 - **For migrations**: Follow procedures in `.claude/procedures/migration.md`
+- **Merge from upstream `dev`**: Follow `docs/NON_REGRESSION_CHECKLIST.md`. If the branch includes the Eversense native CGM plugin (CAPTCG patch series), also follow `docs/MERGE_CONSTRAINT_EVERSENSE.md` so registrations and Gradle are not dropped during conflict resolution.
 
 ## When Stuck
 

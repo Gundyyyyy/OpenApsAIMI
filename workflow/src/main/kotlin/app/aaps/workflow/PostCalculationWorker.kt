@@ -2,13 +2,12 @@ package app.aaps.workflow
 
 import android.content.Context
 import androidx.work.WorkerParameters
-import androidx.work.workDataOf
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.SourceSensor
 import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.configuration.Config
-import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.nsclient.ProcessedDeviceStatusData
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.overview.graph.BgDataPoint
@@ -16,6 +15,10 @@ import app.aaps.core.interfaces.overview.graph.BgRange
 import app.aaps.core.interfaces.overview.graph.BgType
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
 import app.aaps.core.interfaces.profile.ProfileUtil
+import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.widget.WidgetUpdater
+import app.aaps.core.interfaces.workflow.CalculationSignalsEmitter
+import app.aaps.core.interfaces.workflow.CalculationWorkflow
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.workflow.LoggingWorker
@@ -27,37 +30,72 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
-class PreparePredictionsWorker(
+/**
+ * Merged tail-of-chain worker covering: APS loop invocation, widget update,
+ * predictions prep, and the final DRAW_FINAL progress emit.
+ *
+ * Used by [CalculationWorkflow.runCalculation] (MAIN only, full phases) and by
+ * [CalculationWorkflow.runOnReceivedPredictions] (predictions only).
+ */
+class PostCalculationWorker(
     context: Context,
     params: WorkerParameters
 ) : LoggingWorker(context, params, Dispatchers.Default) {
 
+    @Inject lateinit var dataWorkerStorage: DataWorkerStorage
+    @Inject lateinit var iobCobCalculator: IobCobCalculator
+    @Inject lateinit var loop: Loop
+    @Inject lateinit var widgetUpdater: WidgetUpdater
     @Inject lateinit var config: Config
     @Inject lateinit var processedDeviceStatusData: ProcessedDeviceStatusData
-    @Inject lateinit var loop: Loop
-    @Inject lateinit var dataWorkerStorage: DataWorkerStorage
     @Inject lateinit var profileUtil: ProfileUtil
     @Inject lateinit var preferences: Preferences
 
-    class PreparePredictionsData(
+    class PostCalculationData(
         val overviewData: OverviewData,
-        val cache: OverviewDataCache
+        val cache: OverviewDataCache,
+        val signals: CalculationSignalsEmitter,
+        val triggeredByNewBG: Boolean,
+        val runLoopAndWidgetPhase: Boolean
     )
 
     override suspend fun doWorkAndLog(): Result {
-        val pKey = inputData.getLong(DataWorkerStorage.STORE_KEY, -1)
-        val data = dataWorkerStorage.pickupObject(pKey) as PreparePredictionsData?
-        if (data == null) {
-            aapsLogger.debug(LTag.WORKER, "PreparePredictionsWorker: missing payload storeKey=$pKey — skipping")
-            return Result.success()
+        val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as? PostCalculationData
+            ?: run {
+                aapsLogger.debug(LTag.WORKER, "PostCalculationWorker: missing payload storeKey — skipping")
+                return Result.success()
+            }
+
+        if (data.runLoopAndWidgetPhase) {
+            invokeLoop(data)
+            widgetUpdater.update("WorkFlow")
         }
 
+        preparePredictions(data)
+
+        data.signals.emitProgress(CalculationWorkflow.ProgressData.DRAW_FINAL, 100)
+        return Result.success()
+    }
+
+    /*
+     * Triggered once autosens calculation has completed so the Loop has current data to work with.
+     * Autosens can be triggered by multiple sources but currently only a new BG should trigger a loop run.
+     */
+    private suspend fun invokeLoop(data: PostCalculationData) {
+        if (!data.triggeredByNewBG) return
+        val glucoseValue = iobCobCalculator.ads.actualBg() ?: return
+        if (glucoseValue.timestamp <= loop.lastBgTriggeredRun) return
+        loop.lastBgTriggeredRun = glucoseValue.timestamp
+        loop.invoke("Calculation for $glucoseValue", true)
+    }
+
+    private fun preparePredictions(data: PostCalculationData) {
         val apsResult = if (config.APS) loop.lastRun?.constraintsProcessed else processedDeviceStatusData.getAPSResult()
-        // After Compose migration, [loop.lastRun.request] can lag or diverge from [constraintsProcessed];
-        // still treat non-empty APS predictions as available so horizon + legacy series stay in sync.
+        val hasPredictionPayload = !apsResult?.predictionsAsGv.isNullOrEmpty()
+        // Treat APS predictions as available when the loop request says so or when we already have
+        // prediction points (Compose can lag one frame on hasPredictions after constraints run).
         val predictionsAvailable = if (config.APS) {
-            loop.lastRun?.request?.hasPredictions == true ||
-                !(apsResult?.predictionsAsGv.isNullOrEmpty())
+            loop.lastRun?.request?.hasPredictions == true || hasPredictionPayload
         } else {
             config.AAPSCLIENT
         }
@@ -71,7 +109,6 @@ class PreparePredictionsWorker(
         }
         if (predictionsAvailable && apsResult != null) {
             var predictionHours = (ceil(apsResult.latestPredictionsTime - System.currentTimeMillis().toDouble()) / (60 * 60 * 1000)).toInt()
-            // Cap aligned with dashboard / overview future band (~3h) so cache.endTime is not shorter than the graph.
             predictionHours = min(3, predictionHours)
             predictionHours = max(0, predictionHours)
             val hoursToFetch = Constants.GRAPH_TIME_RANGE_HOURS - predictionHours
@@ -86,19 +123,19 @@ class PreparePredictionsWorker(
 
         val highMarkInUnits = preferences.get(UnitDoubleKey.OverviewHighMark)
         val lowMarkInUnits = preferences.get(UnitDoubleKey.OverviewLowMark)
+        val highMgdl = profileUtil.convertToMgdl(highMarkInUnits, profileUtil.units)
+        val lowMgdl = profileUtil.convertToMgdl(lowMarkInUnits, profileUtil.units)
 
         val predictionDataPoints = apsResult?.predictionsAsGv
             ?.filter { it.value >= 40 }
             ?.map { gv ->
-                val mgdl = gv.value
-                val valueInUnits = profileUtil.fromMgdlToUnits(mgdl)
                 BgDataPoint(
                     timestamp = gv.timestamp,
-                    value = mgdl,
+                    value = gv.value,
                     range = when {
-                        valueInUnits > highMarkInUnits -> BgRange.HIGH
-                        valueInUnits < lowMarkInUnits  -> BgRange.LOW
-                        else                           -> BgRange.IN_RANGE
+                        gv.value > highMgdl -> BgRange.HIGH
+                        gv.value < lowMgdl  -> BgRange.LOW
+                        else                  -> BgRange.IN_RANGE
                     },
                     type = when (gv.sourceSensor) {
                         SourceSensor.IOB_PREDICTION   -> BgType.IOB_PREDICTION
@@ -120,7 +157,5 @@ class PreparePredictionsWorker(
         data.cache.timeRangeFlow.value?.let { current ->
             data.cache.updateTimeRange(current.copy(endTime = data.overviewData.endTime))
         }
-
-        return Result.success()
     }
 }

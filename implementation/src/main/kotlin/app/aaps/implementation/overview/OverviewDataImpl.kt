@@ -25,6 +25,10 @@ class OverviewDataImpl @Inject constructor() : OverviewData {
     private class EmptySeriesData : SeriesData
 
     override var rangeToDisplay: Int = Constants.GRAPH_TIME_RANGE_HOURS
+
+    // Initialize the window anchor so workers reading these fields before the
+    // first predictions-prep run see sensible values. Rounded to next
+    // full hour + GraphView-era 100ms nudge to avoid axis-label rounding.
     override var toTime: Long = initialToTime()
     override var fromTime: Long = toTime - T.hours(Constants.GRAPH_TIME_RANGE_HOURS.toLong()).msecs()
     override var endTime: Long = toTime

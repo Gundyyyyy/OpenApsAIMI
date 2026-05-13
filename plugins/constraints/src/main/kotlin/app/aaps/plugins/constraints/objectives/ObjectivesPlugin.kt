@@ -51,7 +51,7 @@ class ObjectivesPlugin @Inject constructor(
             objective.accomplishedOn = 0
         }
         preferences.put(BooleanNonKey.ObjectivesBgIsAvailableInNs, false)
-        preferences.put(BooleanNonKey.ObjectivesPumpStatusIsAvailableInNS, false)
+        preferences.put(BooleanNonKey.ObjectivesPumpStatusIsAvailableInNs, false)
         preferences.put(IntNonKey.ObjectivesManualEnacts, 0)
         preferences.put(BooleanNonKey.ObjectivesProfileSwitchUsed, false)
         preferences.put(BooleanNonKey.ObjectivesDisconnectUsed, false)
@@ -123,4 +123,5 @@ class ObjectivesPlugin @Inject constructor(
 
     override fun isAccomplished(index: Int) = objectives[index].isAccomplished
     override fun isStarted(index: Int): Boolean = objectives[index].isStarted
+
 }

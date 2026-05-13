@@ -89,19 +89,23 @@ abstract class Objective(
         }
 
         open fun shouldBeIgnored(): Boolean = false
+
     }
 
-    inner class MinimumDurationTask internal constructor(objective: Objective, private val minimumDuration: Long) : Task(objective, R.string.time_elapsed) {
+    inner class MinimumDurationTask internal constructor(objective: Objective, private val minimumDuration: Long) : Task(objective, R.string.objectives_wait_some_time) {
 
-        override fun isCompleted(): Boolean =
-            objective.isStarted && System.currentTimeMillis() - objective.startedOn >= minimumDuration
+        override fun isCompleted(): Boolean {
+            if (!objective.isStarted) return false
+            return dateUtil.now() - objective.startedOn >= minimumDuration
+        }
 
         override fun isCompleted(trueTime: Long): Boolean {
-            return objective.isStarted && trueTime - objective.startedOn >= minimumDuration
+            if (!objective.isStarted) return false
+            return trueTime - objective.startedOn >= minimumDuration
         }
 
         override val progress: String
-            get() = (getDurationText(System.currentTimeMillis() - objective.startedOn)
+            get() = (getDurationText(dateUtil.now() - objective.startedOn)
                 + " / " + getDurationText(minimumDuration))
 
         private fun getDurationText(duration: Long): String {
@@ -109,14 +113,14 @@ abstract class Objective(
             val hours = floor(duration.toDouble() / T.hours(1).msecs()).toInt()
             val minutes = floor(duration.toDouble() / T.mins(1).msecs()).toInt()
             return when {
-                days > 0  -> rh.gq(app.aaps.core.ui.R.plurals.days, days, days)
+                days > 0 -> rh.gq(app.aaps.core.ui.R.plurals.days, days, days)
                 hours > 0 -> rh.gq(app.aaps.core.ui.R.plurals.hours, hours, hours)
-                else      -> rh.gq(app.aaps.core.ui.R.plurals.minutes, minutes, minutes)
+                else -> rh.gq(app.aaps.core.ui.R.plurals.minutes, minutes, minutes)
             }
         }
     }
 
-    inner class UITask internal constructor(objective: Objective, @StringRes task: Int, private val spIdentifier: String, val code: (context: Context, task: UITask, callback: Runnable) -> Unit) : Task(objective, task) {
+    inner class UITask internal constructor(objective: Objective, @StringRes task: Int, private val spIdentifier: String) : Task(objective, task) {
 
         var answered: Boolean = false
             set(value) {
@@ -129,6 +133,7 @@ abstract class Objective(
         }
 
         override fun isCompleted(): Boolean = answered
+
     }
 
     inner class ExamTask internal constructor(objective: Objective, @StringRes task: Int, @StringRes val question: Int, private val spIdentifier: String) : Task(objective, task) {
@@ -158,6 +163,7 @@ abstract class Objective(
             options.add(option)
             return this
         }
+
     }
 
     inner class Option internal constructor(@StringRes var option: Int, var isCorrect: Boolean) {
@@ -190,4 +196,5 @@ abstract class Objective(
     }
 
     inner class Learned internal constructor(@StringRes var learned: Int)
+
 }

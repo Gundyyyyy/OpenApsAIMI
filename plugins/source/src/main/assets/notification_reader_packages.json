@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "packages": [
     {
       "package": "com.dexcom.g6",
@@ -143,17 +143,17 @@
     },
     {
       "package": "com.senseonics.gen12androidapp",
-      "sensor": "Eversense",
+      "sensor": "Eversense E3",
       "intervalMinutes": 5
     },
     {
       "package": "com.senseonics.androidapp",
-      "sensor": "Eversense",
+      "sensor": "Eversense E3",
       "intervalMinutes": 5
     },
     {
       "package": "com.senseonics.eversense365.us",
-      "sensor": "Eversense",
+      "sensor": "Eversense 365",
       "intervalMinutes": 5
     },
     {

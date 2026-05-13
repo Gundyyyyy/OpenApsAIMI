@@ -60,17 +60,41 @@ class NotificationReaderPlugin @Inject constructor(
         )
     )
 
+    /**
+     * Loads package → [SourceSensor] mapping from preferences, or seeds from the bundled asset.
+     * When the bundled asset [PackageConfig.version] is greater than the stored JSON version,
+     * preferences are overwritten so mapping updates (e.g. Eversense E3 vs 365) reach existing installs.
+     * Remote fetch in [updateDefinitionsFromRemote] may still upgrade further when Nightscout ships a higher version.
+     */
     private fun loadPackageConfig(): PackageConfig {
         return try {
-            val stored = preferences.get(StringNonKey.NotificationReaderPackages)
-            val json = if (stored.isNotEmpty()) {
-                stored
-            } else {
-                val asset = context.assets.open(PACKAGE_CONFIG_ASSET).bufferedReader().use { it.readText() }
-                preferences.put(StringNonKey.NotificationReaderPackages, asset)
-                asset
+            val bundledJson = context.assets.open(PACKAGE_CONFIG_ASSET).bufferedReader().use { it.readText() }
+            val bundled = PackageConfig.fromJson(bundledJson)
+            val storedRaw = preferences.get(StringNonKey.NotificationReaderPackages)
+            val effective = when {
+                storedRaw.isEmpty() -> {
+                    preferences.put(StringNonKey.NotificationReaderPackages, bundledJson)
+                    bundled
+                }
+                else -> {
+                    val stored = runCatching { PackageConfig.fromJson(storedRaw) }.getOrElse { ex ->
+                        aapsLogger.warn(LTag.BGSOURCE, "Corrupt notification reader package JSON in preferences; resetting from asset", ex)
+                        preferences.put(StringNonKey.NotificationReaderPackages, bundledJson)
+                        bundled
+                    }
+                    if (bundled.version > stored.version) {
+                        aapsLogger.info(
+                            LTag.BGSOURCE,
+                            "Notification reader packages upgraded from asset: v${stored.version} → v${bundled.version}"
+                        )
+                        preferences.put(StringNonKey.NotificationReaderPackages, bundledJson)
+                        bundled
+                    } else {
+                        stored
+                    }
+                }
             }
-            PackageConfig.fromJson(json)
+            effective
         } catch (e: Exception) {
             aapsLogger.error(LTag.BGSOURCE, "Failed to load package config", e)
             PackageConfig(0, emptySet(), emptyMap(), emptyMap())

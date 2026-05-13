@@ -13,7 +13,8 @@ class PackageConfigTest {
             { "package": "com.dexcom.g7", "sensor": "AAPS-DexcomG7" },
             { "package": "com.dexcom.g6", "sensor": "AAPS-DexcomG6" },
             { "package": "com.medtronic.diabetes.guardian", "sensor": "MM600Series" },
-            { "package": "com.senseonics.gen12androidapp", "sensor": "Eversense" },
+            { "package": "com.senseonics.gen12androidapp", "sensor": "Eversense E3" },
+            { "package": "com.senseonics.eversense365.us", "sensor": "Eversense 365" },
             { "package": "com.unknown.future.app", "sensor": "SomeUnknownSensor" }
           ]
         }
@@ -27,6 +28,7 @@ class PackageConfigTest {
             "com.dexcom.g6",
             "com.medtronic.diabetes.guardian",
             "com.senseonics.gen12androidapp",
+            "com.senseonics.eversense365.us",
             "com.unknown.future.app"
         )
     }
@@ -37,7 +39,8 @@ class PackageConfigTest {
         assertThat(config.sensorForPackage("com.dexcom.g7")).isEqualTo(SourceSensor.DEXCOM_G7_NATIVE)
         assertThat(config.sensorForPackage("com.dexcom.g6")).isEqualTo(SourceSensor.DEXCOM_G6_NATIVE)
         assertThat(config.sensorForPackage("com.medtronic.diabetes.guardian")).isEqualTo(SourceSensor.MM_600_SERIES)
-        assertThat(config.sensorForPackage("com.senseonics.gen12androidapp")).isEqualTo(SourceSensor.EVERSENSE)
+        assertThat(config.sensorForPackage("com.senseonics.gen12androidapp")).isEqualTo(SourceSensor.EVERSENSE_E3)
+        assertThat(config.sensorForPackage("com.senseonics.eversense365.us")).isEqualTo(SourceSensor.EVERSENSE_365)
     }
 
     @Test

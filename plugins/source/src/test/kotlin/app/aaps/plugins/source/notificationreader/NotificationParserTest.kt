@@ -30,7 +30,7 @@ class NotificationParserTest {
                 "com.camdiab.fx_alert.mmoll" to SourceSensor.DEXCOM_NATIVE_UNKNOWN,
                 "com.medtronic.diabetes.guardian" to SourceSensor.MM_600_SERIES,
                 "com.medtronic.diabetes.minimedmobile.eu" to SourceSensor.MM_600_SERIES,
-                "com.senseonics.gen12androidapp" to SourceSensor.EVERSENSE,
+                "com.senseonics.gen12androidapp" to SourceSensor.EVERSENSE_E3,
                 "com.microtech.aidexx" to SourceSensor.AIDEX,
                 "com.ottai.seas" to SourceSensor.OTTAI,
                 "com.sinocare.cgm.ce" to SourceSensor.SINO,

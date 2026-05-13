@@ -26,6 +26,17 @@ The **CAPTCG patch series 0001–0005** was applied on `dev_OAPSAIMI` (with reso
 
 Upstream `.patch` files are stored under `eversense_upstream_patches/` (gitignored) for re-application or diff review; re-fetch from GitHub if missing.
 
+### Notification reader vs native plugin (important)
+
+Notifications from official Senseonics apps are **not** the BLE plugin: they are routed through **Notification reader** using `plugins/source/src/main/assets/notification_reader_packages.json`.
+
+- **`com.senseonics.gen12androidapp`** and **`com.senseonics.androidapp`** → sensor text **`Eversense E3`** → `SourceSensor.EVERSENSE_E3` (matches `SourceSensor` enum `text`).
+- **`com.senseonics.eversense365.us`** → **`Eversense 365`** → `SourceSensor.EVERSENSE_365`.
+
+The bundled JSON **`version`** must be bumped when this mapping changes (currently **3**). `NotificationReaderPlugin` reloads from the **asset** when `bundled.version >` the parsed version of the JSON stored in preferences, so existing installs pick up E3/365 without a manual reset. Remote definitions (Nightscout URL) still win when their `version` is higher than the local effective config after load.
+
+When merging upstream `dev`, preserve fork-specific Senseonics rows and the version-bump / reload logic unless upstream provides an equivalent.
+
 ---
 
 ## Current fork state (baseline)

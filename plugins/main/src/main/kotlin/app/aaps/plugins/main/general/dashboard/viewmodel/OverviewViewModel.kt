@@ -398,6 +398,8 @@ class OverviewViewModel(
                     .debounce(400L)
                     .collect {
                         try {
+                            // New step buckets in DB → allow a fresh HC daily aggregate on next refresh.
+                            aimiPhysioDataRepository.invalidateTodayStepsHcAggregateCache()
                             scheduleDebouncedStatusRefresh()
                         } catch (e: Exception) {
                             fabricPrivacy.logException(e)
@@ -599,50 +601,25 @@ class OverviewViewModel(
                 a1c = (mean + 46.7) / 28.7
             }
             
-            // --- Steps (Today): Health Connect daily aggregate when unified mode + HC allow it ---
+            // --- Steps (Today): max(HC aggregate, persistence) when HC is in play ---
+            // Persistence uses max per-device 5‑min buckets → cannot merge complementary phone+watch like
+            // Health Connect / Santé, often ~1k low. HC [COUNT_TOTAL] can lag; taking the max of both
+            // avoids sticking on whichever pipeline is behind (HC cache cleared on SC updates elsewhere).
+            val persistenceSteps = computeDashboardPersistenceStepsToday(from, now)
             val hcTodaySteps = aimiPhysioDataRepository.fetchTodayStepsTotalAggregated(from, now)
-            stepsText = if (hcTodaySteps != null) {
-                decimalFormatter.to0Decimal(hcTodaySteps.toDouble())
-            } else {
-                // Fallback: persistence 5‑min buckets (same window as before HC alignment).
-                val stepsList = persistenceLayer.getStepsCountFromTimeToTime(from, now).sortedBy { it.timestamp }
-                fun isGarmin(device: String?): Boolean = device == "Garmin-Watchface"
-                fun isHealthConnect(device: String?): Boolean = device == "HealthConnect"
-                fun isPhone(device: String?): Boolean = device == "PhoneSensor"
-                fun isWear(device: String?): Boolean =
-                    !device.isNullOrBlank() && !isGarmin(device) && !isHealthConnect(device) && !isPhone(device)
-
-                val bestSource = stepsList
-                    .firstOrNull { isWear(it.device) }?.device
-                    ?: stepsList.firstOrNull { isGarmin(it.device) }?.device
-                    ?: stepsList.firstOrNull { isHealthConnect(it.device) }?.device
-                    ?: stepsList.firstOrNull { isPhone(it.device) }?.device
-
-                fun dedupedTotalForDevice(device: String): Double =
-                    stepsList
-                        .asSequence()
-                        .filter { it.device == device }
-                        .groupBy { it.timestamp / (5 * 60 * 1000L) }
-                        .values
-                        .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
-                        .toDouble()
-
-                val totalsByDevice = stepsList
-                    .asSequence()
-                    .mapNotNull { it.device.takeUnless(String::isNullOrBlank) }
-                    .distinct()
-                    .associateWith { dedupedTotalForDevice(it) }
-
-                val totalSteps = totalsByDevice
-                    .values
-                    .maxOrNull()
-                    ?: if (bestSource != null) dedupedTotalForDevice(bestSource) else 0.0
-
-                when {
-                    stepsList.isEmpty() -> "--"
-                    totalSteps > 1.0 -> decimalFormatter.to0Decimal(totalSteps)
-                    else -> decimalFormatter.to0Decimal(0.0)
-                }
+            val chosenTotal: Double? = when {
+                hcTodaySteps != null ->
+                    max(
+                        hcTodaySteps.toDouble().coerceAtLeast(0.0),
+                        persistenceSteps.total.coerceAtLeast(0.0),
+                    )
+                persistenceSteps.hasRows -> persistenceSteps.total
+                else -> null
+            }
+            stepsText = when {
+                chosenTotal == null -> "--"
+                chosenTotal > 1.0 -> decimalFormatter.to0Decimal(chosenTotal)
+                else -> decimalFormatter.to0Decimal(0.0)
             }
 
             // Heart Rate (Average or Last)
@@ -1181,6 +1158,54 @@ class OverviewViewModel(
         }
     }
 
+    private data class DashboardPersistenceStepsToday(
+        val hasRows: Boolean,
+        val total: Double,
+    )
+
+    /**
+     * Same 5‑min bucket / device pick as pre–Health Connect dashboard (wear → Garmin → HC rows → phone).
+     * Total is the maximum across devices only — it does not dedupe across devices like Health Connect / Santé;
+     * the dashboard combines this with the HC aggregate by taking the maximum of the two when HC is available.
+     */
+    private suspend fun computeDashboardPersistenceStepsToday(from: Long, now: Long): DashboardPersistenceStepsToday {
+        val stepsList = persistenceLayer.getStepsCountFromTimeToTime(from, now).sortedBy { it.timestamp }
+        if (stepsList.isEmpty()) return DashboardPersistenceStepsToday(false, 0.0)
+
+        fun isGarmin(device: String?): Boolean = device == "Garmin-Watchface"
+        fun isHealthConnect(device: String?): Boolean = device == "HealthConnect"
+        fun isPhone(device: String?): Boolean = device == "PhoneSensor"
+        fun isWear(device: String?): Boolean =
+            !device.isNullOrBlank() && !isGarmin(device) && !isHealthConnect(device) && !isPhone(device)
+
+        val bestSource = stepsList
+            .firstOrNull { isWear(it.device) }?.device
+            ?: stepsList.firstOrNull { isGarmin(it.device) }?.device
+            ?: stepsList.firstOrNull { isHealthConnect(it.device) }?.device
+            ?: stepsList.firstOrNull { isPhone(it.device) }?.device
+
+        fun dedupedTotalForDevice(device: String): Double =
+            stepsList
+                .asSequence()
+                .filter { it.device == device }
+                .groupBy { it.timestamp / (5 * 60 * 1000L) }
+                .values
+                .sumOf { bucket -> bucket.maxOfOrNull { it.steps5min.coerceAtLeast(0) } ?: 0 }
+                .toDouble()
+
+        val totalsByDevice = stepsList
+            .asSequence()
+            .mapNotNull { it.device.takeUnless(String::isNullOrBlank) }
+            .distinct()
+            .associateWith { dedupedTotalForDevice(it) }
+
+        val totalSteps = totalsByDevice
+            .values
+            .maxOrNull()
+            ?: if (bestSource != null) dedupedTotalForDevice(bestSource) else 0.0
+
+        return DashboardPersistenceStepsToday(true, totalSteps)
+    }
 
     class Factory(
         private val context: Context,

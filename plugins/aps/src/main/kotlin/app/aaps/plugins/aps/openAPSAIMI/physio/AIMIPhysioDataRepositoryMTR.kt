@@ -54,6 +54,8 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         private const val API_TIMEOUT_MS = 10_000L // 10 seconds
         private const val MORNING_WINDOW_START = 2 // 2 AM (Widened)
         private const val MORNING_WINDOW_END = 11 // 11 AM (Widened)
+        /** Dashboard today-steps aggregate: short TTL so a lagging HC value is not pinned too long. */
+        private const val TODAY_STEPS_HC_CACHE_MS = 12_000L
     }
     
     private val healthConnectClient: HealthConnectClient? by lazy {
@@ -82,7 +84,7 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         val cachedAtMs: Long
     )
 
-    /** Short TTL so dashboard refreshes do not hammer HC every debounced tick. */
+    /** Short TTL: dashboard debounces refreshes; shorter cache avoids sticking on a lagging HC aggregate. */
     private val todayStepsAggCache = AtomicReference<TodayStepsAggCache?>(null)
     
     // ═══════════════════════════════════════════════════════════════════════
@@ -556,8 +558,20 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
     }
 
     /**
+     * Clears the in-memory today aggregate so the next [fetchTodayStepsTotalAggregated] call queries
+     * Health Connect again. Intended when step rows ([SC]) change in AAPS so the dashboard can pick up
+     * HC-side updates without waiting for the short TTL.
+     */
+    fun invalidateTodayStepsHcAggregateCache() {
+        todayStepsAggCache.set(null)
+    }
+
+    /**
      * Dashboard “today” steps aligned with Health Connect’s consolidated daily total when permitted.
      * Uses [StepsRecord.COUNT_TOTAL] from local midnight ([dayStartMs]) to [nowMs].
+     *
+     * The aggregate can refresh more slowly than step rows ingested into AAPS; the dashboard combines
+     * this value with persistence totals so a lagging aggregate does not replace fresher DB rows.
      *
      * Returns **null** when unified activity mode skips HC, HC is unavailable, or the query fails —
      * callers should fall back to persistence-layer bucket logic.
@@ -575,7 +589,7 @@ class AIMIPhysioDataRepositoryMTR @Inject constructor(
         val cached = todayStepsAggCache.get()
         if (cached != null &&
             cached.dayStartMs == dayStartMs &&
-            nowWall - cached.cachedAtMs < 45_000L
+            nowWall - cached.cachedAtMs < TODAY_STEPS_HC_CACHE_MS
         ) {
             return cached.total
         }

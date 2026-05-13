@@ -78,6 +78,7 @@ class PkPdIntegration(private val preferences: Preferences) {
             lastBounds = null
             lastFusionBounds = null
             lastTailPolicy = null
+            lastPersisted = null
         }
         if (!config.enabled) {
             consoleLog?.add("PKPD Debug: Config ENABLED is FALSE. Check OApsAIMIPkpdEnabled preference.")
@@ -90,6 +91,7 @@ class PkPdIntegration(private val preferences: Preferences) {
             lastFusionBounds = null
             lastTailPolicy = null
             cachedConfig = null
+            lastPersisted = null
             return null
         }
 

@@ -7,6 +7,7 @@ import app.aaps.core.data.time.T
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ue.ValueWithUnit
+import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.UserEntryLogger
 import app.aaps.core.interfaces.receivers.ReceiverStatusStore
@@ -42,6 +43,7 @@ import javax.inject.Inject
 @HiltViewModel
 class ObjectivesViewModel @Inject constructor(
     private val objectivesPlugin: ObjectivesPlugin,
+    private val config: Config,
     private val rxBus: RxBus,
     private val rh: ResourceHelper,
     private val dateUtil: DateUtil,
@@ -150,7 +152,15 @@ class ObjectivesViewModel @Inject constructor(
             )
         }
 
-        _uiState.update { it.copy(objectives = objectives) }
+        val showDebugControls = config.isEngineeringMode()
+        _uiState.update { prev ->
+            prev.copy(
+                objectives = objectives,
+                showDebugControls = showDebugControls,
+                // Do not leave fake validation enabled when engineering file is removed.
+                isFakeMode = if (showDebugControls) prev.isFakeMode else false
+            )
+        }
     }
 
     fun onDismissNtpDialog() {

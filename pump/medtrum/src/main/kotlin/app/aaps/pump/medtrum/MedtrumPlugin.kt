@@ -439,7 +439,8 @@ class MedtrumPlugin @Inject constructor(
                         MedtrumBooleanKey.MedtrumScanOnConnectionErrors
                     )
                 )
-            )
+            ),
+            icon = pluginDescription.icon
         )
     }
 

@@ -230,7 +230,7 @@ class AIMIHealthConnectSyncServiceMTR @Inject constructor(
             
             withContext(Dispatchers.IO) {
                 try {
-                    persistenceLayer.insertOrUpdateHeartRate(hr)
+                    persistenceLayer.insertOrUpdateHeartRates(listOf(hr))
                     aapsLogger.info(
                         LTag.APS,
                         "[$TAG] ✅ Synced HC Heart Rate: ${hr.beatsPerMinute} bpm. Source=$SOURCE_DEVICE"

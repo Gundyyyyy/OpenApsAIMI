@@ -2,6 +2,7 @@ package app.aaps.workflow
 
 import android.content.Context
 import android.os.SystemClock
+import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkInfo
@@ -16,7 +17,6 @@ import app.aaps.core.interfaces.workflow.CalculationSignalsEmitter
 import app.aaps.core.interfaces.workflow.CalculationWorkflow
 import app.aaps.core.interfaces.workflow.CalculationWorkflow.Companion.MAIN_CALCULATION
 import app.aaps.core.interfaces.workflow.CalculationWorkflow.Companion.UPDATE_PREDICTIONS
-import app.aaps.core.utils.receivers.DataWorkerStorage
 import app.aaps.core.utils.worker.then
 import javax.inject.Inject
 import javax.inject.Provider
@@ -27,7 +27,7 @@ class CalculationWorkflowImpl @Inject constructor(
     private val context: Context,
     private val aapsLogger: AAPSLogger,
     private val dateUtil: DateUtil,
-    private val dataWorkerStorage: DataWorkerStorage,
+    private val workflowChainData: WorkflowChainData,
     private val mainSignals: CalculationSignalsEmitter,
     // Lazy: breaks Dagger cycle OverviewDataCache → Loop → IobCobCalculator → CalculationWorkflow → OverviewDataCache.
     // Side methods that use mainCache run at runtime, never during construction.
@@ -59,12 +59,6 @@ class CalculationWorkflowImpl @Inject constructor(
         aapsLogger.warn(LTag.WORKER, "Calculation thread did not stop within ${STOP_WAIT_TIMEOUT_MS}ms: $from")
     }
 
-    companion object {
-
-        private const val STOP_WAIT_TIMEOUT_MS = 5_000L
-        private const val STOP_WAIT_POLL_MS = 100L
-    }
-
     override fun runCalculation(
         job: String,
         iobCobCalculator: IobCobCalculator,
@@ -79,43 +73,44 @@ class CalculationWorkflowImpl @Inject constructor(
         aapsLogger.debug(LTag.WORKER, "Starting calculation worker: $reason to ${dateUtil.dateAndTimeAndSecondsString(end)}")
 
         val isMain = job == MAIN_CALCULATION
+        val prepare = PrepareGraphDataWorker.PrepareGraphData(
+            iobCobCalculator = iobCobCalculator,
+            overviewData = overviewData,
+            cache = cache,
+            signals = signals,
+            reason = reason,
+            end = end,
+            bgDataReload = bgDataReload,
+            limitDataToOldestAvailable = isMain,
+            triggeredByNewBG = triggeredByNewBG,
+            // HISTORY ends here, so emit DRAW_FINAL inline. MAIN delegates to PostCalculationWorker.
+            emitFinalProgress = !isMain
+        )
+        val generation = if (isMain) {
+            val post = PostCalculationWorker.PostCalculationData(
+                overviewData = overviewData,
+                cache = cache,
+                signals = signals,
+                triggeredByNewBG = triggeredByNewBG,
+                runLoopAndWidgetPhase = true
+            )
+            workflowChainData.startMain(prepare, post)
+        } else {
+            workflowChainData.startHistory(prepare)
+        }
+
+        val jobData = dataForJob(job, generation)
         WorkManager.getInstance(context)
             .beginUniqueWork(
                 job, ExistingWorkPolicy.REPLACE,
                 OneTimeWorkRequest.Builder(PrepareGraphDataWorker::class.java)
-                    .setInputData(
-                        dataWorkerStorage.storeInputData(
-                            PrepareGraphDataWorker.PrepareGraphData(
-                                iobCobCalculator = iobCobCalculator,
-                                overviewData = overviewData,
-                                cache = cache,
-                                signals = signals,
-                                reason = reason,
-                                end = end,
-                                bgDataReload = bgDataReload,
-                                limitDataToOldestAvailable = isMain,
-                                triggeredByNewBG = triggeredByNewBG,
-                                // HISTORY ends here, so emit DRAW_FINAL inline. MAIN delegates to PostCalculationWorker.
-                                emitFinalProgress = !isMain
-                            )
-                        )
-                    )
+                    .setInputData(jobData)
                     .build()
             )
             .then(
                 runIf = isMain,
                 OneTimeWorkRequest.Builder(PostCalculationWorker::class.java)
-                    .setInputData(
-                        dataWorkerStorage.storeInputData(
-                            PostCalculationWorker.PostCalculationData(
-                                overviewData = overviewData,
-                                cache = cache,
-                                signals = signals,
-                                triggeredByNewBG = triggeredByNewBG,
-                                runLoopAndWidgetPhase = true
-                            )
-                        )
-                    )
+                    .setInputData(jobData)
                     .build()
             )
             .enqueue()
@@ -124,21 +119,33 @@ class CalculationWorkflowImpl @Inject constructor(
     override fun runOnReceivedPredictions(overviewData: OverviewData) {
         aapsLogger.debug(LTag.WORKER, "Starting updateReceivedPredictions worker")
 
+        val generation = workflowChainData.startPredictions(
+            PostCalculationWorker.PostCalculationData(
+                overviewData = overviewData,
+                cache = mainCache,
+                signals = mainSignals,
+                triggeredByNewBG = false,
+                runLoopAndWidgetPhase = false
+            )
+        )
+
         WorkManager.getInstance(context).enqueueUniqueWork(
             UPDATE_PREDICTIONS, ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequest.Builder(PostCalculationWorker::class.java)
-                .setInputData(
-                    dataWorkerStorage.storeInputData(
-                        PostCalculationWorker.PostCalculationData(
-                            overviewData = overviewData,
-                            cache = mainCache,
-                            signals = mainSignals,
-                            triggeredByNewBG = false,
-                            runLoopAndWidgetPhase = false
-                        )
-                    )
-                )
+                .setInputData(dataForJob(UPDATE_PREDICTIONS, generation))
                 .build()
         )
+    }
+
+    private fun dataForJob(job: String, generation: Long): Data =
+        Data.Builder()
+            .putString(WorkflowChainData.JOB_KEY, job)
+            .putLong(WorkflowChainData.GEN_KEY, generation)
+            .build()
+
+    companion object {
+
+        private const val STOP_WAIT_TIMEOUT_MS = 5_000L
+        private const val STOP_WAIT_POLL_MS = 100L
     }
 }
